@@ -18,7 +18,7 @@ import { clamp, damp } from '@shared/math/scalar';
  * motion is whole-body (lean, look, bounce, squash) plus two add-ons that give
  * every character a readable silhouette from the chase camera:
  *  - a signature helmet topper on a damped spring (wobbles with acceleration)
- *  - a pair of helmet streamers that droop at rest and stream + flutter at speed
+ *  - a scarf tied at the neck that hangs at rest and streams + flutters at speed
  * All coordinates are driver-model units (the kart model is scaled ×2.2).
  */
 
@@ -48,12 +48,12 @@ interface ActiveGesture {
 
 const HELMET_TOP = 1.03;
 const GESTURE_TIME: Record<DriverGesture, number> = { throw: 0.4, boost: 0.6, ouch: 0.7, rocket: 0.9, stall: 1.1, shout: 0.6 };
-const SCARF_SEGMENTS = 8;
-const SCARF_LENGTH = 0.08;
-const SCARF_WIDTH = 0.085;
-/** Two streamers from the top-back of the helmet. */
-const STREAMERS = [-0.1, 0.1];
-const STREAMER_ANCHOR = { y: 0.9, z: -0.3 };
+const SCARF_SEGMENTS = 10;
+const SCARF_LENGTH = 0.085;
+const SCARF_WIDTH = 0.17;
+/** One scarf tail, tied at the back of the neck. */
+const STREAMERS = [0];
+const STREAMER_ANCHOR = { y: 0.3, z: -0.34 };
 
 type TopperBuilder = (mat: MeshStandardMaterial, accent: MeshStandardMaterial) => { root: Group; spin?: Object3D };
 
@@ -351,13 +351,13 @@ export class DriverRig {
       for (let i = 0; i <= SCARF_SEGMENTS; i++) {
         const k = i / SCARF_SEGMENTS;
         if (i > 0) {
-          // Rest: hang back-and-down along the helmet; speed: trail straight back, slightly lifted.
-          const dirY = -(1 - speed) * (0.55 + k * 0.6) + speed * 0.06 + f.accel * 0.002;
-          const dirZ = -(0.75 + speed * 0.5);
+          // Rest: hang down behind the seat; speed: stream back over the engine, lifting slightly.
+          const dirY = -(1 - speed) * (0.9 + k * 0.5) + speed * (0.12 + k * 0.1) + f.accel * 0.002;
+          const dirZ = -(0.35 + speed * 0.9);
           const len = Math.hypot(dirY, dirZ);
           y += (dirY / len) * SCARF_LENGTH;
           z += (dirZ / len) * SCARF_LENGTH;
-          x += Math.sin(t * flutterHz - i * 0.9 + phase) * flutterAmp * k + Math.sign(x0) * 0.006 - f.lean * 0.02;
+          x += Math.sin(t * flutterHz - i * 0.9 + phase) * flutterAmp * k - f.lean * 0.03;
         }
         const flutterY = Math.sin(t * flutterHz * 0.8 - i * 1.1 + phase) * flutterAmp * 0.7 * k;
         const w = SCARF_WIDTH * (1 - k * 0.45) * 0.5;
