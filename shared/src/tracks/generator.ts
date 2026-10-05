@@ -54,15 +54,17 @@ export function generateLayout(spec: LayoutSpec): GeneratedLayout {
   // Dense polyline (in driving order) for arc length + curvature.
   const thetas: number[] = [];
   const xs: number[] = [];
+  const ys: number[] = [];
   const zs: number[] = [];
   const arc: number[] = [0];
   for (let i = 0; i <= DENSE; i++) {
     const t = (dir * i * Math.PI * 2) / DENSE;
-    const [x, , z] = pos(t);
+    const [x, y, z] = pos(t);
     thetas.push(t);
     xs.push(x);
+    ys.push(y);
     zs.push(z);
-    if (i > 0) arc.push(arc[i - 1]! + Math.hypot(x - xs[i - 1]!, z - zs[i - 1]!));
+    if (i > 0) arc.push(arc[i - 1]! + Math.hypot(x - xs[i - 1]!, y - ys[i - 1]!, z - zs[i - 1]!));
   }
   const length = arc[DENSE]!;
   const heading = (i: number): number => Math.atan2(zs[(i + 1) % DENSE]! - zs[i]!, xs[(i + 1) % DENSE]! - xs[i]!);
@@ -85,7 +87,7 @@ export function generateLayout(spec: LayoutSpec): GeneratedLayout {
   const startDense = (startIdx + Math.round(window * 0.45)) % DENSE;
 
   // Control points: point 0 ~70 m before the start line.
-  const n = spec.points ?? 24;
+  const n = spec.points ?? 40;
   const step = DENSE / n;
   const lead = Math.round((70 / length) * DENSE);
   const firstDense = (startDense - lead + DENSE) % DENSE;

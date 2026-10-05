@@ -13,6 +13,7 @@ import { buildRoad } from './builders/RoadBuilder';
 import { buildBridges } from './builders/BridgeBuilder';
 import { buildTunnels } from './builders/TunnelBuilder';
 import { buildBoostPads } from './builders/BoostPadBuilder';
+import { buildHazards } from './builders/HazardBuilder';
 import { buildDecor } from './decor/DecorBuilder';
 import { getLandmark } from './landmarks';
 import { Water } from '../rendering/Water';
@@ -47,6 +48,7 @@ export function requiredModels(def: TrackDefinition): string[] {
   const ids = new Set<string>();
   def.decor.props.forEach((p) => ids.add(p.model));
   def.decor.scatter.forEach((r) => r.models.forEach((m) => ids.add(m)));
+  def.hazards.forEach((h) => ids.add(h.model));
   def.decor.landmarks.forEach((l) => getLandmark(l.type).models?.forEach((m) => ids.add(m)));
   return [...ids];
 }
@@ -88,6 +90,7 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
   buildBridges(ctx);
   buildTunnels(ctx);
   buildBoostPads(ctx);
+  buildHazards(ctx);
   if (def.terrain.waterLevel !== null) {
     for (const lake of def.terrain.lakes) {
       // Sized to the lake's carved basin (shore blend reaches ~1.6× the radii).

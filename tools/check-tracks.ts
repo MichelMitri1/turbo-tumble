@@ -12,6 +12,9 @@ import { buildTrackColliders } from '../shared/src/track/TrackColliders';
 import { RaceSimulation } from '../shared/src/race/RaceSimulation';
 import { cpuField } from '../shared/src/roster/Roster';
 import { FIXED_DT, TICK_RATE } from '../shared/src/constants/simulation';
+import { Vector3 } from 'three';
+import { existsSync } from 'node:fs';
+import { MODELS, isModelId } from '../client/src/assets/AssetManifest';
 
 const args = process.argv.slice(2);
 const only = args.filter((a) => !a.startsWith('--'));
@@ -25,6 +28,31 @@ for (const def of TRACKS) {
   const terrain = new TerrainField(path, def.terrain);
   const physics = new PhysicsWorld();
   buildTrackColliders(physics, path, terrain.buildMesh());
+  // Verify real collision sweeps, asset availability and a kart-sized way past
+  // every obstacle. This runs against the same world used by online and offline races.
+  let hazardsOK = def.hazards.length > 0;
+  const probe = physics.createProbeCollider(0.8);
+  for (const hazard of def.hazards) {
+    const frame = path.anchorToWorld(hazard);
+    const direction = frame.tangent.clone().setY(0).normalize();
+    const origin = frame.position.clone().addScaledVector(direction, -8);
+    origin.y += hazard.obstacleHeight / 2;
+    const hit = physics.moveAgainstWalls(probe, origin, direction.clone().multiplyScalar(16), { movement: new Vector3(), contacts: [] });
+    const gap = frame.halfWidth + Math.abs(hazard.lateral ?? 0) - hazard.radius;
+    const validModel = isModelId(hazard.model) && existsSync(new URL(`../client/public/${MODELS[hazard.model].url}`, import.meta.url));
+    if (!validModel || gap < 3.2 || hit.contacts.length === 0 || hit.movement.length() > 15) {
+      hazardsOK = false;
+      console.error(`  Invalid obstacle on ${def.id}: ${hazard.model} at ${hazard.distance}m`);
+    }
+  }
+  physics.removeCollider(probe);
+  for (const row of def.itemBoxes) {
+    const halfWidth = path.anchorToWorld(row).halfWidth;
+    if (Math.abs(row.lateral ?? 0) + (row.count - 1) * row.spacing / 2 + 1 > halfWidth + 0.01) {
+      hazardsOK = false;
+      console.error(`  Item row outside the road on ${def.id} at ${row.distance}m`);
+    }
+  }
   // Tightest corner from sample headings.
   const s = path.samples;
   let minR = Infinity;
@@ -51,11 +79,12 @@ for (const def of TRACKS) {
   }
   const finished = sim.racers.filter((r) => r.progress.finished).length;
   const best = Math.min(...sim.racers.map((r) => r.progress.bestLap || 999));
-  const ok = finished === sim.racers.length && respawns <= laps * 2;
+  const ok = hazardsOK && finished === sim.racers.length && respawns <= laps * 2;
   if (!ok) bad++;
   console.log(
-    `${ok ? '✓' : '✗'} ${def.id.padEnd(16)} ${path.length.toFixed(0).padStart(5)} m  min radius ${minR.toFixed(0).padStart(3)} m  best lap ${best.toFixed(1)}s  finished ${finished}/${sim.racers.length}  respawns ${respawns}  wall hits ${walls}  (${((performance.now() - t0) / 1000).toFixed(1)}s)`,
+    `${ok ? '✓' : '✗'} ${def.id.padEnd(16)} ${path.length.toFixed(0).padStart(5)} m  min radius ${minR.toFixed(0).padStart(3)} m  hills ${(Math.max(...s.map((p) => p.position.y)) - Math.min(...s.map((p) => p.position.y))).toFixed(0)}m  obstacles ${def.hazards.length}  best lap ${best.toFixed(1)}s  finished ${finished}/${sim.racers.length}  respawns ${respawns}  wall hits ${walls}  (${((performance.now() - t0) / 1000).toFixed(1)}s)`,
   );
   sim.dispose();
+  physics.dispose();
 }
 process.exit(bad ? 1 : 0);

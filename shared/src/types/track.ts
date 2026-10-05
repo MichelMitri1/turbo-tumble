@@ -74,8 +74,11 @@ export interface CoinRowDefinition extends TrackAnchor {
 }
 
 export interface HazardDefinition extends TrackAnchor {
-  type: string;
-  params?: Record<string, number | string | boolean>;
+  type: 'obstacle';
+  /** Existing asset-manifest model, sized to the shared collision envelope. */
+  model: string;
+  radius: number;
+  obstacleHeight: number;
 }
 
 export interface ShortcutDefinition {
@@ -214,7 +217,7 @@ export interface TrackDefinition {
   decor: TrackDecorDefinition;
   minimap: MinimapDefinition;
   music: string;
-  // Gameplay objects (hazards and shortcuts are consumed by later phases).
+  // Gameplay objects (shortcuts are reserved for alternate routes).
   boostPads: BoostPadDefinition[];
   itemBoxes: ItemBoxRowDefinition[];
   coins: CoinRowDefinition[];

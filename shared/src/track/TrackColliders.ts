@@ -17,6 +17,9 @@ export function buildTrackColliders(physics: PhysicsWorld, path: TrackPath, terr
   const kerbs = buildTunnelKerbs(path);
   if (kerbs) physics.addTrimesh(kerbs, Layer.Ground, SurfaceType.Curb);
   physics.addTrimesh(buildWallColliders(path), Layer.Wall);
+  for (const hazard of path.def.hazards) {
+    physics.addCylinder(path.anchorToWorld(hazard).position, hazard.radius, hazard.obstacleHeight / 2);
+  }
   physics.finalize();
   return { terrain };
 }

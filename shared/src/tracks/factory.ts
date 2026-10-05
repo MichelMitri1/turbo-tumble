@@ -1,4 +1,4 @@
-import type { HillDefinition, LakeDefinition, LandmarkPlacement, PropPlacement, TrackDefinition } from '../types/track';
+import type { HazardDefinition, HillDefinition, LakeDefinition, LandmarkPlacement, PropPlacement, TrackDefinition } from '../types/track';
 import { SeededRandom } from '../math/random';
 import { generateLayout, type LayoutSpec } from './generator';
 import { THEMES } from './themes';
@@ -12,6 +12,8 @@ export interface TrackSpec {
   /** Infield lagoon (if the theme has lakes and the infield is big enough). */
   infieldLake?: boolean;
   music?: string;
+  /** Hand-authored obstacle rhythm, measured from the start line. */
+  obstacles: Array<Omit<HazardDefinition, 'distance' | 'type'> & { fraction: number }>;
 }
 
 /**
@@ -77,12 +79,19 @@ export function defineTrack(spec: TrackSpec): TrackDefinition {
   ];
 
   // Gameplay objects by lap fraction; boost pads on the straights.
-  const pads = layout.straights.slice(0, 3).map((d, i) => ({ distance: Math.round(d), lateral: [0, -2.5, 2.5][i]!, length: 7, width: 5 }));
+  const hazards: HazardDefinition[] = spec.obstacles.map(({ fraction, ...obstacle }) => ({ ...obstacle, type: 'obstacle', distance: Math.round(fraction * L) }));
+  const gap = (a: number, b: number): number => Math.min(Math.abs(a - b), L - Math.abs(a - b));
+  const pads = layout.straights.filter((d) => hazards.every((h) => gap(h.distance, d) > 55)).slice(0, 3).map((d, i) => ({ distance: Math.round(d), lateral: [0, -2.5, 2.5][i]!, length: 7, width: 5 }));
   const clear = (d: number): number => {
-    for (let k = 0; k < 8 && pads.some((p) => Math.abs(p.distance - d) < 30); k++) d += 35;
+    for (let k = 0; k < 32 && (pads.some((p) => gap(p.distance, d) < 30) || hazards.some((h) => gap(h.distance, d) < 35)); k++) d = (d + 35) % L;
     return Math.round(d % L);
   };
-  const itemBoxes = [0.13, 0.45, 0.76].map((f, i) => ({ distance: clear(f * L), lateral: 0, count: i === 1 ? 4 : 5, spacing: 3.6 }));
+  // Rows must fit even when their placement falls inside a narrow causeway.
+  const pickupHalfWidth = Math.min(theme.halfWidth, ...layout.points.map((p) => p.halfWidth ?? theme.halfWidth));
+  const itemBoxes = [0.13, 0.45, 0.76].map((f, i) => {
+    const count = i === 1 ? 4 : 5;
+    return { distance: clear(f * L), lateral: 0, count, spacing: Math.min(3.6, (pickupHalfWidth - 1) * 2 / (count - 1)) };
+  });
   const coins = [0.28, 0.6, 0.9].map((f, i) => ({ distance: clear(f * L), lateral: [3.5, -3, 4][i]!, count: 6, spacing: 4 }));
 
   const halfWidth = theme.halfWidth;
@@ -121,7 +130,7 @@ export function defineTrack(spec: TrackSpec): TrackDefinition {
     boostPads: pads,
     itemBoxes,
     coins,
-    hazards: [],
+    hazards,
     shortcuts: [],
   };
 }

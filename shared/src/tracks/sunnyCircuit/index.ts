@@ -127,6 +127,12 @@ export const SUNNY_CIRCUIT: TrackDefinition = {
     { distance: 905, lateral: 4.5, count: 6, spacing: 4 },
     { distance: 985, lateral: -4, count: 5, spacing: 4 },
   ],
-  hazards: [],
+  hazards: [
+    { type: 'obstacle', distance: 235, lateral: -3.5, model: 'stump_round', radius: 1.8, obstacleHeight: 1.8 },
+    { type: 'obstacle', distance: 300, lateral: 3.5, model: 'stump_round', radius: 1.8, obstacleHeight: 1.8 },
+    { type: 'obstacle', distance: 610, lateral: -3, model: 'rock_largeA', radius: 2, obstacleHeight: 2.8 },
+    { type: 'obstacle', distance: 685, lateral: 3, model: 'rock_largeB', radius: 1.8, obstacleHeight: 2.6 },
+    { type: 'obstacle', distance: 965, lateral: 0, model: 'stump_round', radius: 2, obstacleHeight: 2 },
+  ],
   shortcuts: [],
 };

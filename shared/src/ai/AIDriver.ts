@@ -87,6 +87,24 @@ export class AIDriver {
     lane += this.trapAvoidance(ctx, me, loc.splineDistance, lane);
     if (p.overtakes) lane += this.trafficAvoidance(ctx, me, loc.splineDistance, lane, speed);
     const sample = track.samples[ti]!;
+    // Commit to a clear side until the kart has passed the obstacle. Apply after
+    // overtaking so traffic cannot steer us back into a solid road prop.
+    let avoidingObstacle = false;
+    let nearest = Infinity;
+    for (const hazard of track.def.hazards) {
+      let ahead = track.wrapDistance(track.startDistance + hazard.distance - loc.splineDistance);
+      if (ahead > track.length - 7) ahead -= track.length;
+      if (ahead < -7 || ahead > look + 24 || ahead >= nearest) continue;
+      const lateral = hazard.lateral ?? 0;
+      const clearance = hazard.radius + 2.6;
+      if (Math.abs(lane - lateral) >= clearance) continue;
+      const width = Math.min(sample.halfWidth, track.frameAtSplineDistance(track.startDistance + hazard.distance).halfWidth) - 2;
+      const left = lateral - clearance;
+      const right = lateral + clearance;
+      lane = left < -width ? right : right > width ? left : lateral > 0 ? left : right;
+      nearest = ahead;
+      avoidingObstacle = true;
+    }
     lane = clamp(lane, -sample.halfWidth + 2, sample.halfWidth - 2);
 
     const f = track.frameAtSplineDistance(targetDist);
@@ -122,6 +140,8 @@ export class AIDriver {
     } else {
       out.drift = false;
     }
+
+    if (avoidingObstacle) out.drift = false;
 
     // Unstick: back up with opposite lock.
     if (s.stuckTime > 1.3 && this.reverse <= 0) this.reverse = 1.1;
