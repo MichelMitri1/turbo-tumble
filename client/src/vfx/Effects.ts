@@ -1,0 +1,219 @@
+import { AdditiveBlending, DoubleSide, Group, IcosahedronGeometry, Mesh, MeshBasicMaterial, NormalBlending, RingGeometry, Vector3 } from 'three';
+import { SurfaceType } from '@shared/types/surface';
+import type { KartState } from '@shared/vehicles/KartState';
+import type { KartRenderState } from '../vehicles/KartView';
+import { ParticleSystem } from './Particles';
+
+/** Spark colours for mini-turbo stages 1..3 (cyan → orange → magenta). */
+export const DRIFT_COLORS = ['#ffffff', '#3fd8ff', '#ff9a1a', '#ff4fd8'] as const;
+
+interface Ring {
+  mesh: Mesh;
+  age: number;
+  life: number;
+  radius: number;
+  /** Fireball cores grow fast and fade; rings ease out. */
+  kind: 'ring' | 'core';
+}
+
+const RAINBOW = ['#ff4f6a', '#ffb52e', '#ffe14d', '#5ce06a', '#3fd8ff', '#9b6bff'];
+
+/**
+ * All transient visual effects: per-kart emitters and one-shot bursts driven by
+ * simulation events. Purely cosmetic — never feeds back into the simulation.
+ */
+export class Effects {
+  readonly root = new Group();
+  private readonly glow = new ParticleSystem(4000, AdditiveBlending);
+  private readonly puff = new ParticleSystem(2000, NormalBlending);
+  private readonly rings: Ring[] = [];
+  private readonly emitAcc = new Map<number, number>();
+  private readonly v = new Vector3();
+  private readonly w = new Vector3();
+  private readonly fwd = new Vector3();
+  private readonly right = new Vector3();
+  private readonly up = new Vector3();
+  private time = 0;
+
+  constructor() {
+    this.root.name = 'effects';
+    this.root.add(this.glow.mesh, this.puff.mesh);
+  }
+
+  update(dt: number): void {
+    this.time += dt;
+    this.glow.update(dt);
+    this.puff.update(dt);
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]!;
+      r.age += dt;
+      const t = r.age / r.life;
+      if (t >= 1) {
+        this.root.remove(r.mesh);
+        r.mesh.geometry.dispose();
+        (r.mesh.material as MeshBasicMaterial).dispose();
+        this.rings.splice(i, 1);
+        continue;
+      }
+      if (r.kind === 'core') {
+        r.mesh.scale.setScalar(r.radius * (0.35 + 0.65 * Math.sqrt(t)));
+        (r.mesh.material as MeshBasicMaterial).opacity = Math.pow(1 - t, 1.5);
+      } else {
+        r.mesh.scale.setScalar(0.2 + r.radius * (1 - (1 - t) * (1 - t)));
+        (r.mesh.material as MeshBasicMaterial).opacity = (1 - t) * 0.85;
+      }
+    }
+  }
+
+  private rand(spread: number): number {
+    return (Math.random() * 2 - 1) * spread;
+  }
+
+  /** Steady emitters for one kart, rate-limited per kart. */
+  kart(id: number, rs: KartRenderState, s: KartState, dt: number): void {
+    const acc = (this.emitAcc.get(id) ?? 0) + dt;
+    const ticks = Math.floor(acc / (1 / 60));
+    this.emitAcc.set(id, acc - ticks / 60);
+    if (ticks <= 0) return;
+
+    this.fwd.set(0, 0, 1).applyQuaternion(rs.quaternion);
+    this.right.set(-1, 0, 0).applyQuaternion(rs.quaternion);
+    this.up.set(0, 1, 0).applyQuaternion(rs.quaternion);
+    const scale = s.shrinkTimer > 0 ? 0.55 : 1;
+    const at = (x: number, y: number, z: number): Vector3 =>
+      this.v.copy(rs.position).addScaledVector(this.right, x * scale).addScaledVector(this.up, y * scale).addScaledVector(this.fwd, z * scale);
+
+    for (let k = 0; k < ticks; k++) {
+      // Drift sparks from both rear wheels (stage colour) + tyre smoke.
+      if (s.drifting && s.grounded) {
+        for (const side of [-1, 1]) {
+          const p = at(side * 0.75, 0.15, -0.95);
+          if (s.driftStage > 0) {
+            for (let n = 0; n < 2; n++) {
+              this.glow.spawn({
+                position: p,
+                velocity: this.w.copy(this.fwd).multiplyScalar(-3 - Math.random() * 3).addScaledVector(this.right, side * (1 + Math.random() * 2)).add(new Vector3(0, 2 + Math.random() * 3, 0)),
+                color: DRIFT_COLORS[s.driftStage]!,
+                size: [0.32, 0.05],
+                life: 0.22 + Math.random() * 0.12,
+                gravity: 14,
+              });
+            }
+          }
+          if (Math.random() < 0.5) this.puff.spawn({ position: p, velocity: this.w.set(this.rand(0.6), 0.8, this.rand(0.6)), color: '#e9e6f2', size: [0.5, 1.6], life: 0.6, alpha: 0.35, drag: 2 });
+        }
+      }
+      // Boost / rocket flames from the exhaust pipes.
+      if (s.boostTimer > 0 || s.rocketTimer > 0) {
+        const big = s.rocketTimer > 0 ? 2.2 : 1;
+        for (const side of [-1, 1]) {
+          const p = s.rocketTimer > 0 ? at(0, 1.1, -2.6) : at(side * 0.42, 1.05, -1.25);
+          this.glow.spawn({ position: p, velocity: this.w.copy(this.fwd).multiplyScalar(-6 - Math.random() * 4).add(new Vector3(this.rand(0.6), this.rand(0.6), this.rand(0.6))), color: Math.random() < 0.5 ? '#ffb52e' : '#ff5a1a', size: [0.55 * big, 0.1], life: 0.16, drag: 4 });
+          if (Math.random() < 0.3) this.glow.spawn({ position: p, velocity: this.w.copy(this.fwd).multiplyScalar(-4), color: '#fff3c0', size: [0.3 * big, 0.05], life: 0.1 });
+          if (s.rocketTimer > 0) break;
+        }
+      }
+      // Off-road dust.
+      if (s.grounded && s.surface === SurfaceType.Offroad && Math.abs(s.forwardSpeed) > 6 && Math.random() < 0.7) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        this.puff.spawn({ position: at(side * 0.7, 0.2, -0.9), velocity: this.w.set(this.rand(1), 1.2 + Math.random(), this.rand(1)), color: '#b59a6a', size: [0.5, 1.8], life: 0.7, alpha: 0.5, drag: 2, gravity: -0.5 });
+      }
+      // Hyper Prism sparkles.
+      if (s.invincibleTimer > 0) {
+        this.glow.spawn({ position: at(this.rand(1.2), 0.5 + Math.random() * 1.6, this.rand(1.6)), velocity: this.w.set(this.rand(1), 1.5, this.rand(1)), color: RAINBOW[Math.floor(Math.random() * RAINBOW.length)]!, size: [0.4, 0], life: 0.45 });
+      }
+      // Dizzy stars while spun out.
+      if ((s.spinTimer > 0 || s.tumbleTimer > 0) && Math.random() < 0.35) {
+        const a = this.time * 8 + Math.random();
+        this.glow.spawn({ position: at(Math.cos(a) * 0.7, 2.7, Math.sin(a) * 0.7), color: '#ffe14d', size: [0.35, 0.1], life: 0.3 });
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ bursts
+
+  ring(position: Vector3, radius: number, color: string, life = 0.55, y = 0.3): void {
+    const mesh = new Mesh(
+      new RingGeometry(0.8, 1, 48),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: DoubleSide, depthWrite: false, blending: AdditiveBlending }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.copy(position).setY(position.y + y);
+    this.root.add(mesh);
+    this.rings.push({ mesh, age: 0, life, radius, kind: 'ring' });
+  }
+
+  /** Expanding ball (explosion core). Solid = cartoon fireball, otherwise additive glow. */
+  core(position: Vector3, radius: number, color: string, life = 0.45, solid = false): void {
+    const mesh = new Mesh(
+      new IcosahedronGeometry(1, 2),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 1, depthWrite: false, blending: solid ? NormalBlending : AdditiveBlending }),
+    );
+    mesh.position.copy(position);
+    this.root.add(mesh);
+    this.rings.push({ mesh, age: 0, life, radius, kind: 'core' });
+  }
+
+  explosion(position: Vector3, radius: number): void {
+    const center = this.v.copy(position).setY(position.y + 1.2).clone();
+    this.core(center, radius * 0.7, '#ff7a1a', 0.55, true);
+    this.core(center, radius * 0.5, '#ffd23f', 0.4, true);
+    this.core(center, radius * 0.35, '#fff6d0', 0.3);
+    for (let i = 0; i < 70; i++) {
+      const dir = this.w.set(this.rand(1), Math.random() * 1.2, this.rand(1)).normalize();
+      this.glow.spawn({ position: center, velocity: dir.multiplyScalar(6 + Math.random() * radius * 1.6), color: i % 3 === 0 ? '#fff3c0' : i % 3 === 1 ? '#ffb52e' : '#ff4a1a', size: [2.6, 0.3], life: 0.5 + Math.random() * 0.3, drag: 3 });
+    }
+    for (let i = 0; i < 26; i++) {
+      this.puff.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(1.5), Math.random() * 1.5, this.rand(1.5))), velocity: this.w.set(this.rand(4), 3 + Math.random() * 3, this.rand(4)), color: '#5a5566', size: [1.5, 4.5], life: 1.3, alpha: 0.55, drag: 1.5 });
+    }
+    this.ring(position, radius, '#ffb52e', 0.5);
+  }
+
+  shockwave(position: Vector3, radius: number): void {
+    this.ring(position, radius, '#ffe14d', 0.6, 0.5);
+    this.ring(position, radius * 0.7, '#ffffff', 0.45, 1.2);
+  }
+
+  boxBreak(position: Vector3): void {
+    for (let i = 0; i < 26; i++) {
+      this.glow.spawn({ position, velocity: this.w.set(this.rand(5), 2 + Math.random() * 5, this.rand(5)), color: RAINBOW[i % RAINBOW.length]!, size: [0.45, 0.05], life: 0.5, gravity: 12, drag: 1 });
+    }
+  }
+
+  coin(position: Vector3): void {
+    for (let i = 0; i < 10; i++) {
+      this.glow.spawn({ position: this.v.copy(position).setY(position.y + 1), velocity: this.w.set(this.rand(2), 2 + Math.random() * 3, this.rand(2)), color: '#ffd23f', size: [0.35, 0.05], life: 0.45, gravity: 8 });
+    }
+  }
+
+  poof(position: Vector3, color = '#ffffff'): void {
+    for (let i = 0; i < 12; i++) {
+      this.puff.spawn({ position, velocity: this.w.set(this.rand(2.5), 1 + Math.random() * 2, this.rand(2.5)), color, size: [0.6, 1.6], life: 0.45, alpha: 0.7, drag: 3 });
+    }
+  }
+
+  burst(position: Vector3, color: string, count = 18, speed = 5): void {
+    for (let i = 0; i < count; i++) {
+      this.glow.spawn({ position, velocity: this.w.set(this.rand(1), Math.random(), this.rand(1)).normalize().multiplyScalar(speed * (0.5 + Math.random())), color, size: [0.6, 0.05], life: 0.4, drag: 2 });
+    }
+  }
+
+  miniTurbo(position: Vector3, stage: number): void {
+    this.burst(this.v.copy(position).setY(position.y + 0.8), DRIFT_COLORS[stage] ?? '#ffffff', 10 + stage * 8, 4 + stage * 2);
+  }
+
+  /** Lightning strike column (Zap Storm). */
+  strike(position: Vector3): void {
+    for (let y = 0; y < 40; y += 1.2) {
+      this.glow.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(0.4), y, this.rand(0.4))), color: y % 2 < 1 ? '#fff9c4' : '#ffe14d', size: [0.9, 0.2], life: 0.25 });
+    }
+    this.burst(position, '#ffe14d', 14, 6);
+  }
+
+  /** Coloured paint flecks around a racer hit by Paint Splat. */
+  splat(position: Vector3): void {
+    for (let i = 0; i < 16; i++) {
+      this.puff.spawn({ position: this.v.copy(position).setY(position.y + 1.5), velocity: this.w.set(this.rand(4), 2 + Math.random() * 3, this.rand(4)), color: i % 2 ? '#9b4dff' : '#ff4fd8', size: [0.5, 0.9], life: 0.6, gravity: 10, alpha: 0.9 });
+    }
+  }
+}

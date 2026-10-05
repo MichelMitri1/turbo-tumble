@@ -1,0 +1,27 @@
+{
+  "name": "turbo-tumble",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "node tools/dev.mjs",
+    "dev:client": "npm run dev -w client",
+    "dev:server": "npm run dev -w server",
+    "server": "npm run start -w server",
+    "build": "npm run build -w client",
+    "start": "npm run build && npm run server",
+    "typecheck": "tsc -p shared --noEmit && tsc -p client --noEmit && tsc -p server --noEmit",
+    "preview": "npm run preview -w client"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "puppeteer-core": "^25.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

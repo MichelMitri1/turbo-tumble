@@ -1,0 +1,78 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, normalize, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Server } from '@colyseus/core';
+import { WebSocketTransport } from '@colyseus/ws-transport';
+import { initPhysics } from '../../shared/src/physics/PhysicsWorld';
+import { DEFAULT_SERVER_PORT, PROTOCOL_VERSION, ROOM_NAME } from '../../shared/src/net/Protocol';
+import { RaceRoom } from './rooms/RaceRoom';
+
+/**
+ * Turbo Tumble game server: Colyseus rooms over WebSockets. If the client has
+ * been built (`npm run build`), the same port also serves the game itself, so a
+ * single process is all a deployment needs.
+ *
+ *   PORT=2567 npm run server
+ */
+const port = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
+const dist = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist');
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.wasm': 'application/wasm',
+  '.glb': 'model/gltf-binary',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.md': 'text/markdown; charset=utf-8',
+};
+
+type Next = () => void;
+interface ExpressLike {
+  get(path: string, handler: (req: IncomingMessage, res: ServerResponse) => void): void;
+  use(handler: (req: IncomingMessage, res: ServerResponse, next: Next) => void): void;
+}
+
+/** Minimal static file handler for client/dist (SPA fallback to index.html). */
+function serveClient(req: IncomingMessage, res: ServerResponse, next: Next): void {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname.startsWith('/matchmake')) return next();
+  let file = normalize(join(dist, decodeURIComponent(url.pathname)));
+  if (!file.startsWith(dist)) return next();
+  if (!existsSync(file) || statSync(file).isDirectory()) file = join(dist, 'index.html');
+  if (!existsSync(file)) return next();
+  res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
+  if (file.includes(`${join('dist', 'assets')}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
+}
+
+await initPhysics();
+
+const server = new Server({
+  transport: new WebSocketTransport({ pingInterval: 3000, pingMaxRetries: 3 }),
+  greet: false,
+  express: (app: ExpressLike) => {
+    app.get('/health', (_req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true, game: 'turbo-tumble', protocol: PROTOCOL_VERSION }));
+    });
+    if (existsSync(join(dist, 'index.html'))) app.use(serveClient);
+  },
+});
+server.define(ROOM_NAME, RaceRoom);
+
+const latency = Number(process.env.LATENCY ?? 0);
+if (latency > 0) {
+  server.simulateLatency(latency);
+  console.log(`Simulating ${latency} ms latency`);
+}
+
+await server.listen(port, '0.0.0.0');
+console.log(`Turbo Tumble server listening on :${port}${existsSync(join(dist, 'index.html')) ? ' (also serving client/dist)' : ''}`);
