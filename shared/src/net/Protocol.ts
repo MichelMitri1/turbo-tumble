@@ -1,5 +1,6 @@
 import { DIFFICULTIES, type Difficulty } from '../ai/AIDifficulty';
 import { MAX_RACERS } from '../constants/simulation';
+import { isTrackId } from '../tracks/registry';
 import type { RaceEvent } from '../race/RaceTypes';
 import type { RacerSetup } from '../race/RaceSimulation';
 
@@ -55,7 +56,7 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = { trackId: 'sunny-circuit', l
 export function sanitizeSettings(input: Partial<RoomSettings> | undefined, base: RoomSettings = DEFAULT_ROOM_SETTINGS): RoomSettings {
   const s = { ...base, ...(input ?? {}) };
   return {
-    trackId: typeof s.trackId === 'string' ? s.trackId : base.trackId,
+    trackId: typeof s.trackId === 'string' && isTrackId(s.trackId) ? s.trackId : base.trackId,
     laps: Math.min(5, Math.max(1, Math.round(Number(s.laps) || base.laps))),
     items: Boolean(s.items),
     difficulty: DIFFICULTIES.includes(s.difficulty) ? s.difficulty : base.difficulty,

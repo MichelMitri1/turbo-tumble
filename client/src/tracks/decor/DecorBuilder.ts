@@ -1,4 +1,4 @@
-import { Box3, Matrix4, Quaternion, Vector3 } from 'three';
+import { Box3, Color, Matrix4, Mesh, MeshStandardMaterial, Quaternion, Vector3, type Object3D } from 'three';
 import type { PropPlacement, ScatterRule } from '@shared/types/track';
 import { SeededRandom } from '@shared/math/random';
 import type { BuildContext, Footprint } from '../BuildContext';
@@ -85,12 +85,32 @@ function scatter(ctx: BuildContext, rule: ScatterRule): void {
 
   for (const [model, matrices] of perModel) {
     if (!matrices.length) continue;
+    const template = rule.tint ? tinted(ctx.assets.template(model), rule.tint, rule.tintAmount ?? 0.5) : ctx.assets.template(model);
     ctx.add(
-      createInstancedModel(ctx.assets.template(model), matrices, {
+      createInstancedModel(template, matrices, {
         castShadow: rule.castShadow ?? false,
         receiveShadow: true,
         name: `scatter:${model}`,
       }),
     );
   }
+}
+
+/** A copy of a model whose materials are blended towards a colour (snow, scorched rock…). */
+function tinted(template: Object3D, color: string, amount: number): Object3D {
+  const copy = template.clone(true);
+  const target = new Color(color);
+  const done = new Map<MeshStandardMaterial, MeshStandardMaterial>();
+  copy.traverse((o) => {
+    const m = o as Mesh;
+    if (!m.isMesh || !(m.material instanceof MeshStandardMaterial)) return;
+    let t = done.get(m.material);
+    if (!t) {
+      t = m.material.clone();
+      t.color.lerp(target, amount);
+      done.set(m.material, t);
+    }
+    m.material = t;
+  });
+  return copy;
 }

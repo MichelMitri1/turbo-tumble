@@ -301,7 +301,159 @@ export const STING_LOSE: SongSpec = {
   order: ['s'],
 };
 
-export const SONGS: SongSpec[] = [SUNNY_CIRCUIT, GARAGE_GROOVE, PODIUM, STING_INTRO, STING_FINAL_LAP, STING_WIN, STING_FINISH, STING_LOSE];
+
+// ------------------------------------------------------------------ world tour themes
+
+const BEAT_PARTS = {
+  kick: { instrument: 'kick', gain: 0.9 },
+  snare: { instrument: 'snare', gain: 0.75 },
+  clap: { instrument: 'clap', gain: 0.6 },
+  hat: { instrument: 'hat', gain: 0.85 },
+  crash: { instrument: 'crash', gain: 0.7 },
+  bass: { instrument: 'bass', gain: 0.85 },
+  pad: { instrument: 'pad', gain: 0.8 },
+  arp: { instrument: 'pluck', gain: 0.7 },
+  lead: { instrument: 'lead', gain: 1 },
+  bell: { instrument: 'bell', gain: 0.8 },
+  brass: { instrument: 'brass', gain: 0.8 },
+};
+
+/** Dune Canyon / Temple Ruins — exotic-scale groove (D Phrygian dominant). */
+export const DUNE_DRIFT: SongSpec = {
+  id: 'music-dunes',
+  bpm: 140,
+  parts: BEAT_PARTS,
+  sections: {
+    a: {
+      bars: 4,
+      parts: {
+        kick: ['x . . . . . x . x . . . . . . .'],
+        clap: ['. . . . x . . . . . . . x . . .'],
+        hat: ['. . x . . . x . . . x . . . x .'],
+        crash: ['X . . . . . . . . . . . . . . .', rest, rest, rest],
+        bass: [octaves('D2', 'D3'), octaves('Eb2', 'Eb3'), octaves('D2', 'D3'), octaves('C2', 'C3')],
+        pad: [hold('D4+F#4+A4'), hold('Eb4+G4+Bb4'), hold('D4+F#4+A4'), hold('C4+E4+G4')],
+        lead: ['D5 - Eb5 - F#5 - - - G5 - F#5 - Eb5 - D5 -', 'Eb5 - - - G5 - - - Bb5 - A5 - G5 - - -', 'A5 - - - G5 - F#5 - G5 - - - F#5 - Eb5 -', 'D5 - - - - - - - . . . . C5 - D5 -'],
+      },
+    },
+    b: {
+      bars: 4,
+      parts: {
+        kick: ['x . . x . . x . x . . x . . . .'],
+        snare: ['. . . . x . . . . . . . x . x x'],
+        hat: ['x o x o x o x o x o x o x o x o'],
+        bass: [octaves('D2', 'D3'), octaves('Eb2', 'Eb3'), octaves('D2', 'D3'), octaves('C2', 'C3')],
+        arp: [arp('D5', 'F#5', 'A5'), arp('Eb5', 'G5', 'Bb5'), arp('D5', 'F#5', 'A5'), arp('C5', 'E5', 'G5')],
+        lead: ['D6 - - - C6 - Bb5 - A5 - - - G5 - A5 -', 'Bb5 - - - A5 - G5 - F#5 - - - G5 - - -', 'A5 - F#5 - G5 - Eb5 - F#5 - D5 - Eb5 - C5 -', 'D5 - - - - - - - - - - - . . . .'],
+      },
+    },
+  },
+  order: ['a', 'b', 'a', 'b'],
+  loopFrom: 0,
+};
+
+/** Neon Metro / Mushroom Hollow — synthwave (A minor). */
+export const NEON_NIGHTS: SongSpec = {
+  id: 'music-neon',
+  bpm: 118,
+  parts: BEAT_PARTS,
+  sections: {
+    a: {
+      bars: 8,
+      parts: {
+        kick: ['x . . . x . . . x . . . x . . .'],
+        clap: ['. . . . x . . . . . . . x . . .'],
+        hat: ['. . x . . . x . . . x . . . x .'],
+        crash: ['X . . . . . . . . . . . . . . .', rest, rest, rest, rest, rest, rest, rest],
+        bass: [octaves('A1', 'A2'), octaves('F1', 'F2'), octaves('C2', 'C3'), octaves('G1', 'G2')],
+        pad: [hold('A3+C4+E4'), hold('F3+A3+C4'), hold('G3+C4+E4'), hold('G3+B3+D4')],
+        arp: [arp('A4', 'C5', 'E5'), arp('F4', 'A4', 'C5'), arp('G4', 'C5', 'E5'), arp('G4', 'B4', 'D5')],
+        lead: [
+          'E5 - - - A5 - - - C6 - B5 - A5 - - -',
+          'F5 - - - A5 - - - C6 - - - D6 - C6 -',
+          'E6 - - - D6 - C6 - G5 - - - - - . .',
+          'B5 - - - D6 - - - G5 - - - A5 - B5 -',
+          'C6 - - - B5 - A5 - E5 - - - A5 - - -',
+          'A5 - C6 - F6 - - - E6 - D6 - C6 - - -',
+          'E6 - - - G6 - - - E6 - D6 - C6 - - -',
+          'D6 - - - - - - - B5 - - - . . . .',
+        ],
+      },
+    },
+  },
+  order: ['a'],
+  loopFrom: 0,
+};
+
+/** Frost Peak — crisp bells (E major). */
+export const FROSTBITE: SongSpec = {
+  id: 'music-frost',
+  bpm: 132,
+  parts: BEAT_PARTS,
+  sections: {
+    a: {
+      bars: 4,
+      parts: {
+        kick: ['x . . . . . . . x . . . . . . .'],
+        snare: ['. . . . x . . . . . . . x . . .'],
+        hat: ['x . x . x . x . x . x . x . x .'],
+        bass: [octaves('E2', 'E3'), octaves('C#2', 'C#3'), octaves('A1', 'A2'), octaves('B1', 'B2')],
+        pad: [hold('E4+G#4+B4'), hold('C#4+E4+G#4'), hold('C#4+E4+A4'), hold('D#4+F#4+B4')],
+        arp: [arp('E5', 'G#5', 'B5'), arp('C#5', 'E5', 'G#5'), arp('C#5', 'E5', 'A5'), arp('D#5', 'F#5', 'B5')],
+        bell: ['B5 - - - G#5 - - - E5 - - - G#5 - B5 -', 'C#6 - - - - - B5 - G#5 - - - E5 - - -', 'A5 - - - C#6 - - - E6 - - - C#6 - A5 -', 'F#5 - - - G#5 - A5 - B5 - - - - - . .'],
+      },
+    },
+    b: {
+      bars: 4,
+      parts: {
+        kick: ['x . . . x . . . x . . . x . . .'],
+        snare: ['. . . . x . . . . . . . x . . .'],
+        hat: ['x o x o x o x o x o x o x o x o'],
+        bass: [octaves('E2', 'E3'), octaves('C#2', 'C#3'), octaves('A1', 'A2'), octaves('B1', 'B2')],
+        pad: [hold('E4+G#4+B4'), hold('C#4+E4+G#4'), hold('C#4+E4+A4'), hold('D#4+F#4+B4')],
+        lead: ['E6 - - - D#6 - B5 - G#5 - - - B5 - - -', 'C#6 - - - E6 - - - G#6 - F#6 - E6 - - -', 'C#6 - - - A5 - - - E6 - - - F#6 - E6 -', 'D#6 - - - - - - - F#6 - - - . . . .'],
+      },
+    },
+  },
+  order: ['a', 'b'],
+  loopFrom: 0,
+};
+
+/** Volcano Run — driving and urgent (E minor). */
+export const MAGMA_RUSH: SongSpec = {
+  id: 'music-volcano',
+  bpm: 160,
+  parts: BEAT_PARTS,
+  sections: {
+    a: {
+      bars: 4,
+      parts: {
+        kick: ['x . . x x . . . x . . x x . . .'],
+        snare: ['. . . . x . . . . . . . x . . .', '. . . . x . . . . . . . x . . .', '. . . . x . . . . . . . x . . .', '. . . . x . . . . . x . x x X X'],
+        hat: ['x o x o x o x o x o x o x o x o'],
+        crash: ['X . . . . . . . . . . . . . . .', rest, rest, rest],
+        bass: [octaves('E2', 'E3'), octaves('C2', 'C3'), octaves('D2', 'D3'), octaves('B1', 'B2')],
+        pad: [hold('E4+G4+B4'), hold('C4+E4+G4'), hold('D4+F#4+A4'), hold('D#4+F#4+B4')],
+        brass: ['E5 . E5 . G5 . E5 . B5 - - - A5 - G5 -', 'C6 - - - B5 - G5 - E5 - - - G5 - - -', 'F#5 . F#5 . A5 . F#5 . D6 - - - C6 - A5 -', 'B5 - - - - - D#6 - - - - - F#6 - - -'],
+      },
+    },
+    b: {
+      bars: 4,
+      parts: {
+        kick: ['x . . x x . . . x . . x x . . .'],
+        snare: ['. . . . x . . . . . . . x . . .'],
+        hat: ['x o x o x o x o x o x o x o x o'],
+        bass: [octaves('E2', 'E3'), octaves('C2', 'C3'), octaves('D2', 'D3'), octaves('B1', 'B2')],
+        arp: [arp('E5', 'G5', 'B5'), arp('C5', 'E5', 'G5'), arp('D5', 'F#5', 'A5'), arp('D#5', 'F#5', 'B5')],
+        lead: ['B5 - - - E6 - - - D6 - B5 - G5 - - -', 'G5 - - - C6 - - - B5 - G5 - E5 - - -', 'A5 - - - D6 - - - C6 - A5 - F#5 - - -', 'F#5 - - - B5 - - - D#6 - - - . . . .'],
+      },
+    },
+  },
+  order: ['a', 'b'],
+  loopFrom: 0,
+};
+
+export const SONGS: SongSpec[] = [SUNNY_CIRCUIT, GARAGE_GROOVE, PODIUM, DUNE_DRIFT, NEON_NIGHTS, FROSTBITE, MAGMA_RUSH, STING_INTRO, STING_FINAL_LAP, STING_WIN, STING_FINISH, STING_LOSE];
 
 /** Track music ids (TrackDefinition.music) → song. */
 export function trackSong(id: string): SongSpec {

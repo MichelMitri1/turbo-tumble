@@ -112,6 +112,8 @@ export interface TerrainDefinition {
   hills: HillDefinition[];
   lakes: LakeDefinition[];
   waterLevel: number | null;
+  /** Look of the lakes (default: water). Lava glows; ice is pale and opaque. */
+  liquid?: { color: string; emissive?: string; emissiveIntensity?: number; opacity?: number };
   palette: {
     grassA: string;
     grassB: string;
@@ -140,6 +142,8 @@ export interface SkyDefinition {
   fogNear: number;
   fogFar: number;
   clouds: number;
+  /** 0..1 star field brightness (night tracks). */
+  stars?: number;
 }
 
 /** Visual model scattered or placed by the decoration system (ids from the asset manifest). */
@@ -154,6 +158,9 @@ export interface ScatterRule {
   avoidWater?: boolean;
   castShadow?: boolean;
   seed: number;
+  /** Blend the models' colours towards this (e.g. snow-dusted pines). */
+  tint?: string;
+  tintAmount?: number;
 }
 
 export interface PropPlacement extends TrackAnchor {

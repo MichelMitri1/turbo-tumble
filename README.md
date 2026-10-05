@@ -16,7 +16,7 @@ npm run typecheck    # shared + client + server
 
 Opening the site shows the **main menu** (over a live CPU race): pick Single Race,
 Grand Prix, Time Trial or Online, players (1–4), racer/kart, CPU difficulty, laps and items.
-**Controls** in the menu rebinds keys/buttons and sets the stick dead zone.
+**Controls & Sound** in the menu rebinds keys/buttons, sets music / sound volume and the stick dead zone (M mutes anytime).
 
 ### Local multiplayer (split-screen)
 
@@ -84,6 +84,26 @@ browser; `LATENCY=100 npm run dev:server` delays the server side. F3 shows the n
 
 Keyboard bindings are rebindable through `InputManager.rebindKey()` and persist in `localStorage`
 (the settings UI lands in Phase 7).
+
+## Sound, animation & effects
+
+- **All audio is synthesised in the browser** (Web Audio) — no sound files, so everything is
+  original: engines (pitch follows speed, brightness follows throttle, tyre squeal while
+  drifting, wind, off-road rumble), ~50 effects (countdown, drift sparks, mini-turbos, every
+  item, hits, explosions, coins, crowd cheers, menu blips) and the music, written as step data
+  in `client/src/audio/music/songs.ts`: *Sunny Circuit* (race), *Garage Groove* (menus),
+  *Podium* (results) and stingers (intro, final lap — then the theme speeds up a semitone
+  higher —, win / finish / lose). Sounds are positioned around the nearest player's camera
+  (works in split-screen). **M** mutes; music and sound volume are in *Controls & Sound*.
+  Browsers only allow sound after a click or key press (a hint shows until then).
+- **Drivers** are animated procedurally: lean and look into turns, countdown bounce, lunge on
+  item throws, lean back on boosts / rocket starts, shake when hit, stretch in the air, glance
+  back at projectiles closing in, cheer (top 3) or sulk at the finish. Each character has a
+  springy signature topper (Bix antenna, Pip pom-poms, Zuzu fin crest, Tuko propeller beanie,
+  Mox horns) and a scarf that streams with speed, so racers read from behind.
+- **Effects**: tyre marks on tarmac, wall-scrape sparks, landing dust, drift-stage flashes,
+  item trails, idle exhaust, rocket-start burst, respawn beam, finish confetti and a finish
+  camera that swings round to the driver while results show.
 
 ## Racing
 
@@ -192,7 +212,9 @@ client/src/
   ui/                  Loading screen, main menu, HUD (timer, standings, minimap), GP panel,
                        pause, debug overlay, join screen, controls, online screens
   config/              Camera tuning, graphics settings, racer/kart roster (models, colours)
-  audio/               — Phase 6
+  audio/               AudioEngine (buses, settings, unlock, split-screen spatialiser), synth +
+                       sfx (every sound effect), EngineVoice, SoundBoard, RaceAudio (events →
+                       sound, music flow), music/ (Song format, MusicPlayer sequencer, songs)
 
 server/src/
   index.ts             Colyseus server (WebSocket transport) + static client/dist + /health
@@ -247,6 +269,9 @@ node tools/online-smoke.mjs <url> <outDir> [--lag=150] [--jitter=20] [--bots=4] 
                                                # race, smoothness, reconnect (--drop), leave
 node tools/online-flow.mjs <url> <outDir>      # room lifecycle: results/points → lobby,
                                                # mid-race join refusal, quick match
+node tools/audio-check.mjs <url> <outDir> [--songs=30]
+                                               # renders every SFX + song offline in Chrome:
+                                               # level / clipping / length check + WAVs to audition
 ```
 
 `smoke.mjs` drives the game in local Chrome (puppeteer-core): screenshots, telemetry,
@@ -269,6 +294,6 @@ tracks,environment,items,animations,textures,particles,audio,ui}`.
 | 3 | Racing lines, AI difficulty & overtaking, minimap, timers, standings, Grand Prix, Time Trial + ghosts, main menu | ✅ |
 | 4 | Join screen & device assignment, 1–4P menus, split layouts, controls rebinding, per-viewport framing, faster karts + speed lines | ✅ |
 | 5 | Colyseus server, rooms/codes, quick match, lobby + ready-up, 8 online humans (+ online split-screen), prediction + reconciliation + interpolation, reconnection, results/points | ✅ |
-| 6 | Audio, character animation, VFX polish (items & core particles done in Phase 2) | next |
-| 7 | Neon Metro, Volcano Run, more racers, menus, kart select | |
+| 6 | Synthesised audio (engines, SFX, original music), procedural driver animation + toppers/scarves, VFX polish, finish camera | ✅ |
+| 7 | Neon Metro, Volcano Run, more racers, menus, kart select | next |
 | 8 | Optimisation, balance, full test pass | |

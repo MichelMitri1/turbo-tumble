@@ -1,20 +1,19 @@
-import { BufferGeometry, Color, Float32BufferAttribute, Fog, Line, LineBasicMaterial, PMREMGenerator, Scene, Vector3 } from 'three';
-import { computeRacingLine } from '@shared/track/RacingLine';
-import { initPhysics, PhysicsWorld } from '@shared/physics/PhysicsWorld';
-import { getTrack } from '@shared/tracks/registry';
+import { Scene } from 'three';
+import type { PhysicsWorld } from '@shared/physics/PhysicsWorld';
+import { initPhysics } from '@shared/physics/PhysicsWorld';
 import { getCup } from '@shared/tracks/cups';
 import { GrandPrixState } from '@shared/race/GrandPrix';
-import type { SkyDefinition } from '@shared/types/track';
 import { AssetLoader } from '../assets/AssetLoader';
 import type { GraphicsSettings } from '../config/graphics';
 import { CHARACTERS, KART_BODIES, getCharacter } from '../config/roster';
 import { GameLoop } from '../core/GameLoop';
 import { InputManager } from '../input/InputManager';
-import { Lighting } from '../rendering/Lighting';
 import { setTextureAnisotropy } from '../rendering/ProceduralTextures';
 import { Renderer } from '../rendering/Renderer';
-import { Sky } from '../rendering/Sky';
-import { loadTrack, type TrackRuntime } from '../tracks/TrackBuilder';
+import type { TrackRuntime } from '../tracks/TrackBuilder';
+import { LoadingScreen } from '../ui/LoadingScreen';
+import { World } from './World';
+import { getTrack } from '@shared/tracks/registry';
 import { DebugOverlay, type DebugSnapshot } from '../ui/DebugOverlay';
 import { GrandPrixPanel, type GpRow } from '../ui/GrandPrixPanel';
 import { MainMenu, type MenuChoice } from '../ui/MainMenu';
@@ -49,15 +48,15 @@ export class Game {
   readonly scene = new Scene();
   readonly input = new InputManager();
   readonly assets = new AssetLoader();
-  readonly physics = new PhysicsWorld();
   readonly audio = new GameAudio();
   private soundHint!: HTMLElement;
   readonly renderer: Renderer;
   session!: RaceSession;
   /** HUD icons rendered from the item models (public for dev tooling). */
   icons: Record<string, string> = {};
-  private track!: TrackRuntime;
-  private lighting!: Lighting;
+  private world!: World;
+  /** Bumps when a track load supersedes an older one. */
+  private loadToken = 0;
   private fx!: Effects;
   private debug!: DebugOverlay;
   private pause!: PauseMenu;
@@ -96,23 +95,21 @@ export class Game {
     return game;
   }
 
-  private async load(onProgress: LoadProgress): Promise<void> {
-    const def = getTrack(this.options.trackId);
-    this.scene.background = new Color(def.sky.horizon);
-    this.scene.fog = new Fog(new Color(def.sky.fogColor), def.sky.fogNear, def.sky.fogFar);
-    this.lighting = new Lighting(this.scene, def.lighting, this.options.graphics);
-    this.renderer.setExposure(def.lighting.exposure);
-    this.scene.add(new Sky(def.sky, this.lighting.sunDirection).mesh);
-    this.bakeEnvironment(def.sky, this.lighting.sunDirection);
+  private get track(): TrackRuntime {
+    return this.world.track;
+  }
 
+  get physics(): PhysicsWorld {
+    return this.world.physics!;
+  }
+
+  private async load(onProgress: LoadProgress): Promise<void> {
     // The whole roster (menus can pick any combination).
     const kartModels = new Set<string>([...CHARACTERS.map((c) => c.model), ...KART_BODIES.map((k) => k.model)]);
     await this.assets.loadModels(kartModels, (d, t) => onProgress(0.05 * (d / Math.max(1, t)), 'Fuelling karts'));
 
-    this.track = await loadTrack(def, { assets: this.assets, physics: this.physics, graphics: this.options.graphics }, (f, label) =>
-      onProgress(0.05 + f * 0.85, label),
-    );
-    this.scene.add(this.track.root);
+    this.world = new World(this.scene, this.renderer, this.assets, this.options.graphics);
+    await this.world.load(this.options.trackId, (f, label) => onProgress(0.05 + f * 0.85, label));
 
     onProgress(0.93, 'Stocking item boxes');
     this.icons = renderItemIcons();
@@ -150,7 +147,12 @@ export class Game {
       inRace: () => this.flow === 'online',
     });
     window.addEventListener('resize', () => this.layout());
-    this.addRacingLineDebug();
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'F5') {
+        e.preventDefault();
+        this.world.toggleRacingLine();
+      }
+    });
     this.soundHint = el('div', 'tt-sound-hint', '🔈 Click or press any key to turn on sound');
     this.ui.appendChild(this.soundHint);
 
@@ -163,47 +165,6 @@ export class Game {
       this.online.open([{ character: 'bix', kart: 'comet', device: { kind: 'any' } }], {}, inviteCode);
     } else this.showMenu();
     onProgress(1, 'Ready!');
-  }
-
-  /** F5 toggles the computed racing line (colour = target speed, red slow → green fast). */
-  private addRacingLineDebug(): void {
-    const path = this.track.path;
-    const line = computeRacingLine(path);
-    const pos: number[] = [];
-    const col: number[] = [];
-    const c = new Color();
-    for (let i = 0; i <= path.samples.length; i++) {
-      const k = i % path.samples.length;
-      const s = path.samples[k]!;
-      const p = s.position.clone().addScaledVector(s.right, line.lateral[k]!).addScaledVector(s.up, 0.3);
-      pos.push(p.x, p.y, p.z);
-      const t = Math.min(1, Math.max(0, (line.speed[k]! - 20) / 15));
-      c.setRGB(1 - t, t, 0.2);
-      col.push(c.r, c.g, c.b);
-    }
-    const g = new BufferGeometry();
-    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new Float32BufferAttribute(col, 3));
-    const mesh = new Line(g, new LineBasicMaterial({ vertexColors: true, depthTest: false }));
-    mesh.visible = false;
-    mesh.renderOrder = 998;
-    this.scene.add(mesh);
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'F5') {
-        e.preventDefault();
-        mesh.visible = !mesh.visible;
-      }
-    });
-  }
-
-  /** Image-based lighting from the sky so materials pick up sky/ground bounce. */
-  private bakeEnvironment(skyDef: SkyDefinition, sun: Vector3): void {
-    const pmrem = new PMREMGenerator(this.renderer.gl);
-    const envScene = new Scene();
-    envScene.add(new Sky(skyDef, sun).mesh);
-    this.scene.environment = pmrem.fromScene(envScene, 0, 0.1, 3000).texture;
-    this.scene.environmentIntensity = 0.55;
-    pmrem.dispose();
   }
 
   start(): void {
@@ -229,7 +190,7 @@ export class Game {
   startSession(config: SessionConfig, gridOrder?: readonly string[]): void {
     const cfg = normalizeSession(config);
     // Dev links (?mode=grandprix) start a cup without going through the menu.
-    if (cfg.mode === 'grandprix' && !this.gp) this.gp = new GrandPrixState(getCup('sunny-cup'), buildRacerSetups(cfg).map((s) => s.id));
+    if (cfg.mode === 'grandprix' && !this.gp) this.gp = new GrandPrixState(getCup(this.lastChoice?.cupId ?? 'sunny-cup'), buildRacerSetups(cfg).map((s) => s.id));
     this.session?.dispose();
     this.session = new RaceSession(this.deps(), cfg, buildRacerSetups(cfg, gridOrder), this.seed++);
     if (cfg.mode !== 'attract') {
@@ -246,7 +207,7 @@ export class Game {
     this.gp = null;
     this.pause.setOnline(false);
     this.flow = 'menu';
-    this.startSession({ mode: 'attract', trackId: this.options.trackId, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
+    this.startSession({ mode: 'attract', trackId: this.world.trackId!, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
     this.menu.setOpen(true);
     this.audio.menuMusic();
   }
@@ -263,15 +224,52 @@ export class Game {
     this.launch(choice, [{ character: choice.character, kart: choice.kart, device: { kind: 'any' } }]);
   }
 
+  // ---------------------------------------------------------------- tracks
+
+  private loading: Promise<void> = Promise.resolve();
+
+  /**
+   * Make `trackId` the loaded track: stops the loop, frees the current race,
+   * shows a loading screen while the track builds. Loads are queued.
+   */
+  private ensureTrack(trackId: string): Promise<void> {
+    const job = this.loading.then(async () => {
+      if (this.world.trackId === trackId) return;
+      const token = ++this.loadToken;
+      this.loop.stop();
+      this.session?.dispose();
+      const name = getTrack(trackId).name;
+      const screen = new LoadingScreen(this.ui);
+      screen.progress(0, `Driving to ${name}…`);
+      try {
+        await this.world.load(trackId, (f, label) => screen.progress(f, `${name} · ${label}`));
+      } finally {
+        screen.hide();
+      }
+      if (token !== this.loadToken) return;
+      this.debug.setWorld(this.physics, [this.track.terrainCollider]);
+      this.fx.skids.clear();
+      this.loop.start();
+    });
+    this.loading = job.catch((e) => console.error('[track] load failed', e));
+    return job;
+  }
+
+  /** Load the session's track if needed, then start it. */
+  private async startOn(cfg: SessionConfig, gridOrder?: readonly string[]): Promise<void> {
+    await this.ensureTrack(cfg.trackId);
+    this.startSession(cfg, gridOrder);
+  }
+
   private launch(choice: MenuChoice, players: SessionConfig['players']): void {
     if (choice.mode === 'online') {
       this.menu.setOpen(false);
-      this.online.open(players, { laps: choice.laps, items: choice.items, difficulty: choice.difficulty, racerCount: 8 });
+      this.online.open(players, { trackId: choice.trackId, laps: choice.laps, items: choice.items, difficulty: choice.difficulty, racerCount: 8 });
       return;
     }
     const cfg: SessionConfig = {
       mode: choice.mode,
-      trackId: this.options.trackId,
+      trackId: choice.trackId,
       laps: choice.laps,
       items: choice.items,
       difficulty: choice.difficulty,
@@ -281,18 +279,21 @@ export class Game {
     };
     if (choice.mode === 'grandprix') {
       cfg.laps = 3;
-      const cup = getCup('sunny-cup');
+      const cup = getCup(choice.cupId);
       const ids = buildRacerSetups(normalizeSession(cfg)).map((s) => s.id);
       this.gp = new GrandPrixState(cup, ids);
       cfg.trackId = this.gp.trackId;
     }
-    this.startSession(cfg);
+    this.menu.setOpen(false);
+    void this.startOn(cfg);
   }
 
   // ---------------------------------------------------------------- online
 
-  private startOnlineRace(race: OnlineRace, players: PlayerSetup[]): void {
+  private async startOnlineRace(race: OnlineRace, players: PlayerSetup[]): Promise<void> {
     const s = race.start.settings;
+    // The countdown is long enough to build the track if it's a new one.
+    await this.ensureTrack(s.trackId);
     const cfg: SessionConfig = {
       mode: 'online',
       trackId: s.trackId,
@@ -318,13 +319,18 @@ export class Game {
     if (this.pause.open) this.setPaused(false);
     this.pause.setOnline(false);
     this.flow = 'menu';
-    this.startSession({ mode: 'attract', trackId: this.options.trackId, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
+    this.startSession({ mode: 'attract', trackId: this.world.trackId!, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
     this.audio.menuMusic();
   }
 
   private restart(): void {
     if (!this.lastConfig || this.flow === 'online') return;
-    if (this.gp) this.gp = new GrandPrixState(this.gp.cup, buildRacerSetups(this.lastConfig).map((s) => s.id));
+    if (this.gp) {
+      // Restarting a cup goes back to its first track.
+      this.gp = new GrandPrixState(this.gp.cup, buildRacerSetups(this.lastConfig).map((s) => s.id));
+      void this.startOn({ ...this.lastConfig, trackId: this.gp.trackId });
+      return;
+    }
     this.startSession(this.lastConfig);
   }
 
@@ -351,7 +357,8 @@ export class Game {
         this.gpPanel.show(`${gp.cup.name} Results`, best === 1 && cfg.players.length === 1 ? 'Champion! 🏆' : `${who} ${ord}`, this.gpRows(false), 'Enter / Ⓐ — main menu', true);
       } else {
         gp.nextRace();
-        this.startSession({ ...cfg, trackId: gp.trackId }, gp.standings().map((e) => e.id));
+        this.gpPanel.hide();
+        void this.startOn({ ...cfg, trackId: gp.trackId }, gp.standings().map((e) => e.id));
       }
     } else {
       this.showMenu();
@@ -437,7 +444,7 @@ export class Game {
     this.session.render(this.loop.paused ? 1 : alpha, dt);
     this.fx.update(dt);
     this.track.update(dt, this.time);
-    this.lighting.fit(this.session.focusPoints());
+    this.world.lighting.fit(this.session.focusPoints());
     this.renderer.render(this.scene, this.session.views);
     this.debug.update(dt, () => this.debugSnapshot());
     this.input.endFrame();

@@ -2,6 +2,7 @@ import { DIFFICULTIES, DIFFICULTY } from '@shared/ai/AIDifficulty';
 import { MAX_RACERS } from '@shared/constants/simulation';
 import { MAX_ONLINE_HUMANS, normalizeRoomCode, type LobbyMemberView, type LobbyStateView, type RoomSettings } from '@shared/net/Protocol';
 import { getCharacter } from '../config/roster';
+import { TRACKS } from '@shared/tracks/registry';
 import type { MenuNav } from '../input/InputManager';
 import { el } from './dom';
 
@@ -201,7 +202,11 @@ export class OnlineScreen {
     };
     const cycle = <T,>(list: readonly T[], cur: T, d: number): T => list[(Math.max(0, list.indexOf(cur)) + d + list.length) % list.length]!;
     const grid = v.racerCount <= humans ? 'Humans only' : `${v.racerCount} karts + CPUs`;
+    const trackIds = TRACKS.map((t) => t.id);
+    const trackRow = setting('Track', TRACKS.find((t) => t.id === v.trackId)?.name ?? v.trackId, (d) => this.actions.settings({ trackId: cycle(trackIds, v.trackId, d) }));
+    trackRow.classList.add('is-wide');
     const settings = el('div', 'tt-online__settings', [
+      trackRow,
       setting('Laps', String(v.laps), (d) => this.actions.settings({ laps: Math.min(5, Math.max(1, v.laps + d)) })),
       setting('Items', v.items ? 'On' : 'Off', () => this.actions.settings({ items: !v.items })),
       setting('Grid', grid, (d) => this.actions.settings({ racerCount: cycle(GRID_SIZES, GRID_SIZES.includes(v.racerCount) ? v.racerCount : 8, d) })),

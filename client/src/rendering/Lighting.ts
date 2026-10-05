@@ -53,6 +53,18 @@ export class Lighting {
     this.lightViewInv.copy(this.lightView).invert();
   }
 
+  /** Re-tune for another track (colours, intensities, sun direction). */
+  configure(def: LightingDefinition): void {
+    this.sunDirection.set(...def.sunDirection).normalize();
+    this.hemi.color.set(def.skyColor);
+    this.hemi.groundColor.set(def.groundColor);
+    this.hemi.intensity = def.hemiIntensity;
+    this.sun.color.set(def.sunColor);
+    this.sun.intensity = def.sunIntensity;
+    this.lightView.lookAt(this.sunDirection, new Vector3(0, 0, 0), new Vector3(0, 1, 0));
+    this.lightViewInv.copy(this.lightView).invert();
+  }
+
   /**
    * Fit the shadow frustum around every local player (split-screen). Single
    * player keeps the crisp default range; spread-out players widen it.

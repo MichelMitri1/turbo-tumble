@@ -7,6 +7,8 @@ import { buildPitRow, PIT_ROW_MODELS } from './PitRow';
 import { buildWindmill } from './Windmill';
 import { buildBalloon } from './Balloon';
 import { buildClouds, buildMountains } from './Scenery';
+import { buildSkyline } from './Skyline';
+import { buildVolcano } from './Volcano';
 
 export type LandmarkBuilder = (ctx: BuildContext, placement: LandmarkPlacement) => void;
 
@@ -26,6 +28,8 @@ export const LANDMARKS: Record<string, LandmarkEntry> = {
   balloon: { build: buildBalloon },
   mountains: { build: buildMountains },
   clouds: { build: (ctx) => buildClouds(ctx) },
+  skyline: { build: buildSkyline },
+  volcano: { build: buildVolcano },
 };
 
 export function getLandmark(type: string): LandmarkEntry {

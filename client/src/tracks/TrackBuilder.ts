@@ -92,7 +92,8 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
     for (const lake of def.terrain.lakes) {
       // Sized to the lake's carved basin (shore blend reaches ~1.6× the radii).
       const size = Math.max(lake.radiusX, lake.radiusZ) * 3.4;
-      const water = new Water(def.terrain.waterLevel, lake.x, lake.z, size);
+      const liquid = def.terrain.liquid;
+      const water = new Water(def.terrain.waterLevel, lake.x, lake.z, size, liquid?.color, liquid ?? {});
       root.add(water.mesh);
       ctx.updatables.push({ update: (_dt, time) => water.update(time) });
     }

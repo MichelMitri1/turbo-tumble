@@ -41,8 +41,8 @@ export class DebugOverlay {
   constructor(
     parent: HTMLElement,
     private readonly scene: Scene,
-    private readonly physics: PhysicsWorld,
-    private readonly excludeFromColliders: RAPIER.Collider[] = [],
+    private physics: PhysicsWorld,
+    private excludeFromColliders: RAPIER.Collider[] = [],
   ) {
     this.root = el('div', 'tt-debug');
     parent.appendChild(this.root);
@@ -102,6 +102,12 @@ export class DebugOverlay {
     }
     lines.push('', 'F3 panel · F4 colliders · F5 racing line');
     this.root.textContent = lines.join('\n');
+  }
+
+  /** The track (and its collision world) changed. */
+  setWorld(physics: PhysicsWorld, exclude: RAPIER.Collider[]): void {
+    this.physics = physics;
+    this.excludeFromColliders = exclude;
   }
 
   private refreshColliders(): void {

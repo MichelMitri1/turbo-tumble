@@ -1,6 +1,8 @@
 import { DIFFICULTIES, DIFFICULTY, type Difficulty } from '@shared/ai/AIDifficulty';
 import type { MenuNav } from '../input/InputManager';
 import { CHARACTERS, KART_BODIES } from '../config/roster';
+import { TRACKS } from '@shared/tracks/registry';
+import { CUPS } from '@shared/tracks/cups';
 import { el } from './dom';
 
 export type MenuMode = 'race' | 'grandprix' | 'timetrial' | 'online';
@@ -14,6 +16,8 @@ export interface MenuChoice {
   difficulty: Difficulty;
   laps: number;
   items: boolean;
+  trackId: string;
+  cupId: string;
 }
 
 const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }> = [
@@ -23,14 +27,17 @@ const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }>
   { id: 'online', title: 'Online', blurb: 'Race friends with a room code', icon: '🌐' },
 ];
 
-type RowId = 'mode' | 'players' | 'split' | 'character' | 'kart' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
+type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
 const STORAGE_KEY = 'turbo-tumble.menu.v1';
 
-const DEFAULT_CHOICE: MenuChoice = { mode: 'race', players: 1, split: 'horizontal', character: 'bix', kart: 'comet', difficulty: 'normal', laps: 3, items: true };
+const DEFAULT_CHOICE: MenuChoice = { mode: 'race', players: 1, split: 'horizontal', character: 'bix', kart: 'comet', difficulty: 'normal', laps: 3, items: true, trackId: 'sunny-circuit', cupId: 'sunny-cup' };
 
 function loadChoice(): MenuChoice {
   try {
-    return { ...DEFAULT_CHOICE, ...(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<MenuChoice>) };
+    const c = { ...DEFAULT_CHOICE, ...(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<MenuChoice>) };
+    if (!TRACKS.some((t) => t.id === c.trackId)) c.trackId = DEFAULT_CHOICE.trackId;
+    if (!CUPS.some((x) => x.id === c.cupId)) c.cupId = DEFAULT_CHOICE.cupId;
+    return c;
   } catch {
     return { ...DEFAULT_CHOICE };
   }
@@ -94,7 +101,7 @@ export class MainMenu {
       el('div', 'tt-menu__panel', [
         el('div', 'tt-logo tt-menu__logo', [el('div', 'tt-logo__top tt-display', 'TURBO'), el('div', 'tt-logo__bottom tt-display', 'TUMBLE')]),
         cards,
-        el('div', 'tt-menu__options', [option('players', 'Players'), option('split', 'Split'), option('character', 'Racer'), option('kart', 'Kart'), option('difficulty', 'CPU'), option('laps', 'Laps'), option('items', 'Items')]),
+        el('div', 'tt-menu__options', [option('players', 'Players'), option('split', 'Split'), option('track', 'Track'), option('cup', 'Cup'), option('character', 'Racer'), option('kart', 'Kart'), option('difficulty', 'CPU'), option('laps', 'Laps'), option('items', 'Items')]),
         start,
         controls,
         el('div', 'tt-menu__help', '↑↓ choose · ←→ change · Enter / Ⓐ select'),
@@ -114,6 +121,7 @@ export class MainMenu {
     const rows: RowId[] = ['mode'];
     if (this.choice.mode !== 'timetrial') rows.push('players');
     if (this.choice.mode !== 'timetrial' && this.choice.players === 2) rows.push('split');
+    rows.push(this.choice.mode === 'grandprix' ? 'cup' : 'track');
     rows.push('character', 'kart');
     if (this.choice.mode !== 'timetrial') rows.push('difficulty');
     if (this.choice.mode !== 'grandprix') rows.push('laps');
@@ -151,6 +159,12 @@ export class MainMenu {
         break;
       case 'split':
         c.split = c.split === 'horizontal' ? 'vertical' : 'horizontal';
+        break;
+      case 'track':
+        c.trackId = cycle(TRACKS.map((t) => t.id), c.trackId);
+        break;
+      case 'cup':
+        c.cupId = cycle(CUPS.map((x) => x.id), c.cupId);
         break;
       case 'character':
         c.character = cycle(CHARACTERS.map((x) => x.id), c.character);
@@ -192,6 +206,11 @@ export class MainMenu {
     const values: Partial<Record<RowId, string>> = {
       players: c.players === 1 ? '1 player' : `${c.players} players (split-screen${c.mode === 'online' ? ', online' : ''})`,
       split: c.split === 'horizontal' ? 'Top / Bottom' : 'Side by side',
+      track: `${TRACKS.find((t) => t.id === c.trackId)?.name ?? c.trackId}  (${TRACKS.findIndex((t) => t.id === c.trackId) + 1}/${TRACKS.length})${c.mode === 'online' ? ' · if you host' : ''}`,
+      cup: (() => {
+        const cup = CUPS.find((x) => x.id === c.cupId)!;
+        return `${cup.name}: ${cup.tracks.map((id) => TRACKS.find((t) => t.id === id)?.name ?? id).join(' · ')}`;
+      })(),
       character: c.players > 1 ? `P1: ${character.name} (others pick on the next screen)` : `${character.name} · ${character.tagline}`,
       kart: kart.name,
       difficulty: DIFFICULTY[c.difficulty].label + (c.mode === 'online' ? ' (if you host)' : ''),

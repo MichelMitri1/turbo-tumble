@@ -374,3 +374,5 @@ html, body {
   font-weight: 900; font-size: 13px; animation: tt-blink 1.6s steps(2) infinite;
 }
 .tt-sound-hint.is-open { display: block; }
+
+.tt-online__setting.is-wide { grid-column: span 2; }

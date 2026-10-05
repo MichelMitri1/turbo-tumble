@@ -59,7 +59,7 @@ export class Water {
   readonly mesh: Mesh;
   private readonly normalA: Texture;
 
-  constructor(level: number, centerX: number, centerZ: number, size: number, color = '#27a6d9') {
+  constructor(level: number, centerX: number, centerZ: number, size: number, color = '#27a6d9', style: { emissive?: string; emissiveIntensity?: number; opacity?: number } = {}) {
     this.normalA = rippleNormalMap();
     this.normalA.repeat.set(size / 24, size / 24);
     const mat = new MeshStandardMaterial({
@@ -68,8 +68,10 @@ export class Water {
       metalness: 0.0,
       normalMap: this.normalA,
       normalScale: new Vector2(0.55, 0.55),
-      transparent: true,
-      opacity: 0.88,
+      transparent: (style.opacity ?? 0.88) < 1,
+      opacity: style.opacity ?? 0.88,
+      emissive: new Color(style.emissive ?? '#000000'),
+      emissiveIntensity: style.emissiveIntensity ?? 0,
       envMapIntensity: 1.2,
     });
     const geo = new PlaneGeometry(size, size, 1, 1);

@@ -12,9 +12,10 @@ export function buildMountains(ctx: BuildContext, p: LandmarkPlacement): void {
   const count = Number(p.params?.count ?? 30);
   const rng = new SeededRandom(ctx.def.terrain.seed + 3);
   const noise = new Noise2D(ctx.def.terrain.seed + 4);
-  const green = new Color('#5aa44a');
-  const rock = new Color('#8e8fa6');
-  const snow = new Color('#f4f7ff');
+  const green = new Color(String(p.params?.low ?? '#5aa44a'));
+  const rock = new Color(String(p.params?.mid ?? '#8e8fa6'));
+  const snow = new Color(String(p.params?.peak ?? '#f4f7ff'));
+  const snowCaps = p.params?.snow !== false;
   const parts: BufferGeometry[] = [];
 
   for (let i = 0; i < count; i++) {
@@ -34,7 +35,7 @@ export function buildMountains(ctx: BuildContext, p: LandmarkPlacement): void {
       const n = noise.noise(x * 0.02 + i * 7, z * 0.02) * (1 - t) * r * 0.25;
       pos.setXYZ(v, x + (x / r) * n, y, z + (z / r) * n);
       c.copy(green).lerp(rock, smoothstep(0.15, 0.5, t));
-      if (h > 190) c.lerp(snow, smoothstep(0.72, 0.8, t));
+      if (snowCaps ? h > 190 : true) c.lerp(snow, smoothstep(snowCaps ? 0.72 : 0.6, snowCaps ? 0.8 : 1, t));
       colors.set([c.r, c.g, c.b], v * 3);
     }
     geo.setAttribute('color', new BufferAttribute(colors, 3));
