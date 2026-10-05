@@ -25,6 +25,8 @@ import type { SessionConfig } from './SessionConfig';
 import type { RaceStartMessage } from '@shared/net/Protocol';
 import type { NetClient } from '../net/NetClient';
 import { NetRaceSync, type NetStats } from '../net/NetRaceSync';
+import type { GameAudio } from '../audio/GameAudio';
+import { RaceAudio } from '../audio/RaceAudio';
 
 export interface SessionDeps {
   scene: Scene;
@@ -35,6 +37,7 @@ export interface SessionDeps {
   icons: Record<string, string>;
   ui: HTMLElement;
   input: InputManager;
+  audio: GameAudio;
 }
 
 const SPECTATOR_SWITCH = 9;
@@ -66,6 +69,7 @@ export class RaceSession {
   readonly sync: NetRaceSync | null = null;
   /** Online menu open over the live race: local players coast. */
   suppressInput = false;
+  readonly audio: RaceAudio;
   // Time Trial.
   private recorder: GhostRecorder | null = null;
   private ghost: GhostPlayer | null = null;
@@ -115,7 +119,8 @@ export class RaceSession {
     });
     this.inputs = this.race.racers.map(() => null);
     if (online) this.sync = new NetRaceSync(online.net, online.start, this.race, this.karts);
-    this.itemViews = new ItemViews(this.race);
+    this.itemViews = new ItemViews(this.race, deps.fx);
+    deps.fx.skids.clear();
     deps.scene.add(this.itemViews.root);
 
     // Local players (humans are the last racers in the setup list unless reordered).
@@ -136,6 +141,15 @@ export class RaceSession {
       this.spectator = new ChaseCamera({ ...CHASE_CAMERA, distance: 9, height: 5.2, fov: 60 }, deps.physics);
       this.spectator.snap(this.karts[0]!.chase);
     }
+
+    this.audio = new RaceAudio(deps.audio, {
+      race: this.race,
+      karts: this.karts,
+      players: this.players,
+      spectator: this.spectator?.camera ?? null,
+      quiet: config.mode === 'attract',
+      music: def.music,
+    });
 
     const gantry = deps.track.root.getObjectByName('start-gantry');
     this.presenter = new RacePresenter(this.race, this.players, this.karts, deps.fx, (gantry?.userData.startLights as Mesh[] | undefined) ?? []);
@@ -247,15 +261,25 @@ export class RaceSession {
       this.sync.drainEvents(this.pending);
       this.itemViews.afterTick();
     }
+    this.audio.handle(this.pending);
     this.presenter.handle(this.pending);
     this.pending.length = 0;
 
+    this.updateThreats();
+    const countdown = this.race.phase === 'countdown';
     for (const k of this.karts) {
+      k.view.countdown = countdown;
       k.decayCorrection(dt);
       k.interpolate(alpha);
       const ev = k.frameEvents;
       if (ev.landed > 2) k.view.land(ev.landed);
-      if (ev.wallHit > 3) k.view.bump(ev.wallHit);
+      if (ev.landed > 6) fx.landingDust(k.render.position, ev.landed, k.state.surface);
+      if (ev.wallHit > 3) {
+        k.view.bump(ev.wallHit);
+        fx.wallSparks(k.render.position, k.chase.forward, ev.wallHit);
+      }
+      if (ev.driftStageUp) fx.driftStageFlash(k.render.position, ev.driftStageUp);
+      if (ev.respawned) fx.respawnBeam(k.render.position);
       if (ev.miniTurbo) {
         k.view.kick(ev.miniTurbo);
         fx.miniTurbo(k.render.position, ev.miniTurbo);
@@ -278,10 +302,39 @@ export class RaceSession {
       this.updateHud(p, dt);
     }
     if (this.spectator) this.updateSpectator(dt);
+    this.audio.frame(dt);
     for (const k of this.karts) k.clearFrameEvents();
 
     this.itemViews.render(this.sync ? 1 : alpha, dt);
     this.ghost?.update(this.race.time);
+  }
+
+  /** Drivers glance back at projectiles closing in from behind. */
+  private updateThreats(): void {
+    const entities = this.race.items.entities.list;
+    for (const k of this.karts) {
+      const p = k.render.position;
+      const fwd = k.chase.forward;
+      let threat = false;
+      let side = 1;
+      for (const e of entities) {
+        if (e.dead || e.attach !== 'none' || e.owner === k.racer.index) continue;
+        if (e.kind !== 'seeker' && e.kind !== 'crown' && e.kind !== 'puck' && e.kind !== 'fireball') continue;
+        const rx = e.position.x - p.x;
+        const rz = e.position.z - p.z;
+        const dist = Math.hypot(rx, rz);
+        if (dist > 24 || dist < 0.5) continue;
+        const ahead = (rx * fwd.x + rz * fwd.z) / dist;
+        const closing = -(rx * e.velocity.x + rz * e.velocity.z) / dist;
+        if (ahead < -0.3 && closing > 5) {
+          threat = true;
+          // Right-hand side relative to heading: look over that shoulder.
+          side = rx * -fwd.z + rz * fwd.x > 0 ? -1 : 1;
+          break;
+        }
+      }
+      k.view.setThreat(threat, side);
+    }
   }
 
   private updateSpectator(dt: number): void {
@@ -393,6 +446,7 @@ export class RaceSession {
   dispose(): void {
     const scene = this.deps.scene;
     this.sync?.dispose();
+    this.audio.dispose();
     this.race.dispose();
     for (const k of this.karts) scene.remove(k.view.root, k.view.contactShadow);
     scene.remove(this.itemViews.root);

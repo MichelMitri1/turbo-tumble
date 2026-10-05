@@ -10,6 +10,9 @@ export interface KartRig {
   wheels: Array<{ node: Object3D; front: boolean; left: boolean }>;
   /** This rig's own material copies (safe to tint per kart). */
   materials: MeshStandardMaterial[];
+  /** Driver identity (for toppers / scarf colour). */
+  characterId: string;
+  color: string;
 }
 
 const CHARACTER_NODE = 'character';
@@ -62,7 +65,7 @@ export function buildKartRig(assets: AssetLoader, body: KartBodyDefinition, char
       m.material = c;
     }
   });
-  return { root, body: bodyRoot, character: driver, wheels, materials };
+  return { root, body: bodyRoot, character: driver, wheels, materials, characterId: character.id, color: character.color };
 }
 
 function findNamed(root: Object3D, name: string): Object3D | undefined {

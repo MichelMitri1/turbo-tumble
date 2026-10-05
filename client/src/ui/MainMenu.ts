@@ -86,7 +86,7 @@ export class MainMenu {
     const start = el('button', 'tt-button tt-menu__start', 'START!');
     start.addEventListener('click', () => this.start());
     this.rows.set('start', start);
-    const controls = el('button', 'tt-button tt-menu__controls', 'Controls');
+    const controls = el('button', 'tt-button tt-menu__controls', 'Controls & Sound');
     controls.addEventListener('click', () => this.onControls());
     this.rows.set('controls', controls);
 

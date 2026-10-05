@@ -360,3 +360,11 @@ html, body {
   .tt-online__member { grid-template-columns: auto 1fr auto; }
   .tt-online__ping, .tt-online__pts { display: none; }
 }
+
+/* ---------- Sound ---------- */
+.tt-sound-hint {
+  position: absolute; bottom: 14px; right: 16px; z-index: 65; pointer-events: none; display: none;
+  padding: 6px 14px; border-radius: 999px; background: rgba(20,14,60,0.85); border: 2px solid rgba(255,255,255,0.6);
+  font-weight: 900; font-size: 13px; animation: tt-blink 1.6s steps(2) infinite;
+}
+.tt-sound-hint.is-open { display: block; }

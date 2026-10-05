@@ -19,7 +19,7 @@ const chrome = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Conte
 const browser = await puppeteer.launch({
   executablePath: chrome,
   headless: 'new',
-  args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal', `--window-size=${W},${H}`],
+  args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal', `--window-size=${W},${H}`, '--autoplay-policy=no-user-gesture-required'],
   defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
 });
 const page = await browser.newPage();

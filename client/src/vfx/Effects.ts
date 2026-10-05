@@ -3,6 +3,7 @@ import { SurfaceType } from '@shared/types/surface';
 import type { KartState } from '@shared/vehicles/KartState';
 import type { KartRenderState } from '../vehicles/KartView';
 import { ParticleSystem } from './Particles';
+import { SkidMarks } from './SkidMarks';
 
 /** Spark colours for mini-turbo stages 1..3 (cyan → orange → magenta). */
 export const DRIFT_COLORS = ['#ffffff', '#3fd8ff', '#ff9a1a', '#ff4fd8'] as const;
@@ -17,6 +18,7 @@ interface Ring {
 }
 
 const RAINBOW = ['#ff4f6a', '#ffb52e', '#ffe14d', '#5ce06a', '#3fd8ff', '#9b6bff'];
+const CONFETTI = ['#ff4f9a', '#ffd23f', '#3fd8ff', '#7ddc4a', '#ff8c1a', '#9b6bff', '#ffffff'];
 
 /**
  * All transient visual effects: per-kart emitters and one-shot bursts driven by
@@ -27,6 +29,8 @@ export class Effects {
   private readonly glow = new ParticleSystem(4000, AdditiveBlending);
   private readonly puff = new ParticleSystem(2000, NormalBlending);
   private readonly rings: Ring[] = [];
+  readonly skids = new SkidMarks();
+  private readonly wheel = new Vector3();
   private readonly emitAcc = new Map<number, number>();
   private readonly v = new Vector3();
   private readonly w = new Vector3();
@@ -37,13 +41,14 @@ export class Effects {
 
   constructor() {
     this.root.name = 'effects';
-    this.root.add(this.glow.mesh, this.puff.mesh);
+    this.root.add(this.skids.mesh, this.glow.mesh, this.puff.mesh);
   }
 
   update(dt: number): void {
     this.time += dt;
     this.glow.update(dt);
     this.puff.update(dt);
+    this.skids.update(dt);
     for (let i = this.rings.length - 1; i >= 0; i--) {
       const r = this.rings[i]!;
       r.age += dt;
@@ -83,6 +88,16 @@ export class Effects {
     const at = (x: number, y: number, z: number): Vector3 =>
       this.v.copy(rs.position).addScaledVector(this.right, x * scale).addScaledVector(this.up, y * scale).addScaledVector(this.fwd, z * scale);
 
+    // Tyre marks from the rear wheels while sliding on tarmac (drifts, skids, spin-outs).
+    const onTarmac = s.grounded && (s.surface === SurfaceType.Road || s.surface === SurfaceType.Curb || s.surface === SurfaceType.Boost);
+    const slipping = Math.abs(s.velocity.dot(this.right)) > 4.5;
+    const sliding = onTarmac && rs.groundY !== null && rs.position.y - rs.groundY < 0.8 && (s.drifting || slipping || s.spinTimer > 0);
+    for (const side of [-1, 1]) {
+      this.wheel.copy(rs.position).addScaledVector(this.right, side * 0.72 * scale).addScaledVector(this.fwd, -0.9 * scale);
+      if (rs.groundY !== null) this.wheel.y = rs.groundY;
+      this.skids.emit(`${id}:${side}`, this.wheel, sliding);
+    }
+
     for (let k = 0; k < ticks; k++) {
       // Drift sparks from both rear wheels (stage colour) + tyre smoke.
       if (s.drifting && s.grounded) {
@@ -113,6 +128,11 @@ export class Effects {
           if (s.rocketTimer > 0) break;
         }
       }
+      // Idle exhaust putts.
+      if (s.grounded && Math.abs(s.forwardSpeed) < 6 && s.boostTimer <= 0 && Math.random() < 0.12) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        this.puff.spawn({ position: at(side * 0.42, 1.05, -1.2), velocity: this.w.copy(this.fwd).multiplyScalar(-0.8).add(new Vector3(this.rand(0.3), 0.9, this.rand(0.3))), color: '#c9c6d6', size: [0.25, 0.9], life: 0.7, alpha: 0.35, drag: 1.5 });
+      }
       // Off-road dust.
       if (s.grounded && s.surface === SurfaceType.Offroad && Math.abs(s.forwardSpeed) > 6 && Math.random() < 0.7) {
         const side = Math.random() < 0.5 ? -1 : 1;
@@ -131,6 +151,87 @@ export class Effects {
   }
 
   // ------------------------------------------------------------------ bursts
+
+  /** Sparks off the nose when scraping a wall. */
+  wallSparks(position: Vector3, forward: Vector3, impact: number): void {
+    const n = Math.min(26, 6 + Math.round(impact * 1.2));
+    const p = this.v.copy(position).addScaledVector(forward, 1.2).setY(position.y + 0.6);
+    for (let i = 0; i < n; i++) {
+      this.glow.spawn({
+        position: p,
+        velocity: this.w.copy(forward).multiplyScalar(-2 - Math.random() * 4).add(new Vector3(this.rand(5), 1 + Math.random() * 4, this.rand(5))),
+        color: i % 3 === 0 ? '#fff3c0' : '#ffb52e',
+        size: [0.26, 0.04],
+        life: 0.25 + Math.random() * 0.2,
+        gravity: 16,
+      });
+    }
+  }
+
+  /** Dust ring on a hard landing. */
+  landingDust(position: Vector3, impact: number, surface: SurfaceType): void {
+    const n = Math.min(18, Math.round(impact * 1.3));
+    const color = surface === SurfaceType.Offroad || surface === SurfaceType.Dirt ? '#b59a6a' : '#d9d6e2';
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.puff.spawn({ position: this.v.copy(position).add(new Vector3(Math.cos(a) * 1.1, 0.2, Math.sin(a) * 1.1)), velocity: this.w.set(Math.cos(a) * 3.5, 0.8, Math.sin(a) * 3.5), color, size: [0.6, 1.8], life: 0.55, alpha: 0.5, drag: 4 });
+    }
+  }
+
+  /** Drift spark colour steps up. */
+  driftStageFlash(position: Vector3, stage: number): void {
+    const color = DRIFT_COLORS[stage] ?? '#ffffff';
+    this.ring(position, 2.4, color, 0.35, 0.4);
+    this.burst(this.v.copy(position).setY(position.y + 0.4), color, 8 + stage * 4, 3 + stage);
+  }
+
+  /** Respawn: a light column with rising rings. */
+  respawnBeam(position: Vector3): void {
+    for (let y = 0; y < 12; y += 0.5) {
+      this.glow.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(0.5), y, this.rand(0.5))), velocity: this.w.set(0, 3, 0), color: y % 1 < 0.5 ? '#bff6ff' : '#3fd8ff', size: [0.9, 0.2], life: 0.5 });
+    }
+    for (const [y, delay] of [
+      [0.2, 0.5],
+      [1.2, 0.6],
+      [2.4, 0.7],
+    ] as const)
+      this.ring(position, 2.2, '#3fd8ff', delay, y);
+  }
+
+  /** Perfect start: blue flame burst out the back + a dust cloud. */
+  rocketStart(position: Vector3, forward: Vector3): void {
+    const back = this.v.copy(position).addScaledVector(forward, -1.6).setY(position.y + 0.8).clone();
+    for (let i = 0; i < 40; i++) {
+      this.glow.spawn({ position: back, velocity: this.w.copy(forward).multiplyScalar(-6 - Math.random() * 8).add(new Vector3(this.rand(2.5), Math.random() * 2.5, this.rand(2.5))), color: i % 3 ? '#3fd8ff' : '#ffffff', size: [0.7, 0.08], life: 0.35, drag: 3 });
+    }
+    for (let i = 0; i < 12; i++) {
+      this.puff.spawn({ position: back, velocity: this.w.set(this.rand(3), 0.8 + Math.random(), this.rand(3)), color: '#d9d6e2', size: [0.8, 2.6], life: 0.9, alpha: 0.45, drag: 2 });
+    }
+    this.ring(position, 4, '#3fd8ff', 0.4);
+  }
+
+  /** Finish-line confetti over a racer (amount 0..1). */
+  confetti(position: Vector3, amount = 1): void {
+    const n = Math.round(160 * amount);
+    for (let i = 0; i < n; i++) {
+      this.puff.spawn({
+        position: this.v.copy(position).add(new Vector3(this.rand(2), 3 + Math.random() * 2, this.rand(2))),
+        velocity: this.w.set(this.rand(7), 5 + Math.random() * 7, this.rand(7)),
+        color: CONFETTI[i % CONFETTI.length]!,
+        size: [0.32, 0.26],
+        life: 2.2 + Math.random(),
+        alpha: 1,
+        gravity: 5,
+        drag: 1.8,
+      });
+    }
+    this.burst(this.v.copy(position).setY(position.y + 2), '#ffd23f', 24, 7);
+  }
+
+  /** One trail particle behind a moving item. */
+  trail(position: Vector3, color: string, size: number, life: number, additive = true): void {
+    (additive ? this.glow : this.puff).spawn({ position, velocity: this.w.set(this.rand(0.4), this.rand(0.4) + 0.3, this.rand(0.4)), color, size: [size, size * 0.2], life, alpha: additive ? 1 : 0.5, drag: 2 });
+  }
 
   ring(position: Vector3, radius: number, color: string, life = 0.55, y = 0.3): void {
     const mesh = new Mesh(

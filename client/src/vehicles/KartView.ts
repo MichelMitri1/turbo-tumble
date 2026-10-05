@@ -16,6 +16,7 @@ import type { KartState } from '@shared/vehicles/KartState';
 import type { KartRig } from './KartModelFactory';
 import { KART_MODEL_SCALE } from '../config/roster';
 import { createItemModel, type ModelKey } from '../items/ItemModels';
+import { DriverRig, type DriverGesture, type DriverMood } from './DriverRig';
 
 /** Where an active timed item is shown on the kart. */
 const ACCESSORY_MOUNT: Partial<Record<ModelKey, { pos: [number, number, number]; scale: number }>> = {
@@ -85,6 +86,9 @@ export class KartView {
   private readonly hue = new Color();
   private accessory: Object3D | null = null;
   private accessoryKey: ModelKey | null = null;
+  private readonly driver: DriverRig;
+  /** Set by the session during the countdown (drivers bounce in anticipation). */
+  countdown = false;
 
   constructor(private readonly rig: KartRig) {
     this.root.name = rig.root.name;
@@ -98,6 +102,7 @@ export class KartView {
     this.rocket.visible = false;
     this.root.add(this.rocket);
     this.baseEmissive = rig.materials.map((m) => m.emissive.clone());
+    this.driver = new DriverRig(rig.character, rig.characterId, rig.color);
 
     const blobMat = new MeshBasicMaterial({ map: getBlobTexture(), transparent: true, depthWrite: false });
     blobMat.polygonOffset = true;
@@ -116,6 +121,22 @@ export class KartView {
   /** Landing impact (m/s) → squash & stretch. */
   land(impact: number): void {
     this.squashVel -= clamp(impact * 0.045, 0, 0.6);
+    this.driver.jolt(clamp(impact * 0.08, 0, 1.5));
+  }
+
+  /** Driver body language for race moments (items, hits, starts). */
+  gesture(kind: DriverGesture): void {
+    this.driver.gesture(kind);
+  }
+
+  /** After the finish: celebrate, sulk, or keep racing. */
+  setMood(mood: DriverMood): void {
+    this.driver.setMood(mood);
+  }
+
+  /** A projectile is closing in from behind (side: +1 look over the right shoulder). */
+  setThreat(active: boolean, side = 1): void {
+    this.driver.setThreat(active, side);
   }
 
   /** Wall hit → quick wobble. */
@@ -142,6 +163,7 @@ export class KartView {
   kick(strength: number): void {
     this.squashVel += strength * 0.15;
     this.pitch -= strength * 0.05;
+    if (strength >= 2) this.driver.gesture('boost');
   }
 
   update(s: KartRenderState, k: KartState, dt: number): void {
@@ -188,12 +210,17 @@ export class KartView {
     }
 
     // Driver.
-    const ch = this.rig.character;
-    if (ch) {
-      ch.rotation.z = this.lean;
-      ch.rotation.x = -this.pitch * 1.5 + Math.sin(this.time * 9) * 0.015 * clamp(s.speed01, 0, 1);
-      ch.rotation.y = -s.steer * 0.12 + (k.spinTimer > 0 || k.tumbleTimer > 0 ? Math.sin(this.time * 18) * 0.4 : 0);
-    }
+    this.driver.update({
+      dt,
+      lean: this.lean,
+      pitch: this.pitch,
+      steer: s.steer,
+      speed01: s.speed01,
+      accel: this.accel,
+      airborne: !s.grounded,
+      stunned: k.spinTimer > 0 || k.tumbleTimer > 0,
+      countdown: this.countdown,
+    });
 
     // Respawn blink.
     const blinkOff = s.respawnTimer > 0 && Math.floor(s.respawnTimer * 12) % 2 === 1;

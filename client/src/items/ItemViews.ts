@@ -2,6 +2,7 @@ import { Group, Vector3, type Object3D } from 'three';
 import type { RaceSimulation } from '@shared/race/RaceSimulation';
 import type { EntityKind, ItemEntity } from '@shared/items/ItemEntities';
 import { createItemModel, type ModelKey } from './ItemModels';
+import type { Effects } from '../vfx/Effects';
 
 interface EntityView {
   object: Object3D;
@@ -9,7 +10,19 @@ interface EntityView {
   prev: Vector3;
   cur: Vector3;
   seen: boolean;
+  /** Trail particle accumulator. */
+  trail: number;
 }
+
+/** Trail look per moving item: colour, size, life, additive glow or smoke, particles/s. */
+const TRAILS: Partial<Record<string, { color: string; size: number; life: number; additive: boolean; rate: number }>> = {
+  puck: { color: '#dfffe0', size: 0.5, life: 0.35, additive: true, rate: 24 },
+  seeker: { color: '#ff6a3a', size: 0.7, life: 0.4, additive: true, rate: 40 },
+  crown: { color: '#5aa0ff', size: 1.2, life: 0.6, additive: true, rate: 50 },
+  fireball: { color: '#ff9a1a', size: 0.8, life: 0.3, additive: true, rate: 45 },
+  rang: { color: '#ffffff', size: 0.6, life: 0.25, additive: true, rate: 40 },
+  boom: { color: '#8a8698', size: 0.6, life: 0.6, additive: false, rate: 14 },
+};
 
 const MODEL_FOR_KIND: Record<Exclude<EntityKind, 'explosion' | 'octo'>, ModelKey> = {
   puck: 'puck',
@@ -35,7 +48,10 @@ export class ItemViews {
   private readonly coins: Object3D[] = [];
   private time = 0;
 
-  constructor(private readonly race: RaceSimulation) {
+  constructor(
+    private readonly race: RaceSimulation,
+    private readonly fx: Effects | null = null,
+  ) {
     this.root.name = 'items';
     for (const b of race.pickups.boxes) {
       const o = createItemModel('prizeBox');
@@ -85,7 +101,7 @@ export class ItemViews {
       if (!key) continue;
       let v = this.views.get(e.id);
       if (!v) {
-        v = { object: this.acquire(key), key, prev: e.position.clone(), cur: e.position.clone(), seen: true };
+        v = { object: this.acquire(key), key, prev: e.position.clone(), cur: e.position.clone(), seen: true, trail: 0 };
         this.views.set(e.id, v);
       }
       v.prev.copy(v.cur);
@@ -111,6 +127,11 @@ export class ItemViews {
       if (!e) continue;
       const o = v.object;
       o.position.lerpVectors(v.prev, v.cur, alpha);
+      const trail = e.attach === 'none' ? TRAILS[e.kind] : undefined;
+      if (trail && this.fx && dt > 0 && e.velocity.lengthSq() > 4) {
+        v.trail += dt * trail.rate;
+        for (; v.trail >= 1; v.trail--) this.fx.trail(o.position, trail.color, trail.size, trail.life, trail.additive);
+      }
       const heading = Math.atan2(e.velocity.x, e.velocity.z);
       switch (e.kind) {
         case 'puck':

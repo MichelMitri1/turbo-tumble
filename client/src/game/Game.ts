@@ -26,6 +26,8 @@ import { Effects } from '../vfx/Effects';
 import { RaceSession, type OnlineRace, type SessionDeps } from './RaceSession';
 import { buildRacerSetups, normalizeSession, type PlayerSetup, type SessionConfig } from './SessionConfig';
 import { OnlineFlow } from './OnlineFlow';
+import { GameAudio } from '../audio/GameAudio';
+import { el } from '../ui/dom';
 
 export interface GameOptions {
   trackId: string;
@@ -48,6 +50,8 @@ export class Game {
   readonly input = new InputManager();
   readonly assets = new AssetLoader();
   readonly physics = new PhysicsWorld();
+  readonly audio = new GameAudio();
+  private soundHint!: HTMLElement;
   readonly renderer: Renderer;
   session!: RaceSession;
   /** HUD icons rendered from the item models (public for dev tooling). */
@@ -136,8 +140,8 @@ export class Game {
       this.pendingChoice = null;
       if (!players || !choice) this.menu.setOpen(true);
       else this.launch(choice, players);
-    });
-    this.controls = new ControlsPanel(this.ui, this.input, () => this.menu.setOpen(true));
+    }, (name) => this.audio.ui(name));
+    this.controls = new ControlsPanel(this.ui, this.input, this.audio.engine, () => this.menu.setOpen(true));
     this.gpPanel = new GrandPrixPanel(this.ui);
     this.online = new OnlineFlow(this.ui, {
       startRace: (race, players) => this.startOnlineRace(race, players),
@@ -147,6 +151,8 @@ export class Game {
     });
     window.addEventListener('resize', () => this.layout());
     this.addRacingLineDebug();
+    this.soundHint = el('div', 'tt-sound-hint', '🔈 Click or press any key to turn on sound');
+    this.ui.appendChild(this.soundHint);
 
     const inviteCode = new URLSearchParams(location.search).get('room');
     if (this.options.initialSession) this.startSession(this.options.initialSession);
@@ -216,6 +222,7 @@ export class Game {
       icons: this.icons,
       ui: this.ui,
       input: this.input,
+      audio: this.audio,
     };
   }
 
@@ -241,6 +248,7 @@ export class Game {
     this.flow = 'menu';
     this.startSession({ mode: 'attract', trackId: this.options.trackId, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
     this.menu.setOpen(true);
+    this.audio.menuMusic();
   }
 
   private startFromMenu(choice: MenuChoice): void {
@@ -311,6 +319,7 @@ export class Game {
     this.pause.setOnline(false);
     this.flow = 'menu';
     this.startSession({ mode: 'attract', trackId: this.options.trackId, laps: 99, items: true, difficulty: 'hard', racerCount: 8, players: [], split: 'horizontal' });
+    this.audio.menuMusic();
   }
 
   private restart(): void {
@@ -330,6 +339,7 @@ export class Game {
     if (this.flow === 'racing') {
       gp.award(this.session.finishingOrder());
       this.flow = 'gp-standings';
+      this.audio.ui('uiConfirm');
       this.gpPanel.show(gp.cup.name, `Race ${gp.raceIndex + 1} of ${gp.raceCount} — standings`, this.gpRows(true), gp.isLastRace ? 'Enter / Ⓐ — trophy ceremony' : 'Enter / Ⓐ — next race');
     } else if (this.flow === 'gp-standings') {
       if (gp.isLastRace) {
@@ -367,6 +377,7 @@ export class Game {
     this.loop.paused = paused && this.flow !== 'online';
     this.pause.setOpen(paused);
     this.session.suppressInput = paused && this.flow === 'online';
+    this.session.audio.setPaused(paused);
   }
 
   private get paused(): boolean {
@@ -379,6 +390,9 @@ export class Game {
     this.input.update();
     if (this.renderer.resize()) this.layout();
     const nav = this.input.menuNav();
+    this.menuSounds(nav);
+    if (this.input.keyboard.wasPressed('KeyM')) this.audio.toggleMute();
+    this.soundHint.classList.toggle('is-open', this.audio.engine.available && !this.audio.engine.running && !this.audio.engine.settings.muted);
 
     if (this.join.open) {
       this.join.update();
@@ -407,6 +421,16 @@ export class Game {
       }
     }
     this.time += this.loop.paused ? 0 : dt;
+  }
+
+  /** Navigation blips for whichever menu is open. */
+  private menuSounds(nav: ReturnType<InputManager['menuNav']>): void {
+    const menus = this.controls.open || this.online.screen.open || this.menu.open || this.gpPanel.open || this.pause.open;
+    if (!menus) return;
+    if (nav.up || nav.down) this.audio.ui('uiMove');
+    else if ((nav.left || nav.right) && !this.join.open) this.audio.ui('uiChange');
+    if (nav.confirm) this.audio.ui('uiConfirm');
+    else if (nav.back || this.input.keyboard.wasPressed('Escape')) this.audio.ui('uiBack');
   }
 
   private render(alpha: number, dt: number): void {

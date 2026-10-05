@@ -1,6 +1,7 @@
 import { INPUT_ACTIONS, buttonLabel, keyLabel, type InputAction } from '../input/bindings';
 import type { InputManager, MenuNav } from '../input/InputManager';
 import { el } from './dom';
+import type { AudioEngine } from '../audio/AudioEngine';
 
 const ACTION_LABELS: Record<InputAction, string> = {
   accelerate: 'Accelerate',
@@ -14,12 +15,14 @@ const ACTION_LABELS: Record<InputAction, string> = {
 };
 
 type Column = 'keyboard' | 'gamepad';
-type Row = InputAction | 'deadzone' | 'reset' | 'back';
+type Row = InputAction | 'music' | 'sound' | 'deadzone' | 'reset' | 'back';
+type VolumeRow = 'music' | 'sound';
 const DEADZONES = [0.05, 0.1, 0.16, 0.22, 0.3];
 
 /**
  * Rebinding screen: single-player keyboard keys and controller buttons (shared by
- * every pad) plus the stick dead zone. Choose a cell and press the new key/button.
+ * every pad), music / sound volume and the stick dead zone. Choose a cell and
+ * press the new key/button.
  */
 export class ControlsPanel {
   readonly root: HTMLElement;
@@ -32,13 +35,14 @@ export class ControlsPanel {
   constructor(
     parent: HTMLElement,
     private readonly input: InputManager,
+    private readonly audio: AudioEngine,
     private readonly onClose: () => void,
   ) {
     this.table = el('div', 'tt-controls__table');
     this.root = el('div', 'tt-gp tt-controls', [
       el('div', 'tt-gp__panel', [
-        el('h2', 'tt-gp__title tt-display', 'CONTROLS'),
-        el('div', 'tt-gp__sub', 'Pick a binding and press the new key or button'),
+        el('h2', 'tt-gp__title tt-display', 'CONTROLS & SOUND'),
+        el('div', 'tt-gp__sub', 'Pick a binding and press the new key or button · M mutes anytime'),
         this.table,
         el('div', 'tt-gp__hint', '↑↓ row · ←→ keyboard / controller · Enter / Ⓐ rebind · Esc / Ⓑ back'),
       ]),
@@ -47,7 +51,7 @@ export class ControlsPanel {
   }
 
   private rows(): Row[] {
-    return [...INPUT_ACTIONS, 'deadzone', 'reset', 'back'];
+    return [...INPUT_ACTIONS, 'music', 'sound', 'deadzone', 'reset', 'back'];
   }
 
   setOpen(open: boolean): void {
@@ -68,7 +72,9 @@ export class ControlsPanel {
     const i = rows.indexOf(this.row);
     if (nav.up) this.row = rows[(i - 1 + rows.length) % rows.length]!;
     if (nav.down) this.row = rows[(i + 1) % rows.length]!;
-    if (this.row === 'deadzone' && (nav.left || nav.right)) {
+    if ((this.row === 'music' || this.row === 'sound') && (nav.left || nav.right)) {
+      this.changeVolume(this.row, nav.right ? 1 : -1);
+    } else if (this.row === 'deadzone' && (nav.left || nav.right)) {
       const cur = DEADZONES.findIndex((d) => d >= this.input.stick.deadZone - 1e-3);
       const next = Math.min(DEADZONES.length - 1, Math.max(0, (cur < 0 ? 2 : cur) + (nav.right ? 1 : -1)));
       this.input.setDeadZone(DEADZONES[next]!);
@@ -90,7 +96,7 @@ export class ControlsPanel {
       this.render();
       return;
     }
-    if (this.row === 'deadzone') return;
+    if (this.row === 'deadzone' || this.row === 'music' || this.row === 'sound') return;
     const action = this.row;
     this.capturing = true;
     this.render();
@@ -107,6 +113,12 @@ export class ControlsPanel {
         this.render();
       });
     }
+  }
+
+  private changeVolume(row: VolumeRow, delta: number): void {
+    const kind = row === 'music' ? 'music' : 'sfx';
+    this.audio.setVolume(kind, Math.round(this.audio.settings[kind] * 10 + delta) / 10);
+    if (this.audio.settings.muted) this.audio.setMuted(false);
   }
 
   private stopCapture(): void {
@@ -133,6 +145,18 @@ export class ControlsPanel {
         el('div', 'tt-controls__row', [el('span', 'tt-controls__label', ACTION_LABELS[a]), cell(a, 'keyboard', kb[a].map(keyLabel).join(' / ')), cell(a, 'gamepad', pad[a].map(buttonLabel).join(' / '))]),
       );
     }
+    const volume = (row: VolumeRow, label: string): HTMLElement => {
+      const v = Math.round(this.audio.settings[row === 'music' ? 'music' : 'sfx'] * 10);
+      const bar = '▮'.repeat(v) + '▯'.repeat(10 - v);
+      const cell = el('span', 'tt-controls__cell is-wide', `◀ ${bar} ${v * 10}% ▶`);
+      cell.addEventListener('click', (e) => {
+        const rect = cell.getBoundingClientRect();
+        this.row = row;
+        this.changeVolume(row, e.clientX > rect.left + rect.width / 2 ? 1 : -1);
+        this.render();
+      });
+      return el('div', `tt-controls__row${this.row === row ? ' is-selected' : ''}`, [el('span', 'tt-controls__label', label), cell]);
+    };
     const dz = el('div', `tt-controls__row${this.row === 'deadzone' ? ' is-selected' : ''}`, [
       el('span', 'tt-controls__label', 'Stick dead zone'),
       el('span', 'tt-controls__cell is-wide', `◀ ${Math.round(this.input.stick.deadZone * 100)}% ▶`),
@@ -147,6 +171,6 @@ export class ControlsPanel {
       this.row = 'back';
       this.activate();
     });
-    this.table.replaceChildren(...lines, dz, el('div', 'tt-controls__buttons', [reset, back]));
+    this.table.replaceChildren(...lines, volume('music', 'Music volume'), volume('sound', 'Sound volume'), dz, el('div', 'tt-controls__buttons', [reset, back]));
   }
 }

@@ -62,7 +62,8 @@ export class RacePresenter {
           const p = this.player(e.racer);
           if (p) p.hud.banner(e.good ? 'ROCKET START!' : 'STALLED!', e.good ? 'cyan' : 'pink');
           const k = this.karts[e.racer];
-          if (k && e.good) this.fx.miniTurbo(k.state.position, 3);
+          if (k && e.good) this.fx.rocketStart(k.render.position, k.chase.forward);
+          k?.view.gesture(e.good ? 'rocket' : 'stall');
           break;
         }
         case 'itemBox':
@@ -71,6 +72,7 @@ export class RacePresenter {
         case 'itemUse': {
           const k = this.karts[e.racer]!;
           const item = ITEMS[e.item];
+          k.view.gesture(e.item === 'horn' ? 'shout' : item.category === 'boost' || item.category === 'buff' ? 'boost' : 'throw');
           if (item.category === 'boost' && e.item !== 'coin') {
             this.fx.miniTurbo(k.state.position, 2);
             this.player(e.racer)?.camera.addTrauma(0.15);
@@ -82,6 +84,7 @@ export class RacePresenter {
         case 'hit': {
           const k = this.karts[e.racer]!;
           this.fx.poof(k.state.position.clone().setY(k.state.position.y + 1), e.kind === 'squish' ? '#ffffff' : '#ffe9a6');
+          k.view.gesture('ouch');
           const p = this.player(e.racer);
           if (p) p.camera.addTrauma(e.kind === 'tumble' ? 0.6 : 0.35);
           break;
@@ -138,6 +141,10 @@ export class RacePresenter {
         case 'finish': {
           const p = this.player(e.racer);
           if (p) p.hud.banner('FINISH!', 'gold');
+          const k = this.karts[e.racer];
+          const field = this.karts.length;
+          k?.view.setMood(e.position <= 3 ? 'cheer' : e.position >= Math.max(5, Math.ceil(field * 0.6)) ? 'sulk' : 'race');
+          if (k && p) this.fx.confetti(k.render.position, e.position <= 3 ? 1 : 0.5);
           break;
         }
         default:

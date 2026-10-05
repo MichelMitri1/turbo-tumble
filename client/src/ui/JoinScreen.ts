@@ -28,6 +28,7 @@ export class JoinScreen {
     parent: HTMLElement,
     private readonly input: InputManager,
     private readonly onDone: (players: PlayerSetup[] | null) => void,
+    private readonly sound: (name: 'uiJoin' | 'uiReady' | 'uiChange' | 'uiBack') => void = () => undefined,
   ) {
     this.grid = el('div', 'tt-join__grid');
     this.root = el('div', 'tt-join', [
@@ -83,6 +84,7 @@ export class JoinScreen {
       if (nav.back) {
         if (slot.ready) slot.ready = false;
         else slot.device = null;
+        this.sound('uiBack');
         changed = true;
         continue;
       }
@@ -93,7 +95,11 @@ export class JoinScreen {
       }
       if (nav.left || nav.right) slot.character = (slot.character + (nav.right ? 1 : -1) + CHARACTERS.length) % CHARACTERS.length;
       if (nav.up || nav.down) slot.kart = (slot.kart + (nav.down ? 1 : -1) + KART_BODIES.length) % KART_BODIES.length;
-      if (nav.confirm) slot.ready = true;
+      if (nav.left || nav.right || nav.up || nav.down) this.sound('uiChange');
+      if (nav.confirm) {
+        slot.ready = true;
+        this.sound('uiReady');
+      }
       changed ||= nav.left || nav.right || nav.up || nav.down || nav.confirm;
     }
     // A new device claims the first open slot.
@@ -102,6 +108,7 @@ export class JoinScreen {
       const free = this.slots.find((s) => !s.device);
       if (free) {
         free.device = join;
+        this.sound('uiJoin');
         changed = true;
       }
     }
