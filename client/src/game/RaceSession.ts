@@ -377,6 +377,8 @@ export class RaceSession {
 
     if ((r.progress.finished || this.sync?.end) && !p.resultsShown) {
       p.finishedFor += dt;
+      // Finish shot: swing round to watch the driver celebrate (or sulk).
+      if (r.progress.finished && p.finishedFor > 0.9) p.camera.finishMode = true;
       if (p.finishedFor > 2.5) {
         p.hud.showResults(this.resultRows(p.racerIndex), this.resultsHint());
         p.resultsShown = true;

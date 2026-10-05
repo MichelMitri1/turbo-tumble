@@ -125,6 +125,12 @@ html, body {
   pointer-events: auto;
 }
 .tt-results.is-open { display: block; animation: tt-pop-center 0.35s ease-out; z-index: 5; }
+/* Wide views: results sit to the right so the finish shot of the driver stays visible. */
+@container (min-aspect-ratio: 13/10) {
+  .tt-results { left: auto; right: 4cqw; transform: translateY(-50%); min-width: min(44cqw, 70cqh); }
+  .tt-results.is-open { animation: tt-pop-side 0.35s ease-out; }
+}
+@keyframes tt-pop-side { 0% { transform: translateY(-50%) scale(0.3); } 70% { transform: translateY(-50%) scale(1.08); } 100% { transform: translateY(-50%) scale(1); } }
 @keyframes tt-pop-center { 0% { transform: translate(-50%, -50%) scale(0.3); } 70% { transform: translate(-50%, -50%) scale(1.08); } 100% { transform: translate(-50%, -50%) scale(1); } }
 .tt-results h3 { margin: 0 0 1.5cqh; text-align: center; font-size: max(24px, 7cqh); color: var(--tt-yellow); }
 .tt-results__row { display: grid; grid-template-columns: 4em 1fr auto; gap: 1em; padding: 0.4cqh 1.2cqh; border-radius: 1cqh; font-weight: 900; font-size: max(13px, 3.4cqh); }

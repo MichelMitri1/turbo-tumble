@@ -47,6 +47,9 @@ export class ChaseCamera {
   private landOffset = 0;
   private landVel = 0;
   private time = 0;
+  /** After the finish: swing round to face the driver (0 = chase, 1 = finish shot). */
+  finishMode = false;
+  private finish = 0;
 
   constructor(
     public tuning: ChaseCameraTuning,
@@ -81,6 +84,8 @@ export class ChaseCamera {
     this.fov = this.tuning.fov;
     this.trauma = 0;
     this.landOffset = this.landVel = 0;
+    this.finishMode = false;
+    this.finish = 0;
     this.computeDesired(t);
     this.pos.copy(this.desired);
     this.look.copy(this.lookTarget);
@@ -91,9 +96,11 @@ export class ChaseCamera {
     const k = this.tuning;
     this.time += dt;
 
-    // Heading: follow the kart's facing with lag (drift later blends towards velocity).
-    const fwdYaw = Math.atan2(t.forward.x, t.forward.z);
-    this.yaw = dampAngle(this.yaw, fwdYaw, k.yawFollow * (0.7 + 0.5 * clamp(t.speed01, 0, 1)), dt);
+    // Heading: follow the kart's facing with lag. Finish shot: swing round to the
+    // front and sway slowly so the celebrating driver is on show.
+    this.finish = damp(this.finish, this.finishMode ? 1 : 0, 1.6, dt);
+    const fwdYaw = Math.atan2(t.forward.x, t.forward.z) + (this.finishMode ? Math.PI * 0.88 + Math.sin(this.time * 0.35) * 0.25 : 0);
+    this.yaw = dampAngle(this.yaw, fwdYaw, this.finishMode ? 1.4 : k.yawFollow * (0.7 + 0.5 * clamp(t.speed01, 0, 1)), dt);
 
     // Slope follow (pitch the rig with hills, but gently).
     const fwdSlope = t.grounded ? clamp(t.forward.y, -0.5, 0.5) : this.slope;
@@ -106,8 +113,9 @@ export class ChaseCamera {
 
     // Speed sensation: pull back + widen FOV.
     const sp = clamp(t.speed01, 0, 1.3);
-    this.distance = damp(this.distance, k.distance + k.speedDistance * sp + t.boost * 0.6, 3, dt);
-    this.fov = damp(this.fov, k.fov + k.speedFov * sp + k.boostFov * t.boost, 4, dt);
+    const chaseDistance = k.distance + k.speedDistance * sp + t.boost * 0.6;
+    this.distance = damp(this.distance, chaseDistance + (8 - chaseDistance) * this.finish, 3, dt);
+    this.fov = damp(this.fov, k.fov + (k.speedFov * sp + k.boostFov * t.boost) * (1 - this.finish), 4, dt);
 
     // Landing spring.
     const stiffness = 90;
@@ -132,14 +140,17 @@ export class ChaseCamera {
     this.dir.set(-sinY, -this.slope * k.slopeInfluence, -cosY).normalize();
     const anchor = this.anchor.set(t.position.x, this.refY, t.position.z);
 
+    const f = this.finish;
     this.lookTarget
       .set(sinY, this.slope * k.slopeInfluence, cosY)
       .normalize()
-      .multiplyScalar(k.lookAhead)
+      .multiplyScalar(k.lookAhead * (1 - f))
       .add(anchor)
-      .addScaledVector(UP, k.lookHeight);
+      .addScaledVector(UP, k.lookHeight + (1.2 - k.lookHeight) * f)
+      // Finish shot: aim right of the kart so it sits in the left third (results panel on the right).
+      .addScaledVector(this.tmp.set(-cosY, 0, sinY), 2.6 * f);
 
-    this.desired.copy(anchor).addScaledVector(this.dir, this.distance).addScaledVector(UP, k.height + this.landOffset * 0.35);
+    this.desired.copy(anchor).addScaledVector(this.dir, this.distance).addScaledVector(UP, k.height + (2.2 - k.height) * f + this.landOffset * 0.35);
     this.avoidObstacles(anchor);
   }
 
