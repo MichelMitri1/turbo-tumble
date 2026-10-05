@@ -85,6 +85,25 @@ browser; `LATENCY=100 npm run dev:server` delays the server side. F3 shows the n
 Keyboard bindings are rebindable through `InputManager.rebindKey()` and persist in `localStorage`
 (the settings UI lands in Phase 7).
 
+## Tracks & cups
+
+12 tracks in 3 Grand Prix cups (pick a **Track** for Single Race / Time Trial / online, a
+**Cup** for Grand Prix):
+
+| Cup | Tracks |
+| --- | --- |
+| Sunny Cup | Sunny Circuit · Palm Bay (tropical) · Harvest Lane (farm) · Pinewood Pass (alpine, tunnel) |
+| Wild Cup | Dune Canyon (desert mesas) · Maple Glen (autumn) · Mushroom Hollow (dusk, giant mushrooms) · Temple Ruins (ruins, bridge) |
+| Extreme Cup | Frost Peak (snow, tunnel) · Sunset Coast (bridge) · Neon Metro (night city, underpass) · Volcano Run (lava, bridge) |
+
+Sunny Circuit is hand-laid; the world-tour tracks are generated from a few numbers each
+(`shared/src/tracks/worldTracks.ts` → `generator.ts`: star-shaped closed curves can't cross
+themselves, the start goes on the longest straight) and dressed by themes
+(`themes.ts`: terrain colours, sky, light, scenery, liquids, landmarks, music). Item boxes,
+coins, boost pads (on straights), lakes under bridges and hills over tunnels are placed by
+`factory.ts`. Add a track by adding one `defineTrack({...})` entry; `npx tsx tools/check-tracks.ts --race`
+validates every track (corner radius, CPU race finishes).
+
 ## Sound, animation & effects
 
 - **All audio is synthesised in the browser** (Web Audio) — no sound files, so everything is
@@ -269,6 +288,8 @@ node tools/online-smoke.mjs <url> <outDir> [--lag=150] [--jitter=20] [--bots=4] 
                                                # race, smoothness, reconnect (--drop), leave
 node tools/online-flow.mjs <url> <outDir>      # room lifecycle: results/points → lobby,
                                                # mid-race join refusal, quick match
+npx tsx tools/check-tracks.ts [trackId…] [--race]  # every track: length, tightest corner, CPU race
+node tools/track-tour.mjs <url> <outDir> [trackId…]    # loads each track in Chrome, screenshots + fps
 node tools/audio-check.mjs <url> <outDir> [--songs=30]
                                                # renders every SFX + song offline in Chrome:
                                                # level / clipping / length check + WAVs to audition
@@ -295,5 +316,6 @@ tracks,environment,items,animations,textures,particles,audio,ui}`.
 | 4 | Join screen & device assignment, 1–4P menus, split layouts, controls rebinding, per-viewport framing, faster karts + speed lines | ✅ |
 | 5 | Colyseus server, rooms/codes, quick match, lobby + ready-up, 8 online humans (+ online split-screen), prediction + reconciliation + interpolation, reconnection, results/points | ✅ |
 | 6 | Synthesised audio (engines, SFX, original music), procedural driver animation + toppers/scarves, VFX polish, finish camera | ✅ |
-| 7 | Neon Metro, Volcano Run, more racers, menus, kart select | next |
+| 7 | 11 new tracks (12 total) in 3 cups, themes (tropical, farm, alpine, desert, autumn, dusk, ruins, snow, sunset, night city, volcano), runtime track switching, track/cup menus, online track choice, 4 new songs | ✅ |
+| 7b | More racers, kart select screen | next |
 | 8 | Optimisation, balance, full test pass | |
