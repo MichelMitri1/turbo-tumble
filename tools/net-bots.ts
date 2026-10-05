@@ -3,7 +3,7 @@
  * race (steering from their own snapshots) and return to the lobby.
  * Requires the server: `npm run dev:server` (or `npm run dev`).
  *
- *   npx tsx tools/net-bots.ts [bots=8] [--laps=1] [--cpus=0] [--url=ws://localhost:2567] [--join=CODE] [--stay]
+ *   npx tsx tools/net-bots.ts [bots=8] [--laps=1] [--cpus=0] [--track=sunny-circuit] [--url=ws://localhost:2567] [--join=CODE] [--stay]
  *
  * --join=CODE  join an existing room (e.g. one a browser created) instead of creating one
  * --stay       keep racing round after round (for browser testing alongside bots)
@@ -27,8 +27,9 @@ const cpus = Number(flag('cpus', '0'));
 const url = flag('url', 'ws://localhost:2567');
 const joinCode = flag('join', '');
 const stay = args.includes('--stay');
+const trackId = flag('track', 'sunny-circuit');
 
-const def = getTrack('sunny-circuit');
+const def = getTrack(trackId);
 const path = new TrackPath(def);
 const pickups = new Pickups(path, def);
 const CHARS = ['bix', 'pip', 'zuzu', 'tuko', 'mox'];
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
 
   let code = joinCode;
   if (!code) {
-    const host = await new Client(url).create(ROOM_NAME, { version: PROTOCOL_VERSION, name: 'Bot1', seats: seat(0), visibility: 'private', settings: { laps, racerCount: count + cpus, items: true, difficulty: 'normal' } });
+    const host = await new Client(url).create(ROOM_NAME, { version: PROTOCOL_VERSION, name: 'Bot1', seats: seat(0), visibility: 'private', settings: { trackId, laps, racerCount: count + cpus, items: true, difficulty: 'normal' } });
     code = host.roomId;
     bots.push(mk(0, host));
     log(`room ${code} created by Bot1`);
