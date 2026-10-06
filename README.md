@@ -322,6 +322,26 @@ tools/                 Dev tooling (see below)
 - **Lazy assets.** The manifest maps ids → files; tracks declare the models they need and
   only those are loaded.
 
+## Crownfall Arena (`/arena-crown/`)
+
+A real-time 3D card battler (two lanes, three crowns, elixir) with 122 cards — every
+troop, building and spell role from the genre, each with a real animated model
+(Quaternius + Kenney CC0, see `client/public/assets/arena/LICENSES.md`). Code in
+`client/src/arena/`: `engine.ts` (30 Hz battle sim), `ai.ts` (Easy/Normal/Hard rival),
+`cards.ts` (roster + stats + visuals), `arena3d.ts` (scene, units, effects), `main.ts` (UI).
+
+- `node tools/arena-assets.mjs <packs dir>` — convert the source packs to compact GLBs (+ manifest)
+- `npx tsx tools/arena-prune.ts` — drop models no card uses
+- `node tools/arena-portraits.mjs [dev url]` — bake card portraits
+- `npx tsx tools/arena-sim.ts 60 --blue=hard --red=easy` — headless AI tournament (crashes, balance, difficulty)
+- **Online / LAN 1v1:** menu → *Online · LAN* → Create room (share the 4-letter code or invite
+  link), Quick match, or join a code. The game server (`server/src/rooms/CrownfallRoom.ts`) runs the
+  real battle engine; clients only send card plays and render 15 Hz snapshots (30 Hz in LAN mode).
+  The guest's board is mirrored so both players fight from the bottom. Same LAN flow as Turbo
+  Tumble: `npm run lan` on one laptop, everyone opens the printed address + `/arena-crown/`.
+  Rematches alternate sides; leaving mid-battle forfeits after a 20 s reconnect window.
+- Dev: `/arena-crown/gallery.html?p=m-` shows models; `?battle` jumps straight in; `?debug` → I infinite elixir, F fast-forward
+
 ## Tools
 
 - `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).

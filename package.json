@@ -21,8 +21,13 @@
     "preview": "npm run preview -w client"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "@types/node": "^26.6.4",
+    "meshoptimizer": "^1.3.0",
     "puppeteer-core": "^25.12.0",
+    "sharp": "^0.35.5",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }

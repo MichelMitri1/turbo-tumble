@@ -27,10 +27,10 @@ export const GAMES: GameEntry[] = [
   {
     id: 'crownfall-arena',
     title: 'Crownfall Arena',
-    tagline: 'Real-time card combat. Build a deck, command the lanes and claim the crown.',
+    tagline: 'Real-time 3D card battles: 122 animated cards, two lanes, three crowns.',
     href: '/arena-crown/',
-    tags: ['Strategy', '1v1 vs AI', '123 cards'],
-    art: { emoji: '♛', from: '#3fd8ff', to: '#2e2670' },
+    tags: ['Strategy', 'vs AI', 'Online · LAN', '122 cards'],
+    art: { emoji: '👑', from: '#3fd8ff', to: '#9b4dff' },
   },
   {
     id: 'coming-soon-2',

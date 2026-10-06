@@ -1,76 +1,374 @@
 import * as THREE from 'three';
-import type { CardDefinition, Team } from './types';
-import { has } from './cards';
+import { instantiate, findClip, type TintSpec } from './assets';
+import type { CardDefinition, ModelSpec, PropSpec, Team } from './types';
 
-const mat = (color: string, roughness=.72, metalness=.05) => new THREE.MeshStandardMaterial({color,roughness,metalness});
-const mesh = (geometry: THREE.BufferGeometry, material: THREE.Material) => { const m=new THREE.Mesh(geometry,material);m.castShadow=true;m.receiveShadow=true;return m; };
-const box=(x:number,y:number,z:number,m:THREE.Material)=>mesh(new THREE.BoxGeometry(x,y,z),m);
-const sphere=(r:number,m:THREE.Material)=>mesh(new THREE.SphereGeometry(r,12,8),m);
-const cyl=(r:number,h:number,m:THREE.Material)=>mesh(new THREE.CylinderGeometry(r,r,h,10),m);
+/**
+ * Builds the 3D look of a card: the GLB model (scaled to the card's height), its
+ * mount and props, or a procedural build for the few things no pack covers.
+ */
 
-function addWeapon(root:THREE.Group, card:CardDefinition, metal:THREE.Material, wood:THREE.Material):void {
-  const w=new THREE.Group();w.name='weapon';w.position.set(.42,.78,0);w.rotation.z=-.35;
-  const shaft=cyl(.045,.9,wood);shaft.rotation.z=Math.PI/2;w.add(shaft);
-  if(has(card,'ranged')){const bow=new THREE.Mesh(new THREE.TorusGeometry(.28,.035,6,12,Math.PI),metal);bow.rotation.y=Math.PI/2;bow.rotation.z=Math.PI/2;bow.position.x=.38;w.add(bow);}
-  else if(has(card,'beam')||card.name.includes('P.E.K.K.A')){const blade=box(.12,.72,.16,metal);blade.position.x=.55;blade.rotation.z=Math.PI/2;w.add(blade);}
-  else {const head=box(.3,.24,.24,metal);head.position.x=.45;w.add(head);}
-  root.add(w);
+export const TEAM_COLORS: Record<Team, { main: string; light: string; dark: string }> = {
+  blue: { main: '#2f9bff', light: '#8fd0ff', dark: '#1a4f9e' },
+  red: { main: '#ff4b5c', light: '#ffa0a8', dark: '#9e1a2c' },
+};
+
+const toon = (color: string, opts: Partial<THREE.MeshStandardMaterialParameters> = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.05, ...opts });
+function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
 }
 
-function humanoid(card:CardDefinition, team:Team):THREE.Group {
-  const g=new THREE.Group(), bodyMat=mat(card.color), accent=mat(card.accent,.45,.2), skin=mat(/Goblin|Bush/.test(card.name)?'#74bd4b':/Skeleton/.test(card.name)?'#e9e4d2':'#d9a06f'), dark=mat('#202a3e'), metal=mat('#b9c8d5',.3,.7), wood=mat('#6b4129');
-  const scale=has(card,'tank')?1.32:has(card,'swarm')?.72:1;g.scale.setScalar(scale);
-  const body=mesh(new THREE.CapsuleGeometry(.34,.5,4,8),bodyMat);body.position.y=.68;g.add(body);
-  const head=sphere(.29,skin);head.position.y=1.3;head.scale.z=.9;g.add(head);
-  const eye=mat(team==='blue'?'#74e7ff':'#ff8a9b',.25,.05);for(const x of [-.105,.105]){const e=sphere(.043,eye);e.position.set(x,1.34,.265);g.add(e);}
-  if(/Knight|Prince|Guard|P.E.K.K.A|Recruit|Barbarian|Ronin|Bandit|Monk|Hunter|Executioner|Fisherman|Rider|Giant|Bowler|Valkyrie|Berserker/.test(card.name)){const helm=mesh(new THREE.SphereGeometry(.32,10,6,0,Math.PI*2,0,Math.PI*.58),accent);helm.position.y=1.4;g.add(helm);const crest=box(.08,.35,.34,bodyMat);crest.position.set(0,1.7,0);g.add(crest);}
-  if(/Wizard|Witch|Princess|Archer|Musketeer|Firecracker|Mother|Queen/.test(card.name)){const hair=mesh(new THREE.SphereGeometry(.32,10,6,0,Math.PI*2,0,Math.PI*.55),accent);hair.position.y=1.39;g.add(hair);}
-  for(const x of [-.18,.18]){const leg=cyl(.09,.48,dark);leg.position.set(x,.22,0);g.add(leg);}
-  if(has(card,'shield')){const shield=mesh(new THREE.CylinderGeometry(.29,.29,.08,12),accent);shield.rotation.x=Math.PI/2;shield.position.set(-.42,.76,.12);g.add(shield);}
-  addWeapon(g,card,metal,wood);
-  if(card.name.includes('Giant')){const shoulder=box(1,.22,.55,accent);shoulder.position.y=1.06;g.add(shoulder);}
+export interface BuiltModel {
+  root: THREE.Group;
+  /** Main animated model (plus rider, if mounted). */
+  mixers: THREE.AnimationMixer[];
+  clips: THREE.AnimationClip[];
+  riderClips: THREE.AnimationClip[];
+  mountClips: THREE.AnimationClip[];
+  riderMixer: THREE.AnimationMixer | null;
+  mountMixer: THREE.AnimationMixer | null;
+  /** All materials (for hit flashes / fades). */
+  materials: THREE.MeshStandardMaterial[];
+  height: number;
+}
+
+const BONES = {
+  hand: [/^Fist\.R$/, /^Hand\.?R$/i, /^RightHand$/i, /^LowerArm\.R$/, /^arm-right$/],
+  head: [/^Head$/, /^head$/],
+  back: [/^Torso$/, /^Chest$/i, /^torso$/, /^Spine/i],
+};
+
+function findBone(root: THREE.Object3D, kind: keyof typeof BONES): THREE.Object3D | null {
+  for (const re of BONES[kind]) {
+    let found: THREE.Object3D | null = null;
+    root.traverse((o) => {
+      if (!found && re.test(o.name)) found = o;
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+async function buildProp(p: PropSpec): Promise<THREE.Object3D> {
+  if (p.model.startsWith('proc:')) return procProp(p.model.slice(5), p.height);
+  const inst = await instantiate(p.model, p.height, p.tint as TintSpec | undefined);
+  if (inst.mixer) {
+    const idle = findClip(inst.clips, /^idle$/i, /idle/i);
+    if (idle) inst.mixer.clipAction(idle).play();
+    inst.root.userData.mixer = inst.mixer;
+  }
+  return inst.root;
+}
+
+/** Attach `obj` (already sized in world units) to a bone, cancelling the bone's scale. */
+function attach(model: THREE.Object3D, obj: THREE.Object3D, p: PropSpec): void {
+  model.updateMatrixWorld(true);
+  const bone = p.at === 'offset' ? null : findBone(model, p.at);
+  if (!bone) {
+    const [x, y, z] = p.offset ?? (p.at === 'head' ? [0, 1, 0] : p.at === 'back' ? [0, 0.6, -0.3] : [0.35, 0.5, 0.15]);
+    obj.position.set(x, y, z);
+    if (p.rotation) obj.rotation.set(...p.rotation);
+    model.add(obj);
+    return;
+  }
+  const s = new THREE.Vector3();
+  bone.getWorldScale(s);
+  const holder = new THREE.Group();
+  holder.scale.setScalar(1 / (s.x || 1));
+  bone.add(holder);
+  holder.add(obj);
+  if (p.at === 'hand') {
+    obj.rotation.set(...(p.rotation ?? [Math.PI / 2, 0, 0]));
+  } else if (p.at === 'back') {
+    obj.position.set(0, 0.05, -0.25);
+    obj.rotation.set(...(p.rotation ?? [0.2, 0, 0]));
+  } else if (p.at === 'head') {
+    obj.position.set(0, 0.32, 0);
+  }
+  if (p.offset) obj.position.add(new THREE.Vector3(...p.offset));
+}
+
+export async function buildCardModel(card: CardDefinition, team: Team): Promise<BuiltModel> {
+  const v = card.visual;
+  const root = new THREE.Group();
+  const out: BuiltModel = { root, mixers: [], clips: [], riderClips: [], mountClips: [], riderMixer: null, mountMixer: null, materials: [], height: v.height };
+  if (v.model.startsWith('proc:')) {
+    root.add(procModel(v.model.slice(5), v.height, team));
+  } else if (v.mount) {
+    const mount = await instantiate(v.mount.model, v.mount.height, v.mount.tint as TintSpec | undefined);
+    const rider = await instantiate(v.model, v.height, v.tint as TintSpec | undefined);
+    rider.root.position.y = v.mount.seat - v.height * 0.32;
+    rider.root.position.z = -0.05;
+    mount.root.add(rider.root);
+    root.add(mount.root);
+    out.mountMixer = mount.mixer;
+    out.mountClips = mount.clips;
+    out.riderMixer = rider.mixer;
+    out.riderClips = rider.clips;
+    if (mount.mixer) out.mixers.push(mount.mixer);
+    if (rider.mixer) out.mixers.push(rider.mixer);
+    for (const p of v.props ?? []) attach(rider.root, await buildProp(p), p);
+  } else {
+    const inst = await instantiate(v.model, v.height, v.tint as TintSpec | undefined, { width: v.width });
+    if (v.yaw) inst.root.rotation.y = v.yaw;
+    root.add(inst.root);
+    out.clips = inst.clips;
+    if (inst.mixer) out.mixers.push(inst.mixer);
+    for (const p of v.props ?? []) attach(inst.root, await buildProp(p), p);
+  }
+  // Prop models with their own idle loops (goblins riding on backs…).
+  root.traverse((o) => {
+    if (o.userData.mixer) out.mixers.push(o.userData.mixer as THREE.AnimationMixer);
+  });
+  // Every instance gets its own materials so hits can flash and deaths can fade.
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const own = (mat: THREE.Material) => {
+      const c = mat.clone() as THREE.MeshStandardMaterial;
+      c.transparent = false;
+      c.userData.baseEmissive = c.emissive ? c.emissive.clone() : new THREE.Color(0);
+      c.userData.baseEmissiveIntensity = c.emissiveIntensity ?? 1;
+      out.materials.push(c);
+      return c;
+    };
+    m.material = Array.isArray(m.material) ? m.material.map(own) : own(m.material);
+  });
+  return out;
+}
+
+// ============================================================================ procedural
+
+const WOOD = '#9a6237';
+const WOOD_DARK = '#6b4129';
+const METAL = '#b9c8d5';
+const GOLD = '#ffcf3f';
+
+function procProp(kind: string, h: number): THREE.Object3D {
+  const g = new THREE.Group();
+  const s = h;
+  switch (kind) {
+    case 'crown': {
+      const band = mesh(new THREE.CylinderGeometry(0.5 * s, 0.45 * s, 0.35 * s, 10, 1, true), toon(GOLD, { metalness: 0.5, roughness: 0.3, side: THREE.DoubleSide }));
+      g.add(band);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        g.add(mesh(new THREE.ConeGeometry(0.1 * s, 0.35 * s, 5), toon(GOLD, { metalness: 0.5, roughness: 0.3 }), Math.cos(a) * 0.45 * s, 0.3 * s, Math.sin(a) * 0.45 * s));
+      }
+      break;
+    }
+    case 'axe':
+    case 'hammer':
+    case 'mace':
+    case 'pickaxe': {
+      g.add(mesh(new THREE.CylinderGeometry(0.035 * s, 0.04 * s, s, 6), toon(WOOD_DARK), 0, s * 0.5, 0));
+      if (kind === 'axe') g.add(mesh(new THREE.BoxGeometry(0.06 * s, 0.32 * s, 0.38 * s), toon(METAL, { metalness: 0.6, roughness: 0.3 }), 0, s * 0.85, 0.15 * s));
+      if (kind === 'hammer') g.add(mesh(new THREE.BoxGeometry(0.28 * s, 0.24 * s, 0.42 * s), toon('#8a8f9c', { metalness: 0.5 }), 0, s * 0.9, 0));
+      if (kind === 'mace') g.add(mesh(new THREE.DodecahedronGeometry(0.17 * s), toon('#4d4a5e', { metalness: 0.6, roughness: 0.3 }), 0, s * 0.92, 0));
+      if (kind === 'pickaxe') {
+        const head = mesh(new THREE.TorusGeometry(0.25 * s, 0.035 * s, 6, 12, Math.PI), toon(METAL, { metalness: 0.6 }), 0, s * 0.82, 0);
+        head.rotation.y = Math.PI / 2;
+        g.add(head);
+      }
+      break;
+    }
+    case 'bow':
+    case 'crossbow':
+    case 'slingshot': {
+      const arc = mesh(new THREE.TorusGeometry(0.4 * s, 0.03 * s, 6, 16, Math.PI), toon(WOOD));
+      arc.rotation.z = Math.PI / 2;
+      g.add(arc);
+      if (kind === 'crossbow') g.add(mesh(new THREE.BoxGeometry(0.06 * s, 0.06 * s, 0.7 * s), toon(WOOD_DARK), 0, 0, 0.1 * s));
+      break;
+    }
+    case 'staff':
+      g.add(mesh(new THREE.CylinderGeometry(0.03 * s, 0.035 * s, s, 6), toon(WOOD_DARK), 0, s * 0.45, 0));
+      g.add(mesh(new THREE.IcosahedronGeometry(0.1 * s), toon('#7ef0ff', { emissive: '#3fd8ff', emissiveIntensity: 0.8 }), 0, s * 0.98, 0));
+      break;
+    case 'gun':
+    case 'blowgun':
+    case 'launcher':
+      g.add(mesh(new THREE.CylinderGeometry(0.06 * s, 0.07 * s, s, 8), toon(kind === 'launcher' ? '#d23a3a' : '#3b3f4a', { metalness: 0.4 }), 0, s * 0.5, 0));
+      if (kind === 'gun') g.add(mesh(new THREE.BoxGeometry(0.1 * s, 0.25 * s, 0.12 * s), toon(WOOD), 0, 0.1 * s, -0.05 * s));
+      break;
+    case 'hook':
+      g.add(mesh(new THREE.CylinderGeometry(0.03 * s, 0.03 * s, s, 6), toon(WOOD), 0, s * 0.5, 0));
+      g.add(mesh(new THREE.TorusGeometry(0.12 * s, 0.03 * s, 6, 10, Math.PI * 1.4), toon(METAL, { metalness: 0.6 }), 0, s, 0.1 * s));
+      break;
+    case 'balloon':
+      return balloon(h, '#ffcf3f', '#ff6a3d');
+    default:
+      g.add(mesh(new THREE.BoxGeometry(0.2 * s, 0.2 * s, 0.2 * s), toon('#ff00ff')));
+  }
   return g;
 }
 
-function flyer(card:CardDefinition,team:Team):THREE.Group {
-  const g=humanoid(card,team);g.scale.multiplyScalar(.85);g.position.y=.65;const wingMat=mat(card.accent,.6,.05);
-  for(const side of [-1,1]){const wing=mesh(new THREE.ConeGeometry(.42,.9,3),wingMat);wing.name='wing';wing.position.set(side*.58,.94,0);wing.rotation.z=side*1.05;wing.rotation.y=side*.3;g.add(wing);}
-  if(/Dragon|Phoenix/.test(card.name)){const snout=box(.42,.18,.38,mat(card.color));snout.position.set(0,1.25,.38);g.add(snout);}
+function balloon(h: number, a: string, b: string): THREE.Group {
+  const g = new THREE.Group();
+  const env = new THREE.SphereGeometry(0.42 * h, 16, 12);
+  const stripes = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const seg = mesh(new THREE.SphereGeometry(0.43 * h, 16, 12, (i / 6) * Math.PI * 2, Math.PI / 6), toon(i % 2 ? a : b));
+    seg.position.y = 0.55 * h;
+    stripes.add(seg);
+  }
+  g.add(mesh(env, toon(a), 0, 0.55 * h, 0));
+  g.add(stripes);
+  for (const [x, z] of [[-0.12, -0.12], [0.12, -0.12], [-0.12, 0.12], [0.12, 0.12]]) {
+    const rope = mesh(new THREE.CylinderGeometry(0.008 * h, 0.008 * h, 0.35 * h, 4), toon('#6b4129'), x * h, 0.12 * h, z * h);
+    g.add(rope);
+  }
   return g;
 }
 
-export function buildCardModel(card:CardDefinition,team:Team):THREE.Group {
-  if(card.type==='building')return buildBuilding(card,team);
-  if(card.type==='spell'){const g=new THREE.Group(), core=sphere(.44,mat(card.color,.25,.35));g.add(core);const ring=mesh(new THREE.TorusGeometry(.65,.08,8,24),mat(card.accent,.2,.5));ring.rotation.x=Math.PI/2;g.add(ring);return g;}
-  const g=has(card,'flying')?flyer(card,team):humanoid(card,team);g.name=card.id;return g;
-}
-
-export function buildBuilding(card:CardDefinition,team:Team):THREE.Group {
-  const g=new THREE.Group(), stone=mat('#4b5364'), trim=mat(team==='blue'?'#248ed6':'#c63251',.5,.15), roof=mat(card.color), wood=mat('#724c2c');
-  const base=box(1.25,.3,1.25,stone);base.position.y=.15;g.add(base);
-  const body=box(.9,.85,.9,wood);body.position.y=.72;g.add(body);
-  if(/Hut|Tombstone|Cage|Collector|Drill/.test(card.name)){const top=mesh(new THREE.ConeGeometry(.78,.62,4),roof);top.position.y=1.45;top.rotation.y=Math.PI/4;g.add(top);}
-  else {const barrel=cyl(.2,1.1,mat('#263246',.35,.7));barrel.name='weapon';barrel.rotation.x=Math.PI/2;barrel.position.set(0,1.25,.32);g.add(barrel);const rim=cyl(.55,.2,trim);rim.position.y=1;g.add(rim);}
+/** Whole-unit procedural builds. */
+function procModel(kind: string, h: number, team: Team): THREE.Group {
+  const g = new THREE.Group();
+  const tc = TEAM_COLORS[team];
+  switch (kind) {
+    case 'ram': {
+      const log = mesh(new THREE.CylinderGeometry(0.28 * h, 0.3 * h, 2.2 * h, 12), toon(WOOD));
+      log.rotation.x = Math.PI / 2;
+      log.position.y = 0.55 * h;
+      g.add(log);
+      g.add(mesh(new THREE.ConeGeometry(0.3 * h, 0.35 * h, 12), toon(METAL, { metalness: 0.6 }), 0, 0.55 * h, 1.25 * h).rotateX(Math.PI / 2));
+      // Two raiders carrying it (static pose — the log bobs while running).
+      for (const side of [-1, 1]) {
+        const body = mesh(new THREE.CapsuleGeometry(0.2 * h, 0.35 * h, 4, 8), toon(tc.main), side * 0.4 * h, 0.45 * h, side * 0.3 * h);
+        g.add(body);
+        g.add(mesh(new THREE.SphereGeometry(0.17 * h, 10, 8), toon('#e0a070'), side * 0.4 * h, 0.85 * h, side * 0.3 * h));
+        g.add(mesh(new THREE.SphereGeometry(0.18 * h, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), toon(METAL, { metalness: 0.5 }), side * 0.4 * h, 0.9 * h, side * 0.3 * h));
+      }
+      break;
+    }
+    case 'bomb-balloon': {
+      const b = balloon(h, tc.main, '#ffcf3f');
+      b.position.y = 0.35 * h;
+      g.add(b);
+      g.add(mesh(new THREE.CylinderGeometry(0.2 * h, 0.17 * h, 0.18 * h, 10), toon(WOOD), 0, 0.12 * h, 0));
+      g.add(mesh(new THREE.SphereGeometry(0.12 * h, 12, 10), toon('#2a2638', { metalness: 0.4, roughness: 0.4 }), 0, -0.02 * h, 0));
+      break;
+    }
+    case 'cart': {
+      g.add(mesh(new THREE.BoxGeometry(0.9 * h, 0.35 * h, 1.1 * h), toon(WOOD), 0, 0.45 * h, 0));
+      for (const x of [-0.5, 0.5]) for (const z of [-0.35, 0.35]) {
+        const w = mesh(new THREE.CylinderGeometry(0.22 * h, 0.22 * h, 0.12 * h, 14), toon(WOOD_DARK), x * h, 0.22 * h, z * h);
+        w.rotation.z = Math.PI / 2;
+        g.add(w);
+      }
+      const barrel = mesh(new THREE.CylinderGeometry(0.16 * h, 0.2 * h, 0.9 * h, 12), toon('#3b3f4a', { metalness: 0.5 }), 0, 0.8 * h, 0.2 * h);
+      barrel.rotation.x = Math.PI / 2.3;
+      barrel.name = 'weapon';
+      g.add(barrel);
+      g.add(mesh(new THREE.BoxGeometry(0.95 * h, 0.08 * h, 0.2 * h), toon(tc.main), 0, 0.64 * h, -0.5 * h));
+      break;
+    }
+    case 'volt': {
+      g.add(mesh(new THREE.BoxGeometry(1 * h, 0.35 * h, 1.2 * h), toon('#6b4129'), 0, 0.42 * h, 0));
+      for (const x of [-0.55, 0.55]) for (const z of [-0.4, 0.4]) {
+        const w = mesh(new THREE.CylinderGeometry(0.22 * h, 0.22 * h, 0.12 * h, 14), toon('#3b3f4a'), x * h, 0.22 * h, z * h);
+        w.rotation.z = Math.PI / 2;
+        g.add(w);
+      }
+      const coil = mesh(new THREE.CylinderGeometry(0.22 * h, 0.3 * h, 0.7 * h, 12), toon('#ffcf3f', { metalness: 0.6, roughness: 0.3 }), 0, 0.95 * h, 0);
+      g.add(coil);
+      for (let i = 0; i < 4; i++) g.add(mesh(new THREE.TorusGeometry(0.28 * h, 0.04 * h, 6, 16), toon('#b87333', { metalness: 0.7 }), 0, (0.7 + i * 0.15) * h, 0).rotateX(Math.PI / 2));
+      const orb = mesh(new THREE.SphereGeometry(0.2 * h, 14, 10), toon('#bff2ff', { emissive: '#3fd8ff', emissiveIntensity: 1.2 }), 0, 1.4 * h, 0);
+      orb.name = 'charge';
+      g.add(orb);
+      break;
+    }
+    case 'hut':
+    case 'longhouse': {
+      const w = kind === 'hut' ? 0.85 : 1;
+      g.add(mesh(new THREE.CylinderGeometry(0.4 * w * h, 0.44 * w * h, 0.55 * h, 8), toon(kind === 'hut' ? '#8a6a3a' : '#7a5230'), 0, 0.27 * h, 0));
+      g.add(mesh(new THREE.ConeGeometry(0.58 * w * h, 0.6 * h, 8), toon(kind === 'hut' ? '#c9a14a' : tc.main), 0, 0.82 * h, 0));
+      g.add(mesh(new THREE.BoxGeometry(0.22 * h, 0.34 * h, 0.08 * h), toon('#3a2a1a'), 0, 0.17 * h, 0.43 * w * h));
+      g.add(mesh(new THREE.ConeGeometry(0.08 * h, 0.2 * h, 6), toon('#e8e0c8'), 0, 1.18 * h, 0));
+      break;
+    }
+    case 'pump': {
+      g.add(mesh(new THREE.CylinderGeometry(0.55 * h, 0.6 * h, 0.4 * h, 10), toon('#6a6f80'), 0, 0.2 * h, 0));
+      const tank = mesh(new THREE.SphereGeometry(0.45 * h, 18, 14), new THREE.MeshPhysicalMaterial({ color: '#ff6ad5', roughness: 0.15, transmission: 0.2, emissive: '#c02ab0', emissiveIntensity: 0.35, clearcoat: 1 }), 0, 0.85 * h, 0);
+      tank.name = 'charge';
+      g.add(tank);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        g.add(mesh(new THREE.CylinderGeometry(0.05 * h, 0.05 * h, 0.9 * h, 6), toon(GOLD, { metalness: 0.6 }), Math.cos(a) * 0.45 * h, 0.7 * h, Math.sin(a) * 0.45 * h));
+      }
+      break;
+    }
+    case 'furnace': {
+      g.add(mesh(new THREE.CylinderGeometry(0.55 * h, 0.65 * h, 0.9 * h, 10), toon('#5a5560'), 0, 0.45 * h, 0));
+      g.add(mesh(new THREE.CylinderGeometry(0.15 * h, 0.18 * h, 0.6 * h, 8), toon('#3a3640'), 0.25 * h, 1.1 * h, 0));
+      const mouth = mesh(new THREE.CircleGeometry(0.22 * h, 12), toon('#ff8c1a', { emissive: '#ff5a1a', emissiveIntensity: 1.4 }), 0, 0.35 * h, 0.64 * h);
+      mouth.name = 'charge';
+      g.add(mouth);
+      break;
+    }
+    case 'cage': {
+      g.add(mesh(new THREE.CylinderGeometry(0.65 * h, 0.7 * h, 0.12 * h, 12), toon('#6a6f80'), 0, 0.06 * h, 0));
+      g.add(mesh(new THREE.CylinderGeometry(0.65 * h, 0.65 * h, 0.1 * h, 12), toon('#6a6f80'), 0, 1 * h, 0));
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        g.add(mesh(new THREE.CylinderGeometry(0.03 * h, 0.03 * h, 0.95 * h, 5), toon('#3b3f4a', { metalness: 0.6 }), Math.cos(a) * 0.6 * h, 0.52 * h, Math.sin(a) * 0.6 * h));
+      }
+      g.add(mesh(new THREE.SphereGeometry(0.3 * h, 12, 10), toon('#74bd4b'), 0, 0.45 * h, 0));
+      break;
+    }
+    case 'drill': {
+      g.add(mesh(new THREE.CylinderGeometry(0.7 * h, 0.8 * h, 0.2 * h, 12), toon('#7a5a3a'), 0, 0.1 * h, 0));
+      const bit = mesh(new THREE.ConeGeometry(0.35 * h, 1 * h, 10), toon(METAL, { metalness: 0.7, roughness: 0.3 }), 0, 0.7 * h, 0);
+      bit.rotation.x = Math.PI;
+      bit.name = 'spin';
+      g.add(bit);
+      break;
+    }
+    case 'egg':
+      g.add(mesh(new THREE.SphereGeometry(0.4 * h, 16, 14).scale(1, 1.3, 1), toon('#ffcf6a', { emissive: '#ff6a1a', emissiveIntensity: 0.4 }), 0, 0.5 * h, 0));
+      break;
+    // Spell icons (portraits only).
+    case 'fireball':
+      g.add(mesh(new THREE.IcosahedronGeometry(0.45 * h, 2), toon('#ff8c1a', { emissive: '#ff4a1a', emissiveIntensity: 1 }), 0, 0.5 * h, 0));
+      break;
+    case 'snowball':
+      g.add(mesh(new THREE.IcosahedronGeometry(0.45 * h, 2), toon('#f4fbff'), 0, 0.5 * h, 0));
+      break;
+    case 'void':
+      g.add(mesh(new THREE.IcosahedronGeometry(0.42 * h, 2), toon('#2a1a4a', { emissive: '#7b2fc0', emissiveIntensity: 0.8 }), 0, 0.5 * h, 0));
+      break;
+    case 'bolt': {
+      const shape = new THREE.Shape([new THREE.Vector2(0.1, 0.5), new THREE.Vector2(-0.15, 0.02), new THREE.Vector2(0.03, 0.02), new THREE.Vector2(-0.1, -0.5), new THREE.Vector2(0.18, 0.08), new THREE.Vector2(0, 0.08)].map((p) => p.multiplyScalar(h)));
+      g.add(mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.12 * h, bevelEnabled: false }), toon('#ffe14d', { emissive: '#ffcf3f', emissiveIntensity: 0.8 }), 0, 0.5 * h, 0));
+      break;
+    }
+    case 'log': {
+      const l = mesh(new THREE.CylinderGeometry(0.22 * h, 0.22 * h, 1 * h, 14), toon(WOOD), 0, 0.3 * h, 0);
+      l.rotation.z = Math.PI / 2;
+      g.add(l);
+      break;
+    }
+    case 'tornado':
+      for (let i = 0; i < 5; i++) g.add(mesh(new THREE.TorusGeometry((0.12 + i * 0.07) * h, 0.04 * h, 6, 18), toon('#c8e8f0'), 0, (0.1 + i * 0.18) * h, 0).rotateX(Math.PI / 2));
+      break;
+    default:
+      g.add(mesh(new THREE.BoxGeometry(0.5 * h, 0.5 * h, 0.5 * h), toon('#ff00ff'), 0, 0.25 * h, 0));
+  }
   return g;
 }
 
-export function buildTower(team:Team,king=false):THREE.Group {
-  const g=new THREE.Group(), stone=mat('#596375'), dark=mat('#31394c'), teamMat=mat(team==='blue'?'#208fd8':'#ce3554'), gold=mat('#f6c94c',.3,.55);
-  const base=cyl(king?1.05:.78,.35,dark);base.position.y=.18;g.add(base);
-  const body=box(king?1.55:1.2,king?1.75:1.42,king?1.55:1.2,stone);body.position.y=king?1.16:.92;g.add(body);
-  const band=box(king?1.68:1.32,.22,king?1.68:1.32,teamMat);band.position.y=king?1.55:1.25;g.add(band);
-  for(const x of [-.55,.55])for(const z of [-.55,.55]){const merlon=box(.34,.38,.34,stone);merlon.position.set(x*(king?1.15:.9),king?2.12:1.76,z*(king?1.15:.9));g.add(merlon);}
-  const cannon=cyl(.16,.9,dark);cannon.name='weapon';cannon.rotation.x=Math.PI/2;cannon.position.set(0,king?2.05:1.7,.45);g.add(cannon);
-  if(king){const crown=mesh(new THREE.ConeGeometry(.42,.55,5),gold);crown.position.y=2.55;g.add(crown);}return g;
+export function procSpellIcon(kind: string, h: number): THREE.Group {
+  return procModel(kind, h, 'blue');
 }
 
-export function portraitDataUrl(card:CardDefinition):string {
-  const canvas=document.createElement('canvas');canvas.width=180;canvas.height=150;const c=canvas.getContext('2d')!;
-  const grad=c.createLinearGradient(0,0,180,150);grad.addColorStop(0,card.accent);grad.addColorStop(1,card.color);c.fillStyle=grad;c.fillRect(0,0,180,150);
-  c.fillStyle='rgba(6,13,35,.22)';c.beginPath();c.arc(145,15,70,0,7);c.fill();c.beginPath();c.arc(20,145,65,0,7);c.fill();
-  c.save();c.translate(90,88);
-  if(card.type==='spell'){c.strokeStyle='#fff';c.lineWidth=8;c.shadowColor=card.accent;c.shadowBlur=18;c.beginPath();c.arc(0,0,34,0,Math.PI*1.5);c.stroke();c.rotate(.7);for(let i=0;i<4;i++){c.rotate(Math.PI/2);c.fillStyle='#fff';c.fillRect(-4,-52,8,24);}}
-  else if(card.type==='building'){c.fillStyle='#303a50';c.fillRect(-42,-20,84,58);c.fillStyle=card.color;c.beginPath();c.moveTo(-50,-20);c.lineTo(0,-63);c.lineTo(50,-20);c.fill();c.fillStyle='#dbe8ef';c.fillRect(-8,-7,16,45);c.strokeStyle='#fff8';c.lineWidth=4;c.strokeRect(-42,-20,84,58);}
-  else {const gob=/Goblin|Bush/.test(card.name),skel=/Skeleton/.test(card.name);c.fillStyle=card.color;c.beginPath();c.ellipse(0,35,55,42,0,0,7);c.fill();if(has(card,'flying')){c.fillStyle=card.accent;c.beginPath();c.moveTo(-32,20);c.lineTo(-76,-20);c.lineTo(-42,35);c.moveTo(32,20);c.lineTo(76,-20);c.lineTo(42,35);c.fill();}c.fillStyle=gob?'#72bd4a':skel?'#eee9d8':'#d9a06f';c.beginPath();c.arc(0,-12,39,0,7);c.fill();if(/Knight|Prince|Guard|P.E.K.K.A|Ronin|Bandit|Rider|Valkyrie|Giant/.test(card.name)){c.fillStyle=card.accent;c.beginPath();c.arc(0,-22,42,Math.PI,Math.PI*2);c.lineTo(38,-8);c.lineTo(-38,-8);c.fill();}c.fillStyle='#fff';for(const x of [-13,13]){c.beginPath();c.arc(x,-12,7,0,7);c.fill();c.fillStyle='#17213d';c.beginPath();c.arc(x,-11,3,0,7);c.fill();c.fillStyle='#fff';}c.strokeStyle='#5a2630';c.lineWidth=4;c.beginPath();c.arc(0,1,14,.3,Math.PI-.3);c.stroke();}
-  c.restore();c.strokeStyle='rgba(255,255,255,.45)';c.lineWidth=5;c.strokeRect(3,3,174,144);return canvas.toDataURL('image/webp',.82);
+/** Team crown tower: Kenney castle stack + team roof/flags + a defender on top (added by the scene). */
+export function towerColors(team: Team): { roof: THREE.Color; trim: THREE.Color } {
+  return { roof: new THREE.Color(TEAM_COLORS[team].main), trim: new THREE.Color(TEAM_COLORS[team].light) };
+}
+
+export function modelSpecHeight(v: ModelSpec): number {
+  return v.mount ? v.mount.seat + v.height * 0.7 : v.height;
 }

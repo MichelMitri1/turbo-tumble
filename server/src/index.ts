@@ -2,11 +2,14 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { initPhysics } from '../../shared/src/physics/PhysicsWorld';
 import { DEFAULT_SERVER_PORT, PROTOCOL_VERSION, ROOM_NAME } from '../../shared/src/net/Protocol';
 import { RaceRoom } from './rooms/RaceRoom';
+import { CrownfallRoom } from './rooms/CrownfallRoom';
+import { CF_ROOM } from '../../client/src/arena/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
 /**
@@ -56,8 +59,20 @@ function serveClient(req: IncomingMessage, res: ServerResponse, next: Next): voi
   if (!existsSync(file)) return next();
   res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
   if (file.includes(`${join('dist', 'assets')}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
+  let body: Buffer = readFileSync(file);
+  if (COMPRESSIBLE.has(extname(file)) && /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))) {
+    let gz = gzipCache.get(file);
+    if (!gz) gzipCache.set(file, (gz = gzipSync(body, { level: 6 })));
+    body = gz;
+    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Vary', 'Accept-Encoding');
+  }
+  res.end(req.method === 'HEAD' ? undefined : body);
 }
+
+/** Text, JS, wasm and glTF compress 2–10×; images are already compressed. */
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.wasm', '.glb', '.svg', '.md']);
+const gzipCache = new Map<string, Buffer>();
 
 await initPhysics();
 
@@ -73,6 +88,7 @@ const server = new Server({
   },
 });
 server.define(ROOM_NAME, RaceRoom);
+server.define(CF_ROOM, CrownfallRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {
