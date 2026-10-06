@@ -324,6 +324,8 @@ tools/                 Dev tooling (see below)
 
 ## Tools
 
+- `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).
+
 ```bash
 npx tsx tools/sim-lap.ts [trackId] [laps]      # headless: autopilot laps on the real colliders
 npx tsx tools/sim-race.ts [racers] [laps] [--cycle-items] [--seed=N] [--cpu=easy|normal|hard] [--no-items]

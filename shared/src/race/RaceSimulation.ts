@@ -217,7 +217,7 @@ export class RaceSimulation implements RaceContext {
     const best = humans.length ? Math.max(...humans.map((r) => r.progress.total)) : null;
     for (const r of this.racers) {
       if (!r.isAI) continue;
-      const mul = this.config.catchUp && best !== null ? catchUpMultiplier(r.progress.total - best) : 1;
+      const mul = this.config.catchUp && best !== null ? catchUpMultiplier(r.progress.total - best, this.config.difficulty) : 1;
       r.sim.stats.maxSpeed = this.baseTopSpeed[r.index]! * mul;
     }
   }

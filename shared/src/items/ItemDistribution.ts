@@ -3,32 +3,34 @@ import type { ItemId } from './ItemTypes';
 
 /**
  * Weights at five points along the field: leader → last place. Leaders mostly get
- * defensive items; the back gets catch-up items. Interpolated by race position.
+ * defensive items; from mid-pack back the race-changers take over (Crown Buster,
+ * Zap Storm, Quake, Paint, Hyper Prism, Jet Rocket, Golden Fizz) so the back of the
+ * field can turn a race around. Interpolated by race position.
  */
 const TABLE: Record<ItemId, [number, number, number, number, number]> = {
-  goo: [30, 14, 5, 0, 0],
-  goo3: [6, 10, 6, 2, 0],
-  puck: [22, 18, 10, 4, 0],
-  puck3: [0, 8, 12, 8, 2],
-  seeker: [0, 14, 16, 12, 6],
-  seeker3: [0, 0, 8, 12, 10],
-  decoy: [10, 6, 2, 0, 0],
-  coin: [22, 10, 4, 0, 0],
-  horn: [3, 4, 4, 3, 1],
-  fizz: [0, 10, 14, 12, 8],
-  fizz3: [0, 0, 6, 12, 14],
-  fizzGold: [0, 0, 2, 8, 10],
-  boomBall: [0, 5, 8, 6, 2],
-  ember: [0, 5, 7, 5, 2],
-  rang: [0, 5, 7, 5, 2],
-  snapper: [0, 3, 6, 6, 3],
-  paint: [0, 3, 6, 6, 3],
-  octo: [0, 0, 1, 4, 6],
-  crownBuster: [0, 0, 2, 5, 6],
-  prism: [0, 0, 2, 8, 12],
-  zap: [0, 0, 0, 2, 6],
-  jetRocket: [0, 0, 0, 4, 12],
-  quake: [0, 0, 2, 4, 4],
+  goo: [30, 12, 3, 0, 0],
+  goo3: [6, 8, 4, 0, 0],
+  puck: [22, 14, 6, 2, 0],
+  puck3: [0, 8, 10, 6, 2],
+  seeker: [0, 14, 14, 10, 4],
+  seeker3: [0, 2, 8, 10, 8],
+  decoy: [10, 5, 1, 0, 0],
+  coin: [22, 8, 2, 0, 0],
+  horn: [3, 4, 3, 2, 1],
+  fizz: [0, 10, 10, 8, 4],
+  fizz3: [0, 2, 8, 10, 10],
+  fizzGold: [0, 0, 4, 10, 12],
+  boomBall: [0, 6, 8, 6, 3],
+  ember: [0, 5, 7, 5, 3],
+  rang: [0, 5, 7, 5, 3],
+  snapper: [0, 3, 6, 6, 4],
+  paint: [0, 4, 8, 8, 6],
+  octo: [0, 0, 3, 6, 8],
+  crownBuster: [0, 1, 6, 12, 12],
+  prism: [0, 0, 4, 12, 16],
+  zap: [0, 0, 2, 8, 14],
+  jetRocket: [0, 0, 1, 8, 16],
+  quake: [0, 1, 4, 8, 8],
 };
 
 export interface RollContext {

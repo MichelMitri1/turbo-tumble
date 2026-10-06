@@ -6,6 +6,7 @@ import { ITEMS } from '../items/ItemTypes';
 import { clamp } from '../math/scalar';
 import { SeededRandom } from '../math/random';
 import type { MoverField } from '../race/Movers';
+import type { Pickups } from '../race/Pickups';
 import type { RacingLine } from '../track/RacingLine';
 import type { DifficultyProfile } from './AIDifficulty';
 
@@ -14,6 +15,7 @@ export interface AIContext extends RaceContext {
   readonly items: ItemSystem;
   readonly racingLine: RacingLine;
   readonly movers: MoverField;
+  readonly pickups: Pickups;
 }
 
 /** Per-CPU driving style: a difficulty profile plus small personal variations. */
@@ -23,6 +25,8 @@ export interface AIPersonality {
   lineFollow: number;
   laneWander: number;
   driftSkill: number;
+  driftRadius: number;
+  cornerPace: number;
   itemSkill: number;
   itemDelay: number;
   steerGain: number;
@@ -35,6 +39,8 @@ export function personalityFor(profile: DifficultyProfile, rng: SeededRandom): A
     lineFollow: clamp(profile.lineFollow + rng.range(-0.1, 0.1), 0, 1),
     laneWander: profile.laneWander,
     driftSkill: clamp(profile.driftSkill + rng.range(-0.15, 0.15), 0, 1),
+    driftRadius: profile.driftRadius,
+    cornerPace: profile.cornerPace,
     itemSkill: clamp(profile.itemSkill + rng.range(-0.15, 0.15), 0, 1),
     itemDelay: profile.itemDelay,
     steerGain: profile.steerGain,
@@ -104,6 +110,8 @@ export class AIDriver {
     let lane = line.lateral[ti]! * p.lineFollow + (p.lane + wander) * (1 - p.lineFollow * 0.6);
     lane += this.trapAvoidance(ctx, me, loc.splineDistance, lane);
     if (p.overtakes) lane += this.trafficAvoidance(ctx, me, loc.splineDistance, lane, speed);
+    const box = this.boxLane(ctx, me, loc.splineDistance, lane);
+    if (box !== null) lane = box;
     const sample = track.samples[ti]!;
     const cutLane = this.shortcutLane(ctx, me, loc.splineDistance);
     if (cutLane !== null) lane = cutLane;
@@ -129,7 +137,7 @@ export class AIDriver {
     out.brake = 0;
 
     // Speed planning from the racing line's profile (braking zones on tight tracks).
-    const planned = line.speed[this.lineIndex(ctx, loc.splineDistance + speed * 0.8)]!;
+    const planned = line.speed[this.lineIndex(ctx, loc.splineDistance + speed * 0.8)]! * p.cornerPace;
     if (speed > planned + 1.5) out.throttle = 0;
     if (speed > planned + 5 || (Math.abs(angle) > 0.65 && speed > 20)) out.brake = 0.6;
     // Every lane blocked by a timed obstacle (piston, pendulum…): ease off and let it clear.
@@ -146,7 +154,7 @@ export class AIDriver {
     // Drift through corners: decided from the line's curvature a little ahead.
     // Only genuinely tight corners (line radius under ~40–60 m) are worth a drift.
     const k = line.curvature[this.lineIndex(ctx, loc.splineDistance + 12 + speed * 0.3)]!;
-    const threshold = 1 / (38 + 22 * p.driftSkill);
+    const threshold = 1 / p.driftRadius;
     // Sliding wide of our line towards the outside of the corner → straighten up.
     const hereLat = line.lateral[this.lineIndex(ctx, loc.splineDistance)]! * p.lineFollow;
     const outward = s.drifting ? -(loc.lateral - hereLat) * s.driftDir : 0;
@@ -342,6 +350,25 @@ export class AIDriver {
     return true;
   }
 
+  /** Empty-handed skilled CPUs line up with the nearest live item box ahead. */
+  private boxLane(ctx: AIContext, me: Racer, splineDistance: number, lane: number): number | null {
+    if (this.personality.itemSkill < 0.5 || me.slot.item || me.slot.roulette > 0 || !ctx.pickups) return null;
+    const track = ctx.track;
+    let best: number | null = null;
+    let bestCost = 3.2; // won't swerve further than this for a box
+    for (const b of ctx.pickups.boxes) {
+      if (b.respawn > 0) continue;
+      const ahead = track.wrapDistance(track.startDistance + b.distance - splineDistance);
+      if (ahead < 4 || ahead > 45) continue;
+      const cost = Math.abs(b.lateral - lane);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = b.lateral;
+      }
+    }
+    return best;
+  }
+
   /** Lateral nudge away from traps sitting on our line ahead. */
   private trapAvoidance(ctx: AIContext, me: Racer, splineDistance: number, lane: number): number {
     for (const e of ctx.items.entities.list) {
@@ -409,7 +436,7 @@ export class AIDriver {
         out.brake = 1; // throw backwards
         release = true;
       }
-      if (this.holdTime > 14) release = true;
+      if (this.holdTime > 7) release = true;
       if (release) this.holding = false;
       return !release;
     }

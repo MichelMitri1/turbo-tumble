@@ -10,7 +10,7 @@ import { DEPLOY_CHILD, ITEMS, OCTO_SEQUENCE, type ItemId } from './ItemTypes';
 export const ROULETTE_TIME = 2.0;
 const HORN_RADIUS = 13;
 const QUAKE_PULSES = [0, 0.55, 1.1];
-const ZAP_COOLDOWN = 25;
+const ZAP_COOLDOWN = 15;
 const UP = new Vector3(0, 1, 0);
 
 /** Entity spawned when a hold-style item is readied behind the kart. */

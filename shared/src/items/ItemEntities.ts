@@ -51,7 +51,7 @@ const RADIUS: Record<EntityKind, number> = {
 const KART_HIT_RADIUS = 1.25;
 export const PUCK_SPEED = 46;
 const SEEKER_SPEED = 50;
-const CROWN_SPEED = 70;
+const CROWN_SPEED = 115;
 export const FIREBALL_SPEED = 40;
 const RANG_SPEED = 44;
 const EXPLOSION_LIFE = 0.6;
@@ -279,12 +279,12 @@ export class ItemEntities {
     } else {
       const goal = this.t1.copy(leader.state.position).addScaledVector(UP, 0.6);
       const to = goal.sub(e.position);
-      if (to.length() < 2.2 || e.phaseTime > 1.6) {
+      if (to.length() < 2.6 || e.phaseTime > 1.1) {
         this.explode(leader.state.position, e.owner, 7);
         this.kill(e, false);
         return;
       }
-      e.velocity.copy(to.normalize().multiplyScalar(48));
+      e.velocity.copy(to.normalize().multiplyScalar(75));
       e.position.addScaledVector(e.velocity, dt);
     }
   }

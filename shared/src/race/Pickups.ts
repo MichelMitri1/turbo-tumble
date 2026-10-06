@@ -2,13 +2,16 @@ import { Vector3 } from 'three';
 import type { TrackDefinition } from '../types/track';
 import type { TrackPath } from '../track/TrackPath';
 
-export const ITEM_BOX_RESPAWN = 2.5;
+export const ITEM_BOX_RESPAWN = 0.8;
 export const COIN_RESPAWN = 14;
 const BOX_PICK_RADIUS = 2.2;
 const COIN_PICK_RADIUS = 1.9;
 
 export interface ItemBoxState {
   position: Vector3;
+  /** Track anchor (distance from the start line, lateral offset) — CPUs steer for boxes. */
+  distance: number;
+  lateral: number;
   /** Seconds until it reappears (0 = available). */
   respawn: number;
 }
@@ -44,7 +47,7 @@ export class Pickups {
       for (let k = 0; k < row.count; k++) {
         const lateral = (row.lateral ?? 0) + (k - (row.count - 1) / 2) * row.spacing;
         const f = track.anchorToWorld({ distance: row.distance, lateral, height: 1.2 + (row.height ?? 0) });
-        this.boxes.push({ position: f.position.clone(), respawn: 0 });
+        this.boxes.push({ position: f.position.clone(), distance: row.distance, lateral, respawn: 0 });
       }
     }
     for (const row of def.coins) {
