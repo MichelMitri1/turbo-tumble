@@ -17,6 +17,7 @@
     "start": "npm run build && npm run server",
     "lan": "node tools/lan.mjs",
     "typecheck": "tsc -p shared --noEmit && tsc -p client --noEmit && tsc -p server --noEmit",
+    "check:arena": "tsx tools/check-arena.ts",
     "preview": "npm run preview -w client"
   },
   "devDependencies": {

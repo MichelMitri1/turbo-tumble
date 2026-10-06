@@ -1,0 +1,13 @@
+{
+  "licensePolicy": "original-procedural-only",
+  "externalGameAssets": [],
+  "bundles": {
+    "shell": ["styles.css", "Lilita One", "Nunito"],
+    "arena": ["Three.js tiled turf", "animated water", "plank bridges", "stone walls", "flags", "rocks", "flowers", "modeled towers", "dynamic shadows"],
+    "cards": "Generated illustrated portraits with faces, armor, wings/buildings/spell symbols, rarity frame and elixir cost",
+    "units": "Three.js low-poly models with faces, armor, helmets, weapons, wings, shields, team rings and health bars",
+    "vfx": ["deployment burst", "hit particles", "spell radius", "tower destruction shake"],
+    "audio": ["WebAudio UI/deploy/announcement/result tones"]
+  },
+  "lazyLoading": "No heavyweight binary assets are loaded; all battle art is generated at runtime."
+}
