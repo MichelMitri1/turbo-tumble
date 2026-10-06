@@ -342,6 +342,18 @@ troop, building and spell role from the genre, each with a real animated model
   Rematches alternate sides; leaving mid-battle forfeits after a 20 s reconnect window.
 - Dev: `/arena-crown/gallery.html?p=m-` shows models; `?battle` jumps straight in; `?debug` → I infinite elixir, F fast-forward
 
+## Kitten Kaboom (`/kitten-kaboom/`)
+
+The explosive-kitten party card game — draw until someone explodes — with the full
+"Good vs. Evil" ruleset (**Heaven vs Heck** deck: Armageddon, the Angel Cat and the Demon Cat,
+Raising Heck, Targeted Attack, Reveal the Future, any-title pairs) and a **Classic** deck
+(Skip, See the Future, five cat cards). 2–5 players: vs bots (Easy/Normal/Hard) or online /
+LAN with friends (rooms with codes + bots to fill seats). Names and art are original.
+Code in `client/src/kittens/`: `engine.ts` (rules, Nope window, prompts), `view.ts` (what
+each player may see), `bots.ts`, `art.ts` (all card art as inline SVG), `main.ts` (table UI);
+server room `server/src/rooms/KittensRoom.ts`.
+- `npx tsx tools/kittens-sim.ts 400` — headless bot games (card conservation, no stalls, stats)
+
 ## Tools
 
 - `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).

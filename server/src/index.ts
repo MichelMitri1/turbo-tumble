@@ -9,6 +9,8 @@ import { initPhysics } from '../../shared/src/physics/PhysicsWorld';
 import { DEFAULT_SERVER_PORT, PROTOCOL_VERSION, ROOM_NAME } from '../../shared/src/net/Protocol';
 import { RaceRoom } from './rooms/RaceRoom';
 import { CrownfallRoom } from './rooms/CrownfallRoom';
+import { KittensRoom } from './rooms/KittensRoom';
+import { KK_ROOM } from '../../client/src/kittens/net/protocol';
 import { CF_ROOM } from '../../client/src/arena/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
@@ -89,6 +91,7 @@ const server = new Server({
 });
 server.define(ROOM_NAME, RaceRoom);
 server.define(CF_ROOM, CrownfallRoom);
+server.define(KK_ROOM, KittensRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {

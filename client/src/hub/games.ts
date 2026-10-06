@@ -33,10 +33,11 @@ export const GAMES: GameEntry[] = [
     art: { emoji: '👑', from: '#3fd8ff', to: '#9b4dff' },
   },
   {
-    id: 'coming-soon-2',
-    title: 'Coming Soon',
-    tagline: 'A new game is on the way.',
-    tags: ['???'],
-    art: { emoji: '🕹️', from: '#7be36b', to: '#2e2670' },
+    id: 'kitten-kaboom',
+    title: 'Kitten Kaboom',
+    tagline: 'Draw cards, dodge kittens, survive Armageddon. The explosive party card game.',
+    href: '/kitten-kaboom/',
+    tags: ['Cards', 'vs Bots', 'Online · LAN', '2–5 players'],
+    art: { emoji: '💣', from: '#ff8c1a', to: '#b0122c' },
   },
 ];

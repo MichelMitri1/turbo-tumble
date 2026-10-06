@@ -514,6 +514,16 @@ function tryPlay(x: number, y: number): boolean {
   if (s.net && s.engine.canPlay('blue', selected, snapped.x, snapped.y)) {
     const at = toServer(snapped.x, snapped.y, Boolean(s.flip));
     s.net.play(selected, at.x, at.y);
+    // Optimistic: spend the elixir and cycle the card now; the next snapshot confirms (or corrects) it.
+    const e = s.engine;
+    const cost = e.costOf('blue', getCard(selected));
+    s.snapElixir = Math.max(0, (s.snapElixir ?? e.blue.elixir) - cost);
+    e.blue.elixir = Math.max(0, e.blue.elixir - cost);
+    const slot = e.blue.hand.indexOf(selected);
+    if (slot >= 0) {
+      e.blue.hand = [...e.blue.hand];
+      e.blue.hand[slot] = e.blue.next;
+    }
     // Instant feedback while the server confirms.
     const w = { x: snapped.x - 9, z: snapped.y - 16 };
     s.scene.rings.add(w.x, w.z, 0.2, 1.4, '#8fd0ff', 0.4);

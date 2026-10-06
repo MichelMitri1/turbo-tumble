@@ -16,6 +16,7 @@ export default defineConfig({
         hub: fileURLToPath(new URL('./index.html', import.meta.url)),
         'turbo-tumble': fileURLToPath(new URL('./turbo-tumble/index.html', import.meta.url)),
         'arena-crown': fileURLToPath(new URL('./arena-crown/index.html', import.meta.url)),
+        'kitten-kaboom': fileURLToPath(new URL('./kitten-kaboom/index.html', import.meta.url)),
       },
     },
   },
