@@ -25,11 +25,12 @@ export const GAMES: GameEntry[] = [
     art: { emoji: '🏎️', from: '#ff8c1a', to: '#ff4f9a' },
   },
   {
-    id: 'coming-soon-1',
-    title: 'Coming Soon',
-    tagline: 'A new game is on the way.',
-    tags: ['???'],
-    art: { emoji: '🎲', from: '#3fd8ff', to: '#2e2670' },
+    id: 'crownfall-arena',
+    title: 'Crownfall Arena',
+    tagline: 'Real-time card combat. Build a deck, command the lanes and claim the crown.',
+    href: '/arena-crown/',
+    tags: ['Strategy', '1v1 vs AI', '123 cards'],
+    art: { emoji: '♛', from: '#3fd8ff', to: '#2e2670' },
   },
   {
     id: 'coming-soon-2',

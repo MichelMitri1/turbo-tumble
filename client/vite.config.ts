@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         hub: fileURLToPath(new URL('./index.html', import.meta.url)),
         'turbo-tumble': fileURLToPath(new URL('./turbo-tumble/index.html', import.meta.url)),
+        'arena-crown': fileURLToPath(new URL('./arena-crown/index.html', import.meta.url)),
       },
     },
   },

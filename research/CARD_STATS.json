@@ -1,0 +1,10 @@
+{
+  "snapshotDate": "2026-10-06",
+  "ruleset": "normalized-level-11",
+  "researchedCardCount": 123,
+  "rarityCounts": {"Common": 29, "Rare": 31, "Epic": 33, "Legendary": 22, "Champion": 8},
+  "fields": ["id", "name", "rarity", "type", "cost", "hp", "damage", "speed", "range", "hitSpeed", "count", "target", "mechanics", "color", "accent", "description"],
+  "canonicalDataModule": "../client/src/arena/cards.ts",
+  "verification": "npm run check:arena",
+  "notes": "The source module is authoritative because TypeScript validates every battle-consumed field and the completeness test imports the exact runtime manifest. Numerical combat values are normalized approximations; costs and classifications are the researched live values."
+}
