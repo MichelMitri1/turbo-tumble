@@ -2,6 +2,7 @@ import type { HazardDefinition, HillDefinition, LakeDefinition, LandmarkPlacemen
 import { SeededRandom } from '../math/random';
 import { generateLayout, type LayoutSpec } from './generator';
 import { THEMES } from './themes';
+import { addCourseJumps } from './jumps';
 
 export interface TrackSpec {
   id: string;
@@ -14,6 +15,8 @@ export interface TrackSpec {
   music?: string;
   /** Hand-authored obstacle rhythm, measured from the start line. */
   obstacles: Array<Omit<HazardDefinition, 'distance' | 'type'> & { fraction: number }>;
+  jumps: number[];
+  launchSpeed?: number;
 }
 
 /**
@@ -95,7 +98,7 @@ export function defineTrack(spec: TrackSpec): TrackDefinition {
   const coins = [0.28, 0.6, 0.9].map((f, i) => ({ distance: clear(f * L), lateral: [3.5, -3, 4][i]!, count: 6, spacing: 4 }));
 
   const halfWidth = theme.halfWidth;
-  return {
+  return addCourseJumps({
     id: spec.id,
     name: spec.name,
     theme: theme.id,
@@ -128,9 +131,10 @@ export function defineTrack(spec: TrackSpec): TrackDefinition {
     minimap: { rotation: 0 },
     music: spec.music ?? theme.music,
     boostPads: pads,
+    jumps: [],
     itemBoxes,
     coins,
     hazards,
     shortcuts: [],
-  };
+  }, spec.jumps, spec.launchSpeed);
 }

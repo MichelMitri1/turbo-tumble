@@ -50,8 +50,10 @@ export function buildMountains(ctx: BuildContext, p: LandmarkPlacement): void {
 }
 
 /** Puffy low-poly clouds drifting slowly around the arena. */
-export function buildClouds(ctx: BuildContext): void {
+export function buildClouds(ctx: BuildContext, p?: LandmarkPlacement): void {
   const count = ctx.def.sky.clouds;
+  const lowY = Number(p?.params?.minY ?? 130);
+  const highY = Number(p?.params?.maxY ?? 240);
   const rng = new SeededRandom(ctx.def.terrain.seed + 5);
   const parts: BufferGeometry[] = [];
   for (let i = 0; i < count; i++) {
@@ -59,7 +61,7 @@ export function buildClouds(ctx: BuildContext): void {
     const d = rng.range(180, 900);
     const cx = Math.cos(a) * d;
     const cz = Math.sin(a) * d;
-    const cy = rng.range(130, 240);
+    const cy = rng.range(lowY, highY);
     const size = rng.range(14, 30);
     const puffs = rng.int(5, 9);
     for (let k = 0; k < puffs; k++) {

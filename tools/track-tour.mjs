@@ -9,7 +9,8 @@ import path from 'node:path';
 const args = process.argv.slice(2);
 const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
 const outDir = args.find((a) => !a.startsWith('http') && a.includes('/')) ?? 'smoke-out/tour';
-const only = args.filter((a) => !a.startsWith('http') && !a.includes('/'));
+const only = args.filter((a) => !a.startsWith('http') && !a.startsWith('--') && !a.includes('/'));
+const jumps = args.includes('--jumps');
 fs.mkdirSync(outDir, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({
@@ -32,7 +33,25 @@ for (const id of ids) {
   await page.waitForFunction(() => window.__game?.race?.phase === 'racing', { timeout: 120000 });
   const load = ((Date.now() - t0) / 1000).toFixed(1);
   await page.evaluate(() => (window.__game.players[0].kart.racer.isAI = true));
-  for (const [i, wait] of [[0, 6000], [1, 9000]]) {
+  if (jumps) {
+    await page.waitForFunction(() => {
+      const g = window.__game;
+      const p = g.players[0].kart.state.position;
+      const path = g.race.track;
+      const loc = path.locate(p);
+      return path.def.jumps.some((j) => {
+        const d = path.wrapDistance(path.startDistance + j.distance - loc.splineDistance);
+        return d > 20 && d < 35;
+      });
+    }, { timeout: 90000 });
+    await page.screenshot({ path: `${outDir}/${id}-approach.png` });
+    await page.waitForFunction(() => {
+      const s = window.__game.players[0].kart.state;
+      return s.jumpFlight && s.airTime > 0.3;
+    }, { timeout: 90000 });
+    await page.screenshot({ path: `${outDir}/${id}-airborne.png` });
+  }
+  for (const [i, wait] of (jumps ? [] : [[0, 6000], [1, 9000]])) {
     await sleep(wait);
     await page.screenshot({ path: `${outDir}/${id}-${i}.png` });
   }

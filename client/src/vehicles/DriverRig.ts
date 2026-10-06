@@ -1,4 +1,5 @@
 import {
+  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -9,6 +10,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   SphereGeometry,
+  TorusGeometry,
   type Object3D,
 } from 'three';
 import { clamp, damp } from '@shared/math/scalar';
@@ -115,6 +117,110 @@ const TOPPERS: Record<string, TopperBuilder> = {
     }
     root.add(cap, pin, spin);
     return { root, spin };
+  },
+  // Nova — star surfer: a five-point star on a short stalk.
+  nova: (mat, accent) => {
+    const root = new Group();
+    const stalk = new Mesh(new CylinderGeometry(0.016, 0.022, 0.24, 6), accent);
+    stalk.position.y = 0.12;
+    const star = new Group();
+    star.position.y = 0.32;
+    for (let i = 0; i < 5; i++) {
+      const ray = new Mesh(new ConeGeometry(0.045, 0.13, 4), mat);
+      const a = (i / 5) * Math.PI * 2;
+      ray.position.set(Math.sin(a) * 0.06, Math.cos(a) * 0.06, 0);
+      ray.rotation.z = -a;
+      star.add(ray);
+    }
+    star.add(new Mesh(new SphereGeometry(0.05, 8, 6), mat));
+    mat.emissive = new Color(mat.color).multiplyScalar(0.5);
+    root.add(stalk, star);
+    return { root, spin: star };
+  },
+  // Rumble — volcano brute: a tall spiky mohawk.
+  rumble: (mat) => {
+    const root = new Group();
+    for (let i = 0; i < 5; i++) {
+      const spike = new Mesh(new ConeGeometry(0.06, 0.3 - Math.abs(i - 2) * 0.05, 4), mat);
+      spike.scale.x = 0.4;
+      spike.position.set(0, 0.11, 0.24 - i * 0.12);
+      spike.rotation.x = -0.15 - i * 0.08;
+      root.add(spike);
+    }
+    return { root };
+  },
+  // Kiki — glitter racer: a big bow.
+  kiki: (mat) => {
+    const root = new Group();
+    for (const side of [-1, 1]) {
+      const loop = new Mesh(new ConeGeometry(0.1, 0.2, 4), mat);
+      loop.rotation.z = side * (Math.PI / 2);
+      loop.position.set(side * 0.1, 0.05, 0);
+      root.add(loop);
+    }
+    const knot = new Mesh(new SphereGeometry(0.055, 8, 6), mat);
+    knot.position.y = 0.05;
+    root.add(knot);
+    return { root };
+  },
+  // Juno — night rider: headphones over the helmet.
+  juno: (mat, accent) => {
+    const root = new Group();
+    const band = new Mesh(new TorusGeometry(0.47, 0.03, 6, 20, Math.PI), accent);
+    band.position.y = -0.5;
+    root.add(band);
+    for (const side of [-1, 1]) {
+      const cup = new Mesh(new CylinderGeometry(0.13, 0.13, 0.08, 12), mat);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.set(side * 0.47, -0.5, 0);
+      root.add(cup);
+    }
+    return { root };
+  },
+  // Sprig — forest sprinter: a leafy sprout.
+  sprig: (mat, accent) => {
+    const root = new Group();
+    const stem = new Mesh(new CylinderGeometry(0.014, 0.02, 0.16, 6), accent);
+    stem.position.y = 0.08;
+    root.add(stem);
+    for (const side of [-1, 1]) {
+      const leaf = new Mesh(new SphereGeometry(0.08, 8, 6), mat);
+      leaf.scale.set(1.6, 0.35, 0.8);
+      leaf.position.set(side * 0.1, 0.17, 0);
+      leaf.rotation.z = side * -0.5;
+      root.add(leaf);
+    }
+    return { root };
+  },
+  // Blaze — drift demon: a flickering flame crest.
+  blaze: (mat) => {
+    const root = new Group();
+    const hot = new MeshStandardMaterial({ color: '#ffd23f', emissive: new Color('#ff8a1a'), emissiveIntensity: 0.8, flatShading: true });
+    mat.emissive = new Color('#ff3a00').multiplyScalar(0.5);
+    [
+      [0, 0.3, 0.09, mat],
+      [0.07, 0.2, 0.06, mat],
+      [-0.07, 0.22, 0.06, mat],
+      [0, 0.16, 0.05, hot],
+    ].forEach(([x, h, r, m]) => {
+      const flame = new Mesh(new ConeGeometry(r as number, h as number, 6), m as MeshStandardMaterial);
+      flame.position.set(x as number, (h as number) / 2, 0);
+      root.add(flame);
+    });
+    return { root };
+  },
+  // Pearl — cool captain: a tiny top hat.
+  pearl: (mat, accent) => {
+    const root = new Group();
+    const brim = new Mesh(new CylinderGeometry(0.2, 0.2, 0.025, 16), accent);
+    const crown = new Mesh(new CylinderGeometry(0.12, 0.13, 0.22, 16), mat);
+    crown.position.y = 0.12;
+    const band = new Mesh(new BoxGeometry(0.27, 0.04, 0.27), accent);
+    band.position.y = 0.04;
+    band.visible = false;
+    root.add(brim, crown, band);
+    root.rotation.z = 0.12;
+    return { root };
   },
   // Mox — heavy hitter: two stubby horns.
   mox: (_mat, accent) => {

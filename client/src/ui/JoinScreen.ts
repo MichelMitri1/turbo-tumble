@@ -2,6 +2,7 @@ import { CHARACTERS, KART_BODIES } from '../config/roster';
 import { deviceLabel, sameDevice, type DeviceAssignment, type InputManager } from '../input/InputManager';
 import type { PlayerSetup } from '../game/SessionConfig';
 import { el } from './dom';
+import { engineLabel, getEngineProfile } from '../audio/EngineProfiles';
 
 interface Slot {
   device: DeviceAssignment | null;
@@ -29,6 +30,7 @@ export class JoinScreen {
     private readonly input: InputManager,
     private readonly onDone: (players: PlayerSetup[] | null) => void,
     private readonly sound: (name: 'uiJoin' | 'uiReady' | 'uiChange' | 'uiBack') => void = () => undefined,
+    private readonly onEnginePreview: (kart: string | null) => void = () => undefined,
   ) {
     this.grid = el('div', 'tt-join__grid');
     this.root = el('div', 'tt-join', [
@@ -63,6 +65,7 @@ export class JoinScreen {
   }
 
   hide(): void {
+    this.onEnginePreview(null);
     this.open = false;
     this.root.classList.remove('is-open');
   }
@@ -95,6 +98,7 @@ export class JoinScreen {
       }
       if (nav.left || nav.right) slot.character = (slot.character + (nav.right ? 1 : -1) + CHARACTERS.length) % CHARACTERS.length;
       if (nav.up || nav.down) slot.kart = (slot.kart + (nav.down ? 1 : -1) + KART_BODIES.length) % KART_BODIES.length;
+      if (nav.up || nav.down) this.onEnginePreview(KART_BODIES[slot.kart]!.id);
       if (nav.left || nav.right || nav.up || nav.down) this.sound('uiChange');
       if (nav.confirm) {
         slot.ready = true;
@@ -137,6 +141,7 @@ export class JoinScreen {
         swatch,
         el('div', 'tt-join__racer', `◀ ${c.name} ▶`),
         el('div', 'tt-join__kart', `▲ ${k.name} ▼`),
+        el('div', 'tt-join__engine', engineLabel(getEngineProfile(k.engine))),
         el('div', 'tt-join__state tt-display', s.ready ? 'READY!' : 'Choose…'),
       );
     });

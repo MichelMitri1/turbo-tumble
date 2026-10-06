@@ -1,5 +1,6 @@
 import { Box3, Color, Matrix4, Mesh, MeshStandardMaterial, Quaternion, Vector3, type Object3D } from 'three';
 import type { PropPlacement, ScatterRule } from '@shared/types/track';
+import type { TrackPath } from '@shared/track/TrackPath';
 import { SeededRandom } from '@shared/math/random';
 import type { BuildContext, Footprint } from '../BuildContext';
 import { createInstancedModel } from '../../rendering/InstancedModel';
@@ -58,6 +59,7 @@ function scatter(ctx: BuildContext, rule: ScatterRule): void {
   const pos = new Vector3();
   const scl = new Vector3();
   let placed = 0;
+  const near = trackProximity(path);
 
   for (let attempt = 0; attempt < target * 10 && placed < target; attempt++) {
     const s = path.samples[rng.int(0, path.samples.length - 1)]!;
@@ -72,10 +74,12 @@ function scatter(ctx: BuildContext, rule: ScatterRule): void {
     // Must stay clear of every part of the track, not just the sample it was spawned from.
     const inf = terrain.influence(x, z);
     if (inf && inf.distance < inf.wallOffset + rule.minWallDistance) continue;
+    // Big models reach further than the terrain's influence radius: keep their footprint off every road.
+    const scale = rng.range(rule.scale[0], rule.scale[1]);
+    if (scale > 6 && near.hits(x, z, scale * 0.6)) continue;
     if (blocked(ctx.footprints, x, z, rule.scale[1] * 0.3)) continue;
     if (rule.avoidWater && terrain.isUnderwater(x, z, 0.7)) continue;
 
-    const scale = rng.range(rule.scale[0], rule.scale[1]);
     pos.set(x, terrain.sample(x, z) - 0.05, z);
     q.setFromAxisAngle(up, rng.range(0, Math.PI * 2));
     scl.setScalar(scale);
@@ -113,4 +117,39 @@ function tinted(template: Object3D, color: string, amount: number): Object3D {
     m.material = t;
   });
   return copy;
+}
+
+/** Fast "is any part of the track within r (+ its walls) of x,z" query on a coarse grid. */
+const proximityCache = new WeakMap<TrackPath, { hits(x: number, z: number, r: number): boolean }>();
+function trackProximity(path: TrackPath): { hits(x: number, z: number, r: number): boolean } {
+  const cached = proximityCache.get(path);
+  if (cached) return cached;
+  const CELL = 40;
+  const grid = new Map<string, number[]>();
+  path.samples.forEach((s, i) => {
+    if (i % 2) return;
+    const k = `${Math.floor(s.position.x / CELL)},${Math.floor(s.position.z / CELL)}`;
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(i);
+  });
+  const api = {
+    hits(x: number, z: number, r: number): boolean {
+      const reach = Math.ceil((r + 30) / CELL);
+      const cx = Math.floor(x / CELL);
+      const cz = Math.floor(z / CELL);
+      for (let dx = -reach; dx <= reach; dx++) {
+        for (let dz = -reach; dz <= reach; dz++) {
+          for (const i of grid.get(`${cx + dx},${cz + dz}`) ?? []) {
+            const s = path.samples[i]!;
+            const need = r + s.wallOffset + 2;
+            const ddx = s.position.x - x;
+            const ddz = s.position.z - z;
+            if (ddx * ddx + ddz * ddz < need * need) return true;
+          }
+        }
+      }
+      return false;
+    },
+  };
+  proximityCache.set(path, api);
+  return api;
 }

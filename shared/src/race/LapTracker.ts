@@ -1,3 +1,4 @@
+import { Vector3 } from 'three';
 import type { TrackPath } from '../track/TrackPath';
 import type { Racer } from './RaceTypes';
 
@@ -9,13 +10,43 @@ const CROSS_WINDOW = 60;
  */
 export class LapTracker {
   private readonly checkpoints: number[];
+  private readonly tmp = new Vector3();
 
   constructor(
     private readonly track: TrackPath,
     private readonly count: number,
     readonly laps: number,
   ) {
-    this.checkpoints = Array.from({ length: count }, (_, k) => (k * track.length) / count);
+    // Evenly spaced, but never inside a jump run-up / gap (respawning there means
+    // no speed for the ramp) or a shortcut span (the shortcut would skip it).
+    const L = track.length;
+    const def = track.def;
+    const zones: Array<[number, number]> = [
+      ...def.jumps.map((j): [number, number] => [j.distance - 90, j.distance + j.length + 10]),
+      ...(def.gaps ?? []).map((g): [number, number] => [g.distance - 100, g.distance + g.length + 15]),
+      ...def.shortcuts.map((sc): [number, number] => [sc.from - 10, sc.to + 10]),
+    ];
+    const inZone = (d: number): [number, number] | undefined => zones.find(([a, b]) => ((d - a + L) % L) < ((b - a + L) % L));
+    this.checkpoints = Array.from({ length: count }, (_, k) => {
+      let d = (k * L) / count;
+      if (k === 0) return 0;
+      for (let guard = 0; guard < 6; guard++) {
+        const z = inZone(d);
+        if (!z) break;
+        d = (z[1] + 4) % L;
+      }
+      return d;
+    });
+    // Keep them in order (a shift can't overtake the next one).
+    for (let k = 1; k < count; k++) if (this.checkpoints[k]! <= this.checkpoints[k - 1]!) this.checkpoints[k] = this.checkpoints[k - 1]! + 1;
+  }
+
+  /** Sample index of the last checkpoint passed (respawn point after a fall), or -1. */
+  respawnIndex(r: Racer): number {
+    const p = r.progress;
+    if (p.lap < 1 || p.nextCheckpoint < 1) return -1;
+    const cp = this.checkpoints[Math.min(this.count, p.nextCheckpoint) - 1]!;
+    return this.track.wrapIndex(Math.round((this.track.startDistance + cp) / this.track.spacing) + 2);
   }
 
   /** Lap-distance of every checkpoint (index 0 is the start/finish line). */
@@ -98,7 +129,8 @@ export class LapTracker {
     // Wrong way: moving against the track direction for a while.
     const s = this.track.samples[Math.max(0, r.state.trackIndex)]!;
     const along = r.state.velocity.dot(s.tangent);
-    if (along < -3 && r.state.grounded) p.wrongWayTime = Math.min(3, p.wrongWayTime + dt);
+    const off = Math.abs(this.tmp.copy(r.state.position).sub(s.position).dot(s.flatRight)) > s.wallOffset + 1;
+    if (along < -3 && r.state.grounded && !off) p.wrongWayTime = Math.min(3, p.wrongWayTime + dt);
     else p.wrongWayTime = Math.max(0, p.wrongWayTime - dt * 2);
     p.wrongWay = p.wrongWayTime > 1.2;
     return result;

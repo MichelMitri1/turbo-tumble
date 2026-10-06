@@ -11,7 +11,7 @@
 export type Vec3Tuple = [number, number, number];
 
 /** How a stretch of track interacts with the surrounding world. */
-export type SegmentKind = 'ground' | 'bridge' | 'tunnel';
+export type SegmentKind = 'ground' | 'bridge' | 'tunnel' | 'void';
 
 export interface TrackControlPoint {
   pos: Vec3Tuple;
@@ -62,6 +62,14 @@ export interface BoostPadDefinition extends TrackAnchor {
   width: number;
 }
 
+/** A raised launch ramp. Distance is the start of the climb, not its lip. */
+export interface JumpDefinition extends TrackAnchor {
+  length: number;
+  width: number;
+  rise: number;
+  launchSpeed: number;
+}
+
 export interface ItemBoxRowDefinition extends TrackAnchor {
   count: number;
   spacing: number;
@@ -81,12 +89,66 @@ export interface HazardDefinition extends TrackAnchor {
   obstacleHeight: number;
 }
 
+/**
+ * An alternate route: the wall opens on `side` at `from`, a dirt path runs across
+ * (bulging out by `bulge` metres) and rejoins the road at `to` (lap distances).
+ */
 export interface ShortcutDefinition {
-  /** Explicit centerline of an alternate route rejoining the main path. */
-  points: Vec3Tuple[];
-  surface: 'offroad' | 'dirt' | 'road';
+  from: number;
+  to: number;
+  side: 'left' | 'right';
+  /** Side the trail rejoins on (defaults to `side`). */
+  toSide?: 'left' | 'right';
+  bulge: number;
   halfWidth: number;
+  /** A boost pad at the entry (risky shortcuts reward a boost). */
+  boost?: boolean;
 }
+
+/** A hole in the road (over the void) — needs a jump ramp right before it. */
+export interface GapDefinition {
+  /** Lap distance where the road ends. */
+  distance: number;
+  length: number;
+}
+
+/** A current along the road (flowing water, conveyor, wind ribbon) that pushes you faster. */
+export interface StreamDefinition extends TrackAnchor {
+  length: number;
+  width: number;
+  /** Extra top speed while on it (m/s). */
+  strength: number;
+  style: 'water' | 'neon' | 'wind' | 'lava';
+}
+
+export type MoverKind = 'stomper' | 'roller' | 'sweeper' | 'pendulum' | 'geyser' | 'cruiser';
+
+/**
+ * A moving obstacle. Its motion is a pure function of race time, so every client
+ * and the server agree on where it is without sending it over the network.
+ *   stomper   a heavy block that hangs overhead and slams down (squishes)
+ *   roller    a boulder rolling from side to side across the road (tumbles)
+ *   sweeper   a spinning arm on a post (spins you out)
+ *   pendulum  a wrecking ball swinging across the road from a gantry (tumbles)
+ *   geyser    a vent that erupts every few seconds (launches you)
+ *   cruiser   slow traffic driving round the lap in a lane (spins you out)
+ */
+export interface MoverDefinition extends TrackAnchor {
+  kind: MoverKind;
+  /** Seconds per cycle. */
+  period: number;
+  /** Cycle offset, 0..1. */
+  phase: number;
+  /** Block / ball half-size, arm length (m). */
+  size: number;
+  /** Roller / pendulum sideways travel (m). */
+  span?: number;
+  /** Cruiser speed (m/s); sweeper spin direction (±1). */
+  speed?: number;
+}
+
+export type TrackDifficulty = 'easy' | 'medium' | 'hard';
+export type RoadStyle = 'asphalt' | 'rainbow' | 'sand' | 'cobble' | 'wood' | 'neon' | 'ice';
 
 export interface LakeDefinition {
   x: number;
@@ -217,8 +279,17 @@ export interface TrackDefinition {
   decor: TrackDecorDefinition;
   minimap: MinimapDefinition;
   music: string;
-  // Gameplay objects (shortcuts are reserved for alternate routes).
+  difficulty?: TrackDifficulty;
+  /** Road surface look. */
+  roadStyle?: RoadStyle;
+  /** Floating course in the sky / space: no terrain at all, the void is everywhere off-road. */
+  space?: boolean;
+  gaps?: GapDefinition[];
+  streams?: StreamDefinition[];
+  movers?: MoverDefinition[];
+  // Gameplay objects.
   boostPads: BoostPadDefinition[];
+  jumps: JumpDefinition[];
   itemBoxes: ItemBoxRowDefinition[];
   coins: CoinRowDefinition[];
   hazards: HazardDefinition[];

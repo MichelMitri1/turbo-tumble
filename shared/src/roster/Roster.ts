@@ -18,6 +18,13 @@ export const CHARACTER_ROSTER: readonly RosterEntry[] = [
   { id: 'zuzu', name: 'Zuzu', stats: { maxSpeed: 0.5 } },
   { id: 'tuko', name: 'Tuko', stats: { grip: -0.5 } },
   { id: 'mox', name: 'Mox', stats: { weight: 0.3 } },
+  { id: 'nova', name: 'Nova', stats: { accelRate: 0.06 } },
+  { id: 'rumble', name: 'Rumble', stats: { weight: 0.35, accelRate: -0.05 } },
+  { id: 'kiki', name: 'Kiki', stats: { turnRate: 0.08, maxSpeed: -0.2 } },
+  { id: 'juno', name: 'Juno', stats: { maxSpeed: 0.3 } },
+  { id: 'sprig', name: 'Sprig', stats: { grip: 0.4 } },
+  { id: 'blaze', name: 'Blaze', stats: { grip: -0.6, turnRate: 0.05 } },
+  { id: 'pearl', name: 'Pearl', stats: { weight: 0.15, maxSpeed: 0.2 } },
 ];
 
 export const KART_ROSTER: readonly RosterEntry[] = [

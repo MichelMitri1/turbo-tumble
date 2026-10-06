@@ -366,6 +366,10 @@ export class RaceSession {
       ink: r.state.inkTimer,
       wrongWay: r.progress.wrongWay && !r.progress.finished,
       speedFx: this.speedFx(r),
+      slipstreamCharge: r.state.slipstreamCharge / 1.2,
+      slipstreamActive: r.state.slipstreamTimer > 0,
+      jumpFlight: r.state.jumpFlight,
+      jumpTrick: r.state.jumpTrick,
     });
     const shownTime = r.progress.finished ? r.progress.finishTime : Math.max(0, this.race.time);
     const currentLap = !r.progress.finished && r.progress.lap >= 1 ? Math.max(0, this.race.time - r.progress.lapStartTime) : null;

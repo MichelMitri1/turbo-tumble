@@ -68,6 +68,9 @@ export class KartSimulation {
     s.steer = 0;
     s.forwardSpeed = 0;
     s.airTime = 0;
+    s.jumpCooldown = 0;
+    s.jumpFlight = s.jumpTrick = false;
+    s.slipstreamCharge = s.slipstreamTimer = s.slipstreamCooldown = 0;
     s.trackIndex = -1;
     s.grounded = false;
     this.probeGround(true);
@@ -81,6 +84,7 @@ export class KartSimulation {
     ev.landed = 0;
     ev.wallHit = 0;
     ev.hopped = false;
+    ev.jumped = false;
     ev.respawned = false;
     ev.driftStarted = false;
     ev.driftStageUp = 0;
@@ -98,6 +102,7 @@ export class KartSimulation {
     // --- Hop on drift press (grounded only).
     const driftPressed = input.drift && !s.driftHeld;
     s.driftHeld = input.drift;
+    if (driftPressed && !s.grounded && s.jumpFlight && !stunned) s.jumpTrick = true;
     if (driftPressed && s.grounded && !stunned) {
       s.velocity.addScaledVector(s.up, this.stats.hopSpeed);
       s.grounded = false;
@@ -111,15 +116,21 @@ export class KartSimulation {
     this.integrateAgainstWalls(dt);
     this.probeGround(false);
     this.updateTrackLocation();
+    this.launchFromRamp();
     this.updateStuck(input, dt);
 
-    if (s.position.y < KILL_PLANE_Y || s.offTrackTicks > 60 * 6 || s.stuckTime > 4) this.respawn();
+    // Fell into the void (well below the road) → back to the last checkpoint.
+    const roadY = s.trackIndex >= 0 ? this.track.samples[s.trackIndex]!.position.y : 0;
+    const fell = s.position.y < KILL_PLANE_Y || (!s.grounded && s.airTime > 0.35 && s.position.y < roadY - 14);
+    if (fell) this.respawn(s.respawnIndex >= 0 ? s.respawnIndex : s.safeTrackIndex - 3);
+    else if (s.offTrackTicks > 60 * 6 || s.stuckTime > 4) this.respawn();
   }
 
   private tickTimers(dt: number): void {
     const s = this.state;
     const dec = (v: number): number => (v > 0 ? Math.max(0, v - dt) : 0);
     s.respawnTimer = dec(s.respawnTimer);
+    s.jumpCooldown = dec(s.jumpCooldown);
     s.boostTimer = dec(s.boostTimer);
     if (s.boostTimer === 0) s.boostPower = 0;
     s.spinTimer = dec(s.spinTimer);
@@ -178,6 +189,8 @@ export class KartSimulation {
     this.endDrift(false);
     s.boostTimer = 0;
     s.boostPower = 0;
+    s.jumpTrick = false;
+    s.slipstreamCharge = s.slipstreamTimer = 0;
     s.coins = Math.max(0, s.coins - 3);
     if (kind === 'spin') s.spinTimer = HIT_DURATION.spin;
     if (kind === 'squish') s.squishTimer = HIT_DURATION.squish;
@@ -306,6 +319,7 @@ export class KartSimulation {
     s.forward.applyAxisAngle(s.up, yawRate * dt);
 
     // Throttle maintains air speed a little (arcade feel), no braking in the air.
+    if (s.jumpFlight && !stunned) s.velocity.applyAxisAngle(WORLD_UP, yawRate * dt * 0.65);
     if (!stunned && input.throttle > 0.1) {
       const hv = this.v1.set(s.velocity.x, 0, s.velocity.z);
       const hs = hv.length();
@@ -368,6 +382,11 @@ export class KartSimulation {
       if (!wasGrounded) {
         this.events.landed = Math.max(0, -vn);
         s.airTime = 0;
+        if (s.jumpFlight && s.jumpTrick && !isStunned(s)) {
+          this.giveBoost(1.1, 7);
+          this.events.miniTurbo = 1;
+        }
+        s.jumpFlight = s.jumpTrick = false;
       }
       // Remove velocity into/out of the surface.
       s.velocity.addScaledVector(hit.normal, -s.velocity.dot(hit.normal));
@@ -390,11 +409,41 @@ export class KartSimulation {
     s.forward.normalize();
   }
 
+  /** A forward crossing of the raised lip launches; driving beside it does not. */
+  private launchFromRamp(): void {
+    const s = this.state;
+    if (s.jumpCooldown > 0 || s.forwardSpeed < 10 || s.airTime > 0.2 || isStunned(s)) return;
+    for (const jump of this.track.def.jumps) {
+      const lipDistance = this.track.startDistance + jump.distance + jump.length;
+      const delta = this.track.wrapDistance(this.loc.splineDistance - lipDistance + 2);
+      if (delta > 3.5 || Math.abs(this.loc.lateral - (jump.lateral ?? 0)) > jump.width / 2 - 0.3) continue;
+      const lip = this.track.anchorToWorld({ distance: jump.distance + jump.length, lateral: this.loc.lateral });
+      if (s.position.y < lip.position.y + jump.rise - 1.3 || s.position.y > lip.position.y + jump.rise + 2 || s.forward.dot(lip.tangent) < 0.7) continue;
+      this.endDrift(false);
+      s.position.y = Math.max(s.position.y, lip.position.y + jump.rise + 0.12);
+      s.velocity.y = jump.launchSpeed;
+      s.grounded = false;
+      s.airTime = 0;
+      s.jumpCooldown = 1.5;
+      s.jumpFlight = true;
+      s.jumpTrick = false;
+      this.events.jumped = true;
+      return;
+    }
+  }
+
   private updateTrackLocation(): void {
     const s = this.state;
     const loc = this.track.locate(s.position, s.trackIndex, 30, this.loc);
-    // Lost track of the kart (teleport, huge shortcut) → full search.
-    if (loc.distanceSq > 60 * 60) this.track.locate(s.position, -1, 0, this.loc);
+    // Outside the walls of the stretch we were on (shortcut across a hairpin, teleport):
+    // search the whole lap — another part of the road may be the nearest now.
+    const near = s.trackIndex >= 0 ? this.track.samples[s.trackIndex]!.wallOffset + 3 : 0;
+    if (s.trackIndex < 0 || loc.distanceSq > near * near) {
+      const windowIndex = loc.index;
+      const windowD = loc.distanceSq;
+      this.track.locate(s.position, -1, 0, this.loc);
+      if (this.loc.distanceSq > windowD - 1) this.track.locate(s.position, windowIndex, 2, this.loc);
+    }
     s.trackIndex = this.loc.index;
     const sample = this.track.samples[s.trackIndex]!;
     const onRoad = Math.abs(this.loc.lateral) < sample.halfWidth + 0.5 && s.grounded;

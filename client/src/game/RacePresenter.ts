@@ -123,6 +123,21 @@ export class RacePresenter {
           this.player(e.racer)?.camera.addTrauma(0.1);
           break;
         }
+        case 'jump': {
+          const k = this.karts[e.racer]!;
+          k.view.kick(2);
+          this.fx.ring(k.state.position, 3, '#3fd8ff', 0.35);
+          this.player(e.racer)?.camera.addTrauma(0.12);
+          break;
+        }
+        case 'slipstream': {
+          const k = this.karts[e.racer]!;
+          k.view.kick(2);
+          this.fx.miniTurbo(k.state.position, 1);
+          this.player(e.racer)?.hud.banner('SLIPSTREAM!', 'cyan');
+          this.player(e.racer)?.camera.addTrauma(0.12);
+          break;
+        }
         case 'chomp':
           this.fx.burst(v(e.position).setY(e.position[1] + 1), '#5ce06a', 16, 6);
           break;

@@ -45,6 +45,7 @@ export class ControlsPanel {
         el('div', 'tt-gp__sub', 'Pick a binding and press the new key or button · M mutes anytime'),
         this.table,
         el('div', 'tt-gp__hint', '↑↓ row · ←→ keyboard / controller · Enter / Ⓐ rebind · Esc / Ⓑ back'),
+        el('div', 'tt-controls__credits', 'Engine recordings: Edvvc, Altair78 · Wikimedia Commons · CC BY-SA (assets/audio/engines/LICENSES.md)'),
       ]),
     ]);
     parent.appendChild(this.root);

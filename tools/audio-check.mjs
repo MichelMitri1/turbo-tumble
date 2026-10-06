@@ -12,6 +12,7 @@ import fs from 'node:fs';
 const args = process.argv.slice(2);
 const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
 const outDir = args.find((a) => !a.startsWith('http') && !a.startsWith('--')) ?? 'smoke-out/audio';
+const enginesOnly = args.includes('--engines-only');
 const songSeconds = Number(args.find((a) => a.startsWith('--songs='))?.split('=')[1] ?? 0);
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -26,7 +27,9 @@ page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(`${url}?mode=race&lowgfx`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__game !== undefined, { timeout: 90000 });
 
-const results = await page.evaluate(async (songSeconds) => {
+const results = await page.evaluate(async ({ songSeconds, enginesOnly }) => {
+  const { EngineVoice } = await import('/src/audio/EngineVoice.ts');
+  const { ENGINE_PROFILES } = await import('/src/audio/EngineProfiles.ts');
   const { SFX } = await import('/src/audio/sfx.ts');
   const { createNoiseBuffer } = await import('/src/audio/AudioEngine.ts');
   const { SONGS } = await import('/src/audio/music/songs.ts');
@@ -75,21 +78,40 @@ const results = await page.evaluate(async (songSeconds) => {
   };
 
   const out = [];
-  for (const [name, gen] of Object.entries(SFX)) {
+  for (const [name, gen] of Object.entries(enginesOnly ? {} : SFX)) {
     const ctx = new OfflineAudioContext(1, SR * 4, SR);
     gen({ ctx, out: ctx.destination, t: 0.01, noise: createNoiseBuffer(ctx), pitch: 1 }, { intensity: 1, stage: 3 });
     const buf = await ctx.startRendering();
     out.push({ kind: 'sfx', name, ...measure(buf), wav: wav(buf) });
   }
-  for (const spec of SONGS) {
+  for (const spec of (enginesOnly ? [] : SONGS)) {
     const seconds = spec.loopFrom === undefined ? passSeconds(spec) + 2 : Math.min(passSeconds(spec), songSeconds || passSeconds(spec));
     const ctx = new OfflineAudioContext(1, Math.ceil(SR * seconds), SR);
     scheduleSongPass({ ctx, out: ctx.destination, t: 0.01, noise: createNoiseBuffer(ctx), pitch: 1 }, spec);
     const buf = await ctx.startRendering();
     out.push({ kind: 'song', name: spec.id, ...measure(buf), wav: wav(buf) });
   }
+  for (const profile of [...ENGINE_PROFILES, null]) {
+    const seconds = 7;
+    const ctx = new OfflineAudioContext(1, SR * seconds, SR);
+    const bus = ctx.createGain(); bus.gain.value = 0.38;
+    bus.connect(ctx.destination);
+    const audio = { ctx, noise: createNoiseBuffer(ctx), bus: () => bus };
+    const profiles = profile ? [profile] : Array.from({ length: 12 }, (_, i) => ENGINE_PROFILES[i % ENGINE_PROFILES.length]);
+    const voices = profiles.map((p, i) => new EngineVoice(audio, i === 0, p, 1 + i * 0.002));
+    await Promise.all(voices.map((v) => v.ready));
+    for (let tick = 0; tick < seconds * 60; tick++) {
+      const t = tick / 60;
+      voices.forEach((voice, i) => {
+        const throttle = t < 0.7 || (t > 2.1 && t < 3) || t > 6 ? 0 : 1;
+        voice.update({ speed01: t > 3 ? Math.min(1, (t - 3) / 3) : 0, throttle, load: throttle, freeRev: t < 3, grounded: true, drifting: false, offroad: false, boost: 0, stunned: false }, { gain: i === 0 ? 1 : 0.3, pan: 0 }, 1 / 60, t);
+      });
+    }
+    const buf = await ctx.startRendering();
+    out.push({ kind: 'engine', name: profile?.id ?? '12-kart-pack', ...measure(buf), wav: wav(buf) });
+  }
   return out;
-}, songSeconds);
+}, { songSeconds, enginesOnly });
 
 let bad = 0;
 console.log('kind  name             peak   rms     audible');

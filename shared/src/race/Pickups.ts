@@ -26,11 +26,17 @@ export interface BoostPadState {
   halfWidth: number;
 }
 
-/** Static track pickups: item boxes, coins and boost pads. */
+export interface StreamZone extends BoostPadState {
+  strength: number;
+}
+
+/** Static track pickups: item boxes, coins, boost pads and speed streams. */
 export class Pickups {
   readonly boxes: ItemBoxState[] = [];
   readonly coins: CoinState[] = [];
   readonly pads: BoostPadState[] = [];
+  /** Streams split into short boxes that follow the road's curve. */
+  readonly streams: StreamZone[] = [];
   private readonly tmp = new Vector3();
 
   constructor(track: TrackPath, def: TrackDefinition) {
@@ -45,6 +51,14 @@ export class Pickups {
       for (let k = 0; k < row.count; k++) {
         const f = track.anchorToWorld({ distance: row.distance + k * row.spacing, lateral: row.lateral ?? 0, height: 1.0 + (row.height ?? 0) });
         this.coins.push({ position: f.position.clone(), respawn: 0 });
+      }
+    }
+    for (const st of def.streams ?? []) {
+      const pieces = Math.max(1, Math.ceil(st.length / 8));
+      const piece = st.length / pieces;
+      for (let k = 0; k < pieces; k++) {
+        const f = track.anchorToWorld({ distance: st.distance + (k + 0.5) * piece, lateral: st.lateral ?? 0 });
+        this.streams.push({ center: f.position.clone(), tangent: f.tangent.clone(), right: f.right.clone(), halfLength: piece / 2 + 0.6, halfWidth: st.width / 2, strength: st.strength });
       }
     }
     for (const pad of def.boostPads) {
@@ -81,6 +95,16 @@ export class Pickups {
       }
     }
     return -1;
+  }
+
+  /** Push strength of the stream under `pos` (0 = none). */
+  onStream(pos: Vector3): number {
+    for (const p of this.streams) {
+      const rel = this.tmp.copy(pos).sub(p.center);
+      if (Math.abs(rel.y) > 1.5) continue;
+      if (Math.abs(rel.dot(p.tangent)) < p.halfLength && Math.abs(rel.dot(p.right)) < p.halfWidth) return p.strength;
+    }
+    return 0;
   }
 
   /** True if a grounded kart at `pos` is on a boost pad. */

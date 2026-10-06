@@ -7,6 +7,8 @@ import { isStunned } from '@shared/vehicles/KartState';
 import type { LocalPlayer } from '../players/LocalPlayer';
 import type { KartEntity } from '../vehicles/KartEntity';
 import { EngineVoice } from './EngineVoice';
+import { getEngineProfile } from './EngineProfiles';
+import { getKartBody } from '../config/roster';
 import type { GameAudio } from './GameAudio';
 import { PODIUM, STING_FINAL_LAP, STING_FINISH, STING_INTRO, STING_LOSE, STING_WIN, trackSong } from './music/songs';
 import type { SfxName } from './sfx';
@@ -76,7 +78,7 @@ export class RaceAudio {
   ) {
     for (const p of o.players) this.local.add(p.racerIndex);
     const ok = audio.engine.available && !o.quiet;
-    this.engines = o.karts.map((k) => (ok ? new EngineVoice(audio.engine, this.local.has(k.racer.index), this.enginePitch(k)) : null));
+    this.engines = o.karts.map((k) => (ok ? new EngineVoice(audio.engine, this.local.has(k.racer.index), getEngineProfile(getKartBody(k.racer.kartId).engine), 1 + ((k.racer.index * 7) % 5 - 2) * 0.003) : null));
     this.prevSpeed = o.karts.map(() => 0);
     this.load = o.karts.map(() => 0.3);
     if (!o.quiet) {
@@ -85,12 +87,6 @@ export class RaceAudio {
       audio.engine.duckMusic(1);
       audio.music.stinger(STING_INTRO);
     }
-  }
-
-  private enginePitch(k: KartEntity): number {
-    // Heavier karts growl lower; a little per-racer variety so the pack isn't one tone.
-    const weight = k.racer.sim.stats.weight;
-    return Math.max(0.8, Math.min(1.2, 1.06 - (weight - 1) * 0.45 + ((k.racer.index * 37) % 11) / 100 - 0.05));
   }
 
   private get sfx(): GameAudio['sfx'] {
@@ -169,6 +165,8 @@ export class RaceAudio {
           sfx.play('coin', { at: this.local.has(e.racer) ? null : this.v(e.position), volume: this.local.has(e.racer) ? 1 : 0.5, minGap: 0.02 });
           break;
         case 'boostPad':
+        case 'jump':
+        case 'slipstream':
           sfx.play('boostPad', { at: this.at(e.racer), minGap: 0.02 });
           break;
         case 'chomp':
@@ -241,7 +239,7 @@ export class RaceAudio {
       const player = this.o.players.find((p) => p.racerIndex === i);
       const accel = dt > 0 ? (speed - this.prevSpeed[i]!) / dt : 0;
       this.prevSpeed[i] = speed;
-      const target = player ? Math.max(player.input.throttle, player.input.brake * 0.6) : Math.min(1, Math.max(0.15, 0.4 + accel * 0.06));
+      const target = player ? player.input.throttle : r.input.throttle || r.input.brake ? r.input.throttle : speed > 1 ? Math.min(1, Math.max(0, 0.4 + accel * 0.06)) : 0;
       this.load[i] = this.load[i]! + (target - this.load[i]!) * Math.min(1, dt * 10);
       const voice = this.engines[i];
       if (voice) {
@@ -250,6 +248,8 @@ export class RaceAudio {
           {
             speed01: Math.min(1.3, speed / max),
             load: s.boostTimer > 0 || s.rocketTimer > 0 ? 1 : this.load[i]!,
+            throttle: target,
+            freeRev: race.phase === 'countdown' || !s.grounded || speed < 1,
             drifting: s.drifting,
             grounded: s.grounded,
             offroad: s.surface === SurfaceType.Offroad || s.surface === SurfaceType.Dirt,

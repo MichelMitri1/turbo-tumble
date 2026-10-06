@@ -1,7 +1,9 @@
-import { BufferAttribute, BufferGeometry, Float32BufferAttribute, Mesh, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector3 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { extrudeAlongPath, mergeMeshData, type MeshData } from '@shared/track/Extrude';
-import { buildRoadSurface } from '@shared/track/TrackGeometry';
+import { loopRuns, wallRuns } from '@shared/track/TrackGeometry';
+import type { RoadStyle } from '@shared/types/track';
+import { roadTexture } from '../../rendering/ProceduralTextures';
 import { spawnSlotAnchor } from '@shared/track/spawnGrid';
 import type { TrackSample } from '@shared/track/TrackPath';
 import type { BuildContext } from '../BuildContext';
@@ -22,22 +24,44 @@ export function buildRoad(ctx: BuildContext): void {
   const loop = path.runIndices([0, path.samples.length]);
   const cw = path.def.path.curbWidth;
 
-  const road = mesh(buildRoadSurface(path), TrackMaterials.road(), 'road');
-  applyOcclusion(road.geometry, roadOcclusion(ctx), 2);
+  void loop;
+  const style = path.def.roadStyle ?? 'asphalt';
+  const tint = style === 'rainbow' ? rainbowTint(ctx) : roadOcclusion(ctx);
+  const runs = loopRuns(path, (i) => !path.samples[i]!.gap);
+  const roadParts = runs.map((idx) => {
+    const g = toGeometry(
+      extrudeAlongPath(path, idx, (s) => [{ x: -s.halfWidth, y: 0, u: 0 }, { x: s.halfWidth, y: 0, u: 1 }], { vScale: 16, normals: true }),
+    );
+    applyOcclusion(g, idx.map((i) => tint[i]!), 2);
+    return g;
+  });
+  const road = new Mesh(roadParts.length === 1 ? roadParts[0]! : mergeGeometries(roadParts), roadMaterial(style));
+  road.name = 'road';
+  road.receiveShadow = true;
   ctx.add(road);
 
   // Dark lip from the road edge down into the terrain (hides the shoulder step).
-  const lips = mergeMeshData([
-    extrudeAlongPath(path, loop, (s) => [{ x: s.halfWidth, y: 0 }, { x: s.halfWidth + 0.35, y: -0.5 }]),
-    extrudeAlongPath(path, loop, (s) => [{ x: -s.halfWidth - 0.35, y: -0.5 }, { x: -s.halfWidth, y: 0 }]),
-  ]);
-  const lipMesh = mesh(lips, TrackMaterials.roadLip(), 'road-lips');
-  applyOcclusion(lipMesh.geometry, [...roadOcclusion(ctx), ...roadOcclusion(ctx)], 2);
+  const lipParts = runs.map((idx) => {
+    const g = toGeometry(
+      mergeMeshData([
+        extrudeAlongPath(path, idx, (s) => [{ x: s.halfWidth, y: 0 }, { x: s.halfWidth + 0.35, y: -0.5 }]),
+        extrudeAlongPath(path, idx, (s) => [{ x: -s.halfWidth - 0.35, y: -0.5 }, { x: -s.halfWidth, y: 0 }]),
+      ]),
+    );
+    const rings = idx.map((i) => tint[i]!);
+    applyOcclusion(g, [...rings, ...rings], 2);
+    return g;
+  });
+  const lipMesh = new Mesh(lipParts.length === 1 ? lipParts[0]! : mergeGeometries(lipParts), TrackMaterials.roadLip());
+  lipMesh.name = 'road-lips';
+  lipMesh.receiveShadow = true;
   ctx.add(lipMesh);
+
+  buildFloatingDeck(ctx, style);
 
   // Raised curbs in corners.
   const curbs: MeshData[] = [];
-  for (const run of path.runs((s) => s.curb)) {
+  for (const run of path.runs((s) => s.curb && !s.gap)) {
     const idx = path.runIndices(run);
     if (idx.length < 2) continue;
     curbs.push(
@@ -115,17 +139,30 @@ function buildBarriers(ctx: BuildContext): void {
     const z = s.position.z + s.flatRight.z * s.wallOffset * side;
     return terrain.sample(x, z) - s.position.y;
   };
-  for (const run of path.runs((s) => s.kind === 'ground')) {
-    const idx = path.runIndices(run);
-    if (idx.length < 2) continue;
-    for (const side of [1, -1] as const) {
+  const floating = Boolean(path.def.space);
+  // Ground stretches with a wall get crash barriers (bridges / tunnels have their own).
+  const groundPieces = (idx: number[]): number[][] => {
+    const out: number[][] = [];
+    let cur: number[] = [];
+    for (const i of idx) {
+      if (path.samples[i]!.kind === 'ground') cur.push(i);
+      else if (cur.length) {
+        out.push(cur);
+        cur = [];
+      }
+    }
+    if (cur.length) out.push(cur);
+    return out.filter((r) => r.length > 1);
+  };
+  for (const side of [1, -1] as const) {
+    for (const idx of wallRuns(path, side === 1 ? 'right' : 'left').flatMap(groundPieces)) {
       parts.push(
         extrudeAlongPath(
           path,
           idx,
           (s) => {
             const w = s.wallOffset * side;
-            const b = baseY(s, side);
+            const b = floating ? -0.6 : baseY(s, side);
             const t = 0.32 * side;
             // Profile ordered so faces point away from the inside of the barrier.
             const pts = [
@@ -188,4 +225,89 @@ function buildStartLine(ctx: BuildContext): void {
   grid.receiveShadow = true;
   grid.name = 'grid-marks';
   ctx.add(grid);
+}
+
+// ------------------------------------------------------------------ road styles & floating decks
+
+const STYLE_TINT: Record<Exclude<RoadStyle, 'asphalt' | 'rainbow'>, string> = {
+  sand: '#e6cb94',
+  cobble: '#c9b8a8',
+  wood: '#c08a55',
+  neon: '#3a3458',
+  ice: '#d6ecff',
+};
+const styled = new Map<RoadStyle, Mesh['material']>();
+
+function roadMaterial(style: RoadStyle): Mesh['material'] {
+  if (style === 'asphalt') return TrackMaterials.road();
+  let m = styled.get(style);
+  if (!m) {
+    if (style === 'rainbow') {
+      // Unlit and bright: the hue sweep is the light source.
+      m = new MeshBasicMaterial({ map: roadTexture(), vertexColors: true });
+    } else {
+      m = new MeshStandardMaterial({
+        map: roadTexture(),
+        color: new Color(STYLE_TINT[style]),
+        roughness: style === 'ice' ? 0.25 : 0.85,
+        metalness: 0,
+        vertexColors: true,
+        ...(style === 'neon' ? { emissive: new Color('#2a1a60'), emissiveIntensity: 0.6 } : {}),
+      });
+    }
+    styled.set(style, m);
+  }
+  return m;
+}
+
+/** Rainbow road: hue sweeps along the lap (with a little brightness ripple). */
+function rainbowTint(ctx: BuildContext): Array<[number, number, number]> {
+  const c = new Color();
+  const n = ctx.path.samples.length;
+  return ctx.path.samples.map((_, i) => {
+    c.setHSL((i / n) * 6 % 1, 0.85, 0.62);
+    return [c.r, c.g, c.b];
+  });
+}
+
+const EDGE_COLORS: Partial<Record<RoadStyle, string>> = { rainbow: '#ffffff', neon: '#3fe8ff' };
+
+/**
+ * Over the void (and everywhere on floating courses) the road is a slab: an underside
+ * plus glowing edge lines so the drop reads clearly.
+ */
+function buildFloatingDeck(ctx: BuildContext, style: RoadStyle): void {
+  const { path } = ctx;
+  const floating = Boolean(path.def.space);
+  const runs = loopRuns(path, (i) => (floating || path.samples[i]!.open) && !path.samples[i]!.gap);
+  if (!runs.length) return;
+  const under: MeshData[] = [];
+  const edges: MeshData[] = [];
+  for (const idx of runs) {
+    under.push(
+      extrudeAlongPath(path, idx, (s) => [
+        { x: s.halfWidth + 0.35, y: -0.5 },
+        { x: s.halfWidth * 0.55, y: -1.9 },
+        { x: -s.halfWidth * 0.55, y: -1.9 },
+        { x: -s.halfWidth - 0.35, y: -0.5 },
+      ]),
+    );
+    for (const side of [1, -1]) {
+      edges.push(
+        extrudeAlongPath(path, idx, (s) => {
+          const pts = [
+            { x: side * (s.halfWidth - 0.05), y: 0.04 },
+            { x: side * (s.halfWidth + 0.4), y: 0.04 },
+          ];
+          return side === 1 ? pts : pts.reverse();
+        }),
+      );
+    }
+  }
+  const deck = mesh(mergeMeshData(under), new MeshStandardMaterial({ color: '#2c2f3c', roughness: 0.95, side: DoubleSide }), 'road-deck');
+  ctx.add(deck);
+  const edgeColor = EDGE_COLORS[style] ?? '#ffd23f';
+  const glow = new Mesh(toGeometry(mergeMeshData(edges)), new MeshBasicMaterial({ color: new Color(edgeColor).multiplyScalar(1.4) }));
+  glow.name = 'void-edges';
+  ctx.add(glow);
 }

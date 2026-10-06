@@ -4,7 +4,7 @@ import { kartQuaternion } from '@shared/vehicles/KartState';
 
 /** A recorded Time Trial run (positions + orientations at 30 Hz from GO). */
 export interface GhostRun {
-  version: 1;
+  version: 2;
   trackId: string;
   laps: number;
   time: number;
@@ -17,14 +17,16 @@ export interface GhostRun {
 
 export const GHOST_HZ = 30;
 const STRIDE = 7;
-const key = (trackId: string, laps: number): string => `turbo-tumble.ghost.v1.${trackId}.${laps}`;
+// Longer jump-tour layouts cannot race against ghosts recorded on the old roads.
+// Keep the old keys intact so existing recordings are not destroyed.
+const key = (trackId: string, laps: number): string => `turbo-tumble.ghost.v2.${trackId}.${laps}`;
 
 export const GhostStore = {
   load(trackId: string, laps: number): GhostRun | null {
     try {
       const raw = localStorage.getItem(key(trackId, laps));
       const run = raw ? (JSON.parse(raw) as GhostRun) : null;
-      return run?.version === 1 ? run : null;
+      return run?.version === 2 ? run : null;
     } catch {
       return null;
     }
@@ -55,7 +57,7 @@ export class GhostRecorder {
   }
 
   finish(meta: Omit<GhostRun, 'frames' | 'version'>): GhostRun {
-    return { version: 1, ...meta, frames: this.frames };
+    return { version: 2, ...meta, frames: this.frames };
   }
 }
 

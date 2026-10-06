@@ -14,6 +14,8 @@ export interface TrackInfluence {
   wallOffset: number;
   halfWidth: number;
   groundBlend: number;
+  /** Over the void: carve a chasm. */
+  open: boolean;
   sample: TrackSample;
 }
 
@@ -31,6 +33,9 @@ export class TerrainField {
   private readonly grid = new Map<number, number[]>();
   private readonly influenceRadius: number;
   private heights: Float32Array | null = null;
+  /** Shortcut dirt paths (world points) the terrain is flattened along. */
+  private readonly shortcuts: Array<{ x: number; y: number; z: number }[]>;
+  private readonly shortcutWidth: number[];
 
   constructor(
     private readonly path: TrackPath,
@@ -44,6 +49,8 @@ export class TerrainField {
     const maxWall = Math.max(...path.samples.map((s) => s.wallOffset));
     this.influenceRadius = maxWall + 2 + def.blendDistance;
     this.buildSegmentGrid();
+    this.shortcuts = path.def.shortcuts.map((sc) => path.shortcutPoints(sc).map((p) => ({ x: p.x, y: p.y, z: p.z })));
+    this.shortcutWidth = path.def.shortcuts.map((sc) => sc.halfWidth);
   }
 
   private key(cx: number, cz: number): number {
@@ -79,6 +86,10 @@ export class TerrainField {
     let bestD = Infinity;
     let bestI = -1;
     let bestT = 0;
+    // Where roads cross, the lowest ground-level road owns the terrain (the upper one is a bridge).
+    let groundD = Infinity;
+    let groundI = -1;
+    let groundT = 0;
     for (const i of list) {
       const a = s[i]!.position;
       const b = s[(i + 1) % s.length]!.position;
@@ -94,8 +105,20 @@ export class TerrainField {
         bestI = i;
         bestT = t;
       }
+      // Lowest ground road within its own reach (where roads cross, never bury the lower one).
+      const reach = s[i]!.wallOffset + 4;
+      if (s[i]!.groundBlend > 0.5 && !s[i]!.open && d < reach * reach && (groundI < 0 || s[i]!.position.y < s[groundI]!.position.y - 0.5 || (Math.abs(s[i]!.position.y - s[groundI]!.position.y) <= 0.5 && d < groundD))) {
+        groundD = d;
+        groundI = i;
+        groundT = t;
+      }
     }
     if (bestI < 0) return null;
+    if (groundI >= 0 && groundI !== bestI && (s[bestI]!.groundBlend < 0.5 || s[groundI]!.position.y < s[bestI]!.position.y - 2)) {
+      bestD = groundD;
+      bestI = groundI;
+      bestT = groundT;
+    }
     const a = s[bestI]!;
     const b = s[(bestI + 1) % s.length]!;
     const cy = lerp(a.position.y, b.position.y, bestT);
@@ -114,6 +137,7 @@ export class TerrainField {
       wallOffset: lerp(a.wallOffset, b.wallOffset, bestT),
       halfWidth,
       groundBlend: lerp(a.groundBlend, b.groundBlend, bestT),
+      open: a.open || b.open,
       sample: bestT < 0.5 ? a : b,
     };
   }
@@ -121,6 +145,7 @@ export class TerrainField {
   /** Terrain without track shaping. */
   natural(x: number, z: number): number {
     const d = this.def;
+    if (this.path.def.space) return -320; // floating course: nothing below
     let h = d.baseHeight + this.noise.fbm(x * d.noiseScale, z * d.noiseScale, 4) * d.noiseAmplitude;
     // Low frequency swell for larger rolling hills.
     h += this.noise.noise(x * d.noiseScale * 0.25 + 17.3, z * d.noiseScale * 0.25 - 4.1) * d.noiseAmplitude * 1.4;
@@ -149,9 +174,15 @@ export class TerrainField {
 
   /** Final terrain height (track shaping applied). */
   height(x: number, z: number): number {
-    const nat = this.natural(x, z);
+    const nat = this.shortcutHeight(x, z, this.natural(x, z));
     const inf = this.influence(x, z);
     if (!inf) return nat;
+    if (this.path.def.space) return nat;
+    if (inf.open) {
+      // The void: a deep chasm under the road (falls are fatal).
+      const reach = inf.wallOffset + this.def.blendDistance;
+      return lerp(nat, Math.min(nat, inf.roadY - 70), 1 - smoothstep(reach * 0.55, reach, inf.distance));
+    }
     const flatEdge = inf.wallOffset + 1.5;
     const w = 1 - smoothstep(flatEdge, flatEdge + this.def.blendDistance, inf.distance);
     if (w <= 0) return nat;
@@ -163,6 +194,31 @@ export class TerrainField {
     const target = lerp(valleyTarget, groundTarget, inf.groundBlend);
     const weight = inf.groundBlend > 0.5 ? w : 1 - smoothstep(0, inf.wallOffset + this.def.blendDistance, inf.distance);
     return lerp(nat, target, clamp(weight, 0, 1));
+  }
+
+  /** Natural height blended flat along shortcut paths (between their entry/exit road heights). */
+  private shortcutHeight(x: number, z: number, nat: number): number {
+    let h = nat;
+    this.shortcuts.forEach((pts, k) => {
+      let best = Infinity;
+      let y = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i]!;
+        const b = pts[i + 1]!;
+        const abx = b.x - a.x;
+        const abz = b.z - a.z;
+        const t = clamp(((x - a.x) * abx + (z - a.z) * abz) / (abx * abx + abz * abz || 1), 0, 1);
+        const d = Math.hypot(a.x + abx * t - x, a.z + abz * t - z);
+        if (d < best) {
+          best = d;
+          y = lerp(a.y, b.y, t);
+        }
+      }
+      const w = this.shortcutWidth[k]!;
+      const blend = 1 - smoothstep(w + 1, w + 14, best);
+      if (blend > 0) h = lerp(h, y - 0.12, blend);
+    });
+    return h;
   }
 
   /** Build the render/collision grid. Heights are cached for fast `sample()`. */

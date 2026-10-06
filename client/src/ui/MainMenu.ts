@@ -4,6 +4,7 @@ import { CHARACTERS, KART_BODIES } from '../config/roster';
 import { TRACKS } from '@shared/tracks/registry';
 import { CUPS } from '@shared/tracks/cups';
 import { el } from './dom';
+import { engineLabel, getEngineProfile } from '../audio/EngineProfiles';
 
 export type MenuMode = 'race' | 'grandprix' | 'timetrial' | 'online';
 
@@ -27,7 +28,7 @@ const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }>
   { id: 'online', title: 'Online', blurb: 'Race friends with a room code', icon: '🌐' },
 ];
 
-type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
+type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'engine' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
 const STORAGE_KEY = 'turbo-tumble.menu.v1';
 
 const DEFAULT_CHOICE: MenuChoice = { mode: 'race', players: 1, split: 'horizontal', character: 'bix', kart: 'comet', difficulty: 'normal', laps: 3, items: true, trackId: 'sunny-circuit', cupId: 'sunny-cup' };
@@ -59,6 +60,7 @@ export class MainMenu {
     parent: HTMLElement,
     private readonly onStart: (choice: MenuChoice) => void,
     private readonly onControls: () => void,
+    private readonly onEnginePreview: (kart: string | null) => void = () => undefined,
   ) {
     const cards = el(
       'div',
@@ -96,6 +98,9 @@ export class MainMenu {
     const controls = el('button', 'tt-button tt-menu__controls', 'Controls & Sound');
     controls.addEventListener('click', () => this.onControls());
     this.rows.set('controls', controls);
+    const enginePreview = el('button', 'tt-button tt-menu__engine', '▶ REV ENGINE');
+    enginePreview.addEventListener('click', () => this.onEnginePreview(this.choice.kart));
+    this.rows.set('engine', enginePreview);
 
     this.root = el('div', 'tt-menu', [
       el('div', 'tt-menu__panel', [
@@ -111,10 +116,22 @@ export class MainMenu {
     this.render();
   }
 
+  /** Remember the racer / kart picked in the garage. */
+  setRacer(character: string, kart: string): void {
+    this.choice.character = character;
+    this.choice.kart = kart;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.choice));
+    } catch {
+      /* ignore */
+    }
+  }
+
   setOpen(open: boolean): void {
     this.open = open;
     this.root.classList.toggle('is-open', open);
     if (open) this.render();
+    else this.onEnginePreview(null);
   }
 
   private visibleRows(): RowId[] {
@@ -122,7 +139,7 @@ export class MainMenu {
     if (this.choice.mode !== 'timetrial') rows.push('players');
     if (this.choice.mode !== 'timetrial' && this.choice.players === 2) rows.push('split');
     rows.push(this.choice.mode === 'grandprix' ? 'cup' : 'track');
-    rows.push('character', 'kart');
+    // Racer & kart are chosen in the garage (1P) or on the join screen (split-screen).
     if (this.choice.mode !== 'timetrial') rows.push('difficulty');
     if (this.choice.mode !== 'grandprix') rows.push('laps');
     if (this.choice.mode !== 'timetrial') rows.push('items');
@@ -141,6 +158,7 @@ export class MainMenu {
     if (nav.right) this.change(this.focus, 1);
     if (nav.confirm) {
       if (this.focus === 'controls') this.onControls();
+      else if (this.focus === 'engine') this.onEnginePreview(this.choice.kart);
       else this.start();
       return;
     }
@@ -171,6 +189,7 @@ export class MainMenu {
         break;
       case 'kart':
         c.kart = cycle(KART_BODIES.map((x) => x.id), c.kart);
+        this.onEnginePreview(c.kart);
         break;
       case 'difficulty':
         c.difficulty = cycle(DIFFICULTIES, c.difficulty);
@@ -212,7 +231,7 @@ export class MainMenu {
         return `${cup.name}: ${cup.tracks.map((id) => TRACKS.find((t) => t.id === id)?.name ?? id).join(' · ')}`;
       })(),
       character: c.players > 1 ? `P1: ${character.name} (others pick on the next screen)` : `${character.name} · ${character.tagline}`,
-      kart: kart.name,
+      kart: `${kart.name} · ${engineLabel(getEngineProfile(kart.engine))}`,
       difficulty: DIFFICULTY[c.difficulty].label + (c.mode === 'online' ? ' (if you host)' : ''),
       laps: String(c.laps) + (c.mode === 'online' ? ' (if you host)' : ''),
       items: (c.items ? 'On' : 'Off') + (c.mode === 'online' ? ' (if you host)' : ''),

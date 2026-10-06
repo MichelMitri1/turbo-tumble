@@ -82,6 +82,8 @@ export type RaceEvent =
   | { type: 'quakePulse'; racer: number; pulse: number }
   | { type: 'coin'; racer: number; total: number; position: V3 }
   | { type: 'boostPad'; racer: number }
+  | { type: 'slipstream'; racer: number }
+  | { type: 'jump'; racer: number }
   | { type: 'chomp'; racer: number; position: V3 }
   | { type: 'entityGone'; kind: string; position: V3 }
   | { type: 'bump'; a: number; b: number; impact: number; position: V3 }

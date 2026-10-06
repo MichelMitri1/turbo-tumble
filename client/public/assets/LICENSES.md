@@ -11,3 +11,5 @@ All bundled 3D assets are **CC0 1.0 (public domain)** by Kenney (www.kenney.nl):
 
 https://creativecommons.org/publicdomain/zero/1.0/
 All textures in `textures/` and all procedural content are original to this project.
+
+Engine recordings (`audio/engines/`) are CC BY-SA adaptations of Wikimedia Commons recordings — see `audio/engines/LICENSES.md`.

@@ -1,9 +1,8 @@
 import type { TrackDefinition } from '../types/track';
-import { SUNNY_CIRCUIT } from './sunnyCircuit';
-import { WORLD_TRACKS } from './worldTracks';
+import { COURSES } from './courses';
 
 /** All playable tracks. New tracks register here and are picked up by menus & the server. */
-export const TRACKS: readonly TrackDefinition[] = [SUNNY_CIRCUIT, ...WORLD_TRACKS];
+export const TRACKS: readonly TrackDefinition[] = COURSES;
 
 export function getTrack(id: string): TrackDefinition {
   const t = TRACKS.find((track) => track.id === id);

@@ -80,6 +80,8 @@ export class KartView {
   private squashVel = 0;
   private lean = 0;
   private driftYaw = 0;
+  private trickHeld = false;
+  private trickTime = 0;
   private shrink = 1;
   private flat = 0;
   private time = 0;
@@ -196,6 +198,16 @@ export class KartView {
       (k.drifting ? Math.sin(this.time * 47) * 0.02 : 0);
 
     this.suspension.rotation.set(this.pitch, this.driftYaw, this.roll);
+    if (k.jumpTrick && !this.trickHeld) {
+      this.trickTime = 0.45;
+      this.driver.gesture('boost');
+    }
+    this.trickHeld = k.jumpTrick;
+    if (s.grounded) this.trickTime = 0;
+    if (this.trickTime > 0) {
+      this.trickTime = Math.max(0, this.trickTime - dt);
+      this.suspension.rotation.y += easeOut(1 - this.trickTime / 0.45) * Math.PI * 2;
+    }
     this.suspension.position.y = idle;
     this.suspension.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
 

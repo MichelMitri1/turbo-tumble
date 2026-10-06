@@ -5,6 +5,7 @@ import type { ItemSystem } from '../items/ItemSystem';
 import { ITEMS } from '../items/ItemTypes';
 import { clamp } from '../math/scalar';
 import { SeededRandom } from '../math/random';
+import type { MoverField } from '../race/Movers';
 import type { RacingLine } from '../track/RacingLine';
 import type { DifficultyProfile } from './AIDifficulty';
 
@@ -12,6 +13,7 @@ import type { DifficultyProfile } from './AIDifficulty';
 export interface AIContext extends RaceContext {
   readonly items: ItemSystem;
   readonly racingLine: RacingLine;
+  readonly movers: MoverField;
 }
 
 /** Per-CPU driving style: a difficulty profile plus small personal variations. */
@@ -57,6 +59,19 @@ export class AIDriver {
   private readonly fwd = new Vector3();
   private readonly right = new Vector3();
   private readonly tmp = new Vector3();
+  /** Lane chosen last tick (keeps obstacle dodges from flip-flopping). */
+  private lastLane = 0;
+  /** Flat list of threats ahead: [ahead, lateral, half-width, timed] × n. */
+  private readonly threats: number[] = [];
+  /** Shortcut being approached (index) and whether we're taking it this time. */
+  private cutIndex = -1;
+  private cutYes = false;
+  private cutAhead = Infinity;
+  /** Dirt-trail points while cutting through a shortcut. */
+  private trail: Vector3[] | null = null;
+  private trailIdx = 0;
+  /** Shortcuts taken (stats). */
+  shortcutsTaken = 0;
 
   constructor(
     seed: number,
@@ -78,6 +93,9 @@ export class AIDriver {
     const loc = track.locate(s.position, s.trackIndex, 8);
     const speed = Math.max(0, s.forwardSpeed);
 
+    // Shortcut in progress: follow the dirt trail instead of the road.
+    if (this.followTrail(me, out, speed)) return;
+
     // Target lateral: racing line blended with a slowly wandering personal lane.
     const look = 8 + speed * 0.55;
     const targetDist = loc.splineDistance + look;
@@ -87,25 +105,17 @@ export class AIDriver {
     lane += this.trapAvoidance(ctx, me, loc.splineDistance, lane);
     if (p.overtakes) lane += this.trafficAvoidance(ctx, me, loc.splineDistance, lane, speed);
     const sample = track.samples[ti]!;
-    // Commit to a clear side until the kart has passed the obstacle. Apply after
-    // overtaking so traffic cannot steer us back into a solid road prop.
-    let avoidingObstacle = false;
-    let nearest = Infinity;
-    for (const hazard of track.def.hazards) {
-      let ahead = track.wrapDistance(track.startDistance + hazard.distance - loc.splineDistance);
-      if (ahead > track.length - 7) ahead -= track.length;
-      if (ahead < -7 || ahead > look + 24 || ahead >= nearest) continue;
-      const lateral = hazard.lateral ?? 0;
-      const clearance = hazard.radius + 2.6;
-      if (Math.abs(lane - lateral) >= clearance) continue;
-      const width = Math.min(sample.halfWidth, track.frameAtSplineDistance(track.startDistance + hazard.distance).halfWidth) - 2;
-      const left = lateral - clearance;
-      const right = lateral + clearance;
-      lane = left < -width ? right : right > width ? left : lateral > 0 ? left : right;
-      nearest = ahead;
-      avoidingObstacle = true;
-    }
-    lane = clamp(lane, -sample.halfWidth + 2, sample.halfWidth - 2);
+    const cutLane = this.shortcutLane(ctx, me, loc.splineDistance);
+    if (cutLane !== null) lane = cutLane;
+    const jumpAhead = track.def.jumps.some((jump) => track.wrapDistance(track.startDistance + jump.distance + jump.length - loc.splineDistance + 8) < 85);
+    if (jumpAhead) lane = 0;
+    const edgeRoom = sample.open ? 3.2 : cutLane !== null ? 1.2 : 2;
+    const lim = Math.max(0, sample.halfWidth - edgeRoom);
+    // Obstacles: pick the clearest lane given where everything will be when we arrive.
+    const plan = cutLane !== null || jumpAhead ? null : this.planLane(ctx, loc.splineDistance, loc.lateral, lane, speed, look, lim);
+    if (plan) lane = plan.lane;
+    const avoidingObstacle = plan?.avoiding ?? false;
+    lane = clamp(lane, -lim, lim);
 
     const f = track.frameAtSplineDistance(targetDist);
     const target = this.tmp.copy(f.position).addScaledVector(f.right, lane);
@@ -122,6 +132,16 @@ export class AIDriver {
     const planned = line.speed[this.lineIndex(ctx, loc.splineDistance + speed * 0.8)]!;
     if (speed > planned + 1.5) out.throttle = 0;
     if (speed > planned + 5 || (Math.abs(angle) > 0.65 && speed > 20)) out.brake = 0.6;
+    // Every lane blocked by a timed obstacle (piston, pendulum…): ease off and let it clear.
+    if (plan?.wait && speed > 11) {
+      out.throttle = 0;
+      if (plan.wait > 1) out.brake = 0.5;
+    }
+    // Lining up for a shortcut: slow enough to make the turn onto the trail.
+    if (cutLane !== null && this.cutAhead < speed * 0.9 + 10 && speed > 18) {
+      out.throttle = 0;
+      out.brake = 0.6;
+    }
 
     // Drift through corners: decided from the line's curvature a little ahead.
     // Only genuinely tight corners (line radius under ~40–60 m) are worth a drift.
@@ -130,8 +150,12 @@ export class AIDriver {
     // Sliding wide of our line towards the outside of the corner → straighten up.
     const hereLat = line.lateral[this.lineIndex(ctx, loc.splineDistance)]! * p.lineFollow;
     const outward = s.drifting ? -(loc.lateral - hereLat) * s.driftDir : 0;
-    const wantDrift = allowDrift && p.driftSkill > 0.3 && Math.abs(k) > threshold && speed > 15;
-    if (s.drifting) {
+    // Dodging an obstacle or lining up for a shortcut needs free steering: no drift.
+    const busy = avoidingObstacle || cutLane !== null;
+    const wantDrift = allowDrift && !busy && p.driftSkill > 0.3 && Math.abs(k) > threshold && speed > 15;
+    if (s.drifting && busy) {
+      out.drift = false;
+    } else if (s.drifting) {
       out.drift = outward < 2.5 && Math.abs(k) > threshold * 0.45 && !(s.driftStage >= 2 && Math.abs(k) < threshold);
       if (outward > 1) out.steer = clamp(s.driftDir * (0.5 + outward * 0.25), -1, 1);
     } else if (wantDrift) {
@@ -141,10 +165,36 @@ export class AIDriver {
       out.drift = false;
     }
 
-    if (avoidingObstacle) out.drift = false;
+    // No drifting into corners without walls: the slide would carry us over the edge.
+    for (let d = 0; d <= 24 && out.drift; d += 3) if (track.samples[track.wrapIndex(ti + d)]!.open) out.drift = false;
+    // Edge guard over the void: where will the slide carry us in ~0.45 s? Pull back
+    // from any unwalled edge before the wheels leave the deck.
+    const here = track.samples[loc.index]!;
+    if (here.open && s.grounded) {
+      const predicted = loc.lateral + s.velocity.dot(here.flatRight) * 0.45;
+      const edge = here.halfWidth - 1.4;
+      const side = predicted > edge && !here.wallRight ? 1 : predicted < -edge && !here.wallLeft ? -1 : 0;
+      if (side) {
+        out.steer = -side;
+        out.drift = false;
+        out.throttle = 0;
+        out.brake = Math.abs(predicted) > here.halfWidth ? 0.8 : 0.3;
+      }
+    }
+    // Walls: correct a slide before it reaches the barrier.
+    if (!here.open && s.grounded && !s.drifting && cutLane === null && speed > 12 && Math.abs(angle) < 1.1) {
+      const predicted = loc.lateral + s.velocity.dot(here.flatRight) * 0.35;
+      if (Math.abs(predicted) > here.halfWidth + 0.5) out.steer = clamp(out.steer - Math.sign(predicted) * 0.5, -1, 1);
+    }
+    if (jumpAhead || s.jumpFlight) {
+      out.drift = s.jumpFlight && s.airTime > 0.2 && !s.jumpTrick;
+      if (jumpAhead) { out.throttle = 1; out.brake = 0; }
+    }
 
-    // Unstick: back up with opposite lock.
+    // Unstick: back up with opposite lock. Also when facing the wrong way against a
+    // wall, where a forward U-turn wouldn't fit (a three-point turn instead).
     if (s.stuckTime > 1.3 && this.reverse <= 0) this.reverse = 1.1;
+    if (this.reverse <= 0 && Math.abs(angle) > 1.75 && speed < 14 && s.grounded && Math.abs(loc.lateral) > here.halfWidth - 1.5) this.reverse = 0.9;
     if (this.reverse > 0) {
       this.reverse -= dt;
       out.throttle = 0;
@@ -152,6 +202,144 @@ export class AIDriver {
       out.steer = -out.steer;
       out.drift = false;
     }
+  }
+
+  /**
+   * Choose a lane: score candidate lanes across the road against every obstacle
+   * ahead (static props; moving ones at, just before and just after our arrival
+   * time). `wait` > 0 when no lane is clear of a timed obstacle — ease off (1) or
+   * brake (2) so it clears before we get there.
+   */
+  private planLane(ctx: AIContext, splineDistance: number, current: number, want: number, speed: number, look: number, lim: number): { lane: number; avoiding: boolean; wait: number } {
+    const track = ctx.track;
+    const th = this.threats;
+    th.length = 0;
+    const reach = look + 26;
+    const aheadOf = (d: number): number => {
+      const ahead = track.wrapDistance(track.startDistance + d - splineDistance);
+      return ahead > track.length - 7 ? ahead - track.length : ahead;
+    };
+    for (const h of track.def.hazards) {
+      const ahead = aheadOf(h.distance);
+      if (ahead > -6 && ahead < reach) th.push(ahead, h.lateral ?? 0, h.radius + 2.4, 0);
+    }
+    const movers = ctx.movers;
+    for (let i = 0; i < movers.defs.length; i++) {
+      const ahead = aheadOf(movers.distanceOf(i));
+      if (ahead < -6 || ahead > reach) continue;
+      const arrive = ctx.time + Math.max(0, ahead) / Math.max(8, speed);
+      for (const dt of [-0.25, 0, 0.3]) {
+        const t = movers.threat(i, arrive + dt);
+        if (t) th.push(ahead, t.lateral, t.half, 1);
+      }
+    }
+    if (!th.length) {
+      this.lastLane = want;
+      return { lane: want, avoiding: false, wait: 0 };
+    }
+    // Where we'd actually be at each threat if we headed for lane c (sideways speed is limited).
+    const blockAt = (c: number): number => {
+      let block = 0;
+      for (let j = 0; j < th.length; j += 4) {
+        const ahead = Math.max(0, th[j]!);
+        const shift = 7 * (ahead / Math.max(8, speed)) + 0.5;
+        const at = current + clamp(c - current, -shift, shift);
+        if (Math.abs(at - th[j + 1]!) < th[j + 2]!) block += 2 - Math.min(1, ahead / reach);
+      }
+      return block;
+    };
+    let best = clamp(want, -lim, lim);
+    let bestBlock = blockAt(best);
+    let bestScore = bestBlock * 50 + Math.abs(best - this.lastLane) * 0.25;
+    for (let c = -lim; c <= lim + 1e-6; c += 0.8) {
+      const block = blockAt(c);
+      const score = block * 50 + Math.abs(c - want) * 0.4 + Math.abs(c - this.lastLane) * 0.25;
+      if (score < bestScore) {
+        best = c;
+        bestBlock = block;
+        bestScore = score;
+      }
+    }
+    this.lastLane = best;
+    let wait = 0;
+    if (bestBlock > 0) {
+      // Is the blocker a timed obstacle close enough that slowing down helps?
+      for (let j = 0; j < th.length; j += 4) {
+        const ahead = th[j]!;
+        const at = current + clamp(best - current, -(7 * (Math.max(0, ahead) / Math.max(8, speed)) + 0.5), 7 * (Math.max(0, ahead) / Math.max(8, speed)) + 0.5);
+        if (!th[j + 3] || Math.abs(at - th[j + 1]!) >= th[j + 2]!) continue;
+        if (ahead > 0 && ahead < speed * 1.4) wait = Math.max(wait, ahead < speed * 0.6 ? 2 : 1);
+      }
+    }
+    return { lane: best, avoiding: Math.abs(best - want) > 0.5, wait };
+  }
+
+  /**
+   * Shortcuts: skilled CPUs line up with the wall opening and cut through. Returns the
+   * lane to hold on the approach (null when not taking one).
+   */
+  private shortcutLane(ctx: AIContext, me: Racer, splineDistance: number): number | null {
+    const p = this.personality;
+    const track = ctx.track;
+    this.cutAhead = Infinity;
+    if (p.driftSkill < 0.45 || me.state.rocketTimer > 0) return null;
+    for (let k = 0; k < track.def.shortcuts.length; k++) {
+      const sc = track.def.shortcuts[k]!;
+      const entry = sc.from + sc.halfWidth + 3;
+      const ahead = track.wrapDistance(track.startDistance + entry - splineDistance);
+      if (ahead > 80) {
+        if (this.cutIndex === k) this.cutIndex = -1;
+        continue;
+      }
+      if (this.cutIndex !== k) {
+        this.cutIndex = k;
+        this.cutYes = this.rng.next() < (p.driftSkill > 0.85 ? 0.9 : 0.45);
+      }
+      if (!this.cutYes) return null;
+      const side = sc.side === 'left' ? -1 : 1;
+      const hw = track.frameAtSplineDistance(track.startDistance + entry).halfWidth;
+      this.cutAhead = ahead;
+      if (ahead < 9) {
+        const sideOut = (sc.toSide ?? sc.side) === 'left' ? -1 : 1;
+        const exit = track.anchorToWorld({ distance: sc.to + 10, lateral: sideOut * track.frameAtSplineDistance(track.startDistance + sc.to + 10).halfWidth * 0.4 }).position.clone();
+        this.trail = [...track.shortcutPoints(sc, 3), exit];
+        this.trailIdx = 0;
+        this.cutYes = false;
+        this.shortcutsTaken++;
+      }
+      return side * (hw - 1.2);
+    }
+    return null;
+  }
+
+  /** Pure pursuit along a shortcut's dirt trail; returns false once back on the road. */
+  private followTrail(me: Racer, out: PlayerInput, speed: number): boolean {
+    const pts = this.trail;
+    if (!pts) return false;
+    const s = me.state;
+    while (this.trailIdx < pts.length - 1 && pts[this.trailIdx]!.distanceToSquared(s.position) > pts[this.trailIdx + 1]!.distanceToSquared(s.position)) this.trailIdx++;
+    const lost = pts[this.trailIdx]!.distanceTo(s.position) > 14 || s.respawnTimer > 0 || s.stuckTime > 1;
+    if (this.trailIdx >= pts.length - 2 || lost) {
+      this.trail = null;
+      return false;
+    }
+    let li = this.trailIdx;
+    let acc = 0;
+    const look = 6 + speed * 0.35;
+    while (li < pts.length - 1 && acc < look) {
+      acc += pts[li]!.distanceTo(pts[li + 1]!);
+      li++;
+    }
+    const to = this.tmp.copy(pts[li]!).sub(s.position).setY(0).normalize();
+    this.fwd.copy(s.forward).setY(0).normalize();
+    this.right.crossVectors(this.fwd, UP).normalize();
+    const angle = Math.atan2(to.dot(this.right), to.dot(this.fwd));
+    out.steer = clamp(angle * 2.6, -1, 1);
+    out.drift = false;
+    const cap = Math.abs(angle) > 0.9 ? 13 : Math.abs(angle) > 0.45 ? 19 : 40;
+    out.throttle = speed > cap ? 0 : 1;
+    out.brake = speed > cap + 4 ? 0.8 : 0;
+    return true;
   }
 
   /** Lateral nudge away from traps sitting on our line ahead. */

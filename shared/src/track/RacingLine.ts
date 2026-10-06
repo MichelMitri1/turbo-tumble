@@ -42,7 +42,8 @@ export function computeRacingLine(path: TrackPath, options: Partial<RacingLineOp
   const lat = new Float32Array(n);
   const px = new Float64Array(n);
   const pz = new Float64Array(n);
-  const limit = s.map((x) => Math.max(0, x.halfWidth - o.margin));
+  // Stay further from open edges (nothing to catch you over the void).
+  const limit = s.map((x) => Math.max(0, x.halfWidth - o.margin - (x.open ? 1.6 : 0)));
 
   const place = (i: number): void => {
     px[i] = s[i]!.position.x + s[i]!.flatRight.x * lat[i]!;
@@ -83,7 +84,13 @@ export function computeRacingLine(path: TrackPath, options: Partial<RacingLineOp
 
   // Speed profile: corner limit, then backward pass for braking zones.
   const speed = new Float32Array(n);
-  for (let i = 0; i < n; i++) speed[i] = Math.min(o.topSpeed, Math.sqrt(o.lateralAccel / Math.max(1e-4, Math.abs(curvature[i]!))));
+  // Over the void there's no wall to lean on: corner with ~40% less grip (and a little
+  // either side of the open stretch, where the kart exits a corner onto it).
+  const openNear = s.map((_, i) => {
+    for (let d = -12; d <= 12; d++) if (s[(i + d + n) % n]!.open) return true;
+    return false;
+  });
+  for (let i = 0; i < n; i++) speed[i] = Math.min(o.topSpeed, Math.sqrt((o.lateralAccel * (openNear[i] ? 0.45 : 1)) / Math.max(1e-4, Math.abs(curvature[i]!))));
   for (let pass = 0; pass < 2; pass++) {
     for (let i = n - 1; i >= 0; i--) {
       const next = speed[(i + 1) % n]!;

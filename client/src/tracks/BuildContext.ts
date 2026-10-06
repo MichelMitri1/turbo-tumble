@@ -8,7 +8,8 @@ import type { GraphicsSettings } from '../config/graphics';
 
 /** Anything on the track that animates each frame (windmills, crowds, water...). */
 export interface Updatable {
-  update(dt: number, time: number): void;
+  /** `raceTime`: the race clock (moving obstacles follow it so visuals match the simulation). */
+  update(dt: number, time: number, raceTime?: number): void;
 }
 
 /** Circular no-scatter zone (x, z, radius) reserved by a landmark. */

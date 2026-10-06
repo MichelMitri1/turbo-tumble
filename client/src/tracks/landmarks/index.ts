@@ -27,7 +27,7 @@ export const LANDMARKS: Record<string, LandmarkEntry> = {
   windmill: { build: buildWindmill },
   balloon: { build: buildBalloon },
   mountains: { build: buildMountains },
-  clouds: { build: (ctx) => buildClouds(ctx) },
+  clouds: { build: (ctx, p) => buildClouds(ctx, p) },
   skyline: { build: buildSkyline },
   volcano: { build: buildVolcano },
 };

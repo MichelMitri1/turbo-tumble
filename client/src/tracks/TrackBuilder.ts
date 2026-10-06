@@ -14,9 +14,12 @@ import { buildBridges } from './builders/BridgeBuilder';
 import { buildTunnels } from './builders/TunnelBuilder';
 import { buildBoostPads } from './builders/BoostPadBuilder';
 import { buildHazards } from './builders/HazardBuilder';
+import { buildMovers } from './builders/MoverBuilder';
+import { buildJumps } from './builders/JumpBuilder';
 import { buildDecor } from './decor/DecorBuilder';
 import { getLandmark } from './landmarks';
 import { Water } from '../rendering/Water';
+import { buildPlanets, buildShortcutTrails, buildStreams } from './builders/FeatureBuilder';
 
 export interface TrackLoadDeps {
   assets: AssetLoader;
@@ -38,8 +41,8 @@ export class TrackRuntime {
     readonly terrainCollider: RAPIER.Collider,
   ) {}
 
-  update(dt: number, time: number): void {
-    for (const u of this.updatables) u.update(dt, time);
+  update(dt: number, time: number, raceTime?: number): void {
+    for (const u of this.updatables) u.update(dt, time, raceTime);
   }
 }
 
@@ -81,8 +84,9 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
   onProgress(0.5, 'Shaping the hills');
   await nextFrame();
   const terrainData = terrain.buildMesh();
-  const { terrain: terrainCollider } = buildTrackColliders(deps.physics, path, terrainData);
-  buildTerrainVisual(ctx, terrainData);
+  const { terrain: terrainCollider } = buildTrackColliders(deps.physics, path, terrainData, terrain);
+  // Floating courses have nothing underneath.
+  if (!def.space) buildTerrainVisual(ctx, terrainData);
 
   onProgress(0.65, 'Paving the road');
   await nextFrame();
@@ -91,6 +95,11 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
   buildTunnels(ctx);
   buildBoostPads(ctx);
   buildHazards(ctx);
+  buildMovers(ctx);
+  buildJumps(ctx);
+  buildStreams(ctx);
+  buildShortcutTrails(ctx);
+  if (def.space && def.theme === 'space') buildPlanets(ctx);
   if (def.terrain.waterLevel !== null) {
     for (const lake of def.terrain.lakes) {
       // Sized to the lake's carved basin (shore blend reaches ~1.6× the radii).

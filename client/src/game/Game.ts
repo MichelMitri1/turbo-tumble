@@ -13,6 +13,7 @@ import { Renderer } from '../rendering/Renderer';
 import type { TrackRuntime } from '../tracks/TrackBuilder';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { World } from './World';
+import { GarageScreen } from '../ui/GarageScreen';
 import { getTrack } from '@shared/tracks/registry';
 import { DebugOverlay, type DebugSnapshot } from '../ui/DebugOverlay';
 import { GrandPrixPanel, type GpRow } from '../ui/GrandPrixPanel';
@@ -64,6 +65,7 @@ export class Game {
   private join!: JoinScreen;
   private controls!: ControlsPanel;
   private online!: OnlineFlow;
+  private garage!: GarageScreen;
   private lastChoice: MenuChoice | null = null;
   private pendingChoice: MenuChoice | null = null;
   private gpPanel!: GrandPrixPanel;
@@ -131,13 +133,15 @@ export class Game {
         this.menu.setOpen(false);
         this.controls.setOpen(true);
       },
+      (kart) => this.audio.previewEngine(kart),
     );
     this.join = new JoinScreen(this.ui, this.input, (players) => {
       const choice = this.pendingChoice;
       this.pendingChoice = null;
       if (!players || !choice) this.menu.setOpen(true);
       else this.launch(choice, players);
-    }, (name) => this.audio.ui(name));
+    }, (name) => this.audio.ui(name), (kart) => this.audio.previewEngine(kart));
+    this.garage = new GarageScreen(this.ui, this.assets, (kart) => this.audio.previewEngine(kart));
     this.controls = new ControlsPanel(this.ui, this.input, this.audio.engine, () => this.menu.setOpen(true));
     this.gpPanel = new GrandPrixPanel(this.ui);
     this.online = new OnlineFlow(this.ui, {
@@ -221,7 +225,18 @@ export class Game {
       this.join.show(choice.players, choice.character, choice.kart);
       return;
     }
-    this.launch(choice, [{ character: choice.character, kart: choice.kart, device: { kind: 'any' } }]);
+    // Single player: pick racer + kart in the garage.
+    this.menu.setOpen(false);
+    this.garage.show(choice.character, choice.kart, (pick) => {
+      if (!pick) {
+        this.menu.setOpen(true);
+        return;
+      }
+      this.menu.setRacer(pick.character, pick.kart);
+      const picked = { ...choice, ...pick };
+      this.lastChoice = picked;
+      this.launch(picked, [{ character: pick.character, kart: pick.kart, device: { kind: 'any' } }]);
+    });
   }
 
   // ---------------------------------------------------------------- tracks
@@ -403,6 +418,8 @@ export class Game {
 
     if (this.join.open) {
       this.join.update();
+    } else if (this.garage.open) {
+      this.garage.handle(nav, this.input.keyboard.wasPressed('Escape'));
     } else if (this.online.screen.open) {
       this.online.handle(nav, this.input.keyboard.wasPressed('Escape'));
     } else if (this.controls.open) {
@@ -432,7 +449,7 @@ export class Game {
 
   /** Navigation blips for whichever menu is open. */
   private menuSounds(nav: ReturnType<InputManager['menuNav']>): void {
-    const menus = this.controls.open || this.online.screen.open || this.menu.open || this.gpPanel.open || this.pause.open;
+    const menus = this.garage.open || this.controls.open || this.online.screen.open || this.menu.open || this.gpPanel.open || this.pause.open;
     if (!menus) return;
     if (nav.up || nav.down) this.audio.ui('uiMove');
     else if ((nav.left || nav.right) && !this.join.open) this.audio.ui('uiChange');
@@ -443,7 +460,7 @@ export class Game {
   private render(alpha: number, dt: number): void {
     this.session.render(this.loop.paused ? 1 : alpha, dt);
     this.fx.update(dt);
-    this.track.update(dt, this.time);
+    this.track.update(dt, this.time, this.session.race.time);
     this.world.lighting.fit(this.session.focusPoints());
     this.renderer.render(this.scene, this.session.views);
     this.debug.update(dt, () => this.debugSnapshot());

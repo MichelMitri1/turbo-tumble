@@ -29,7 +29,7 @@ const def = getTrack('sunny-circuit');
 const track = new TrackPath(def);
 const terrain = new TerrainField(track, def.terrain);
 const physics = new PhysicsWorld();
-buildTrackColliders(physics, track, terrain.buildMesh());
+buildTrackColliders(physics, track, terrain.buildMesh(), terrain);
 
 const race = new RaceSimulation(
   {

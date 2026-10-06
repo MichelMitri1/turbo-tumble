@@ -22,8 +22,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.66, lateral: 3.5, model: 'rock_largeA', radius: 1.8, obstacleHeight: 2.5 },
       { fraction: 0.84, lateral: 0, model: 'rock_largeA', radius: 2, obstacleHeight: 2.7 },
     ],
+    jumps: [0.2, 0.49, 0.77],
+    launchSpeed: 15,
     layout: {
-      radius: 175,
+      radius: 250,
       stretch: [1.3, 0.8],
       harmonics: [
         [2, 0.19, 0.4],
@@ -55,8 +57,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.6, lateral: -4, model: 'stump_round', radius: 2, obstacleHeight: 1.8 },
       { fraction: 0.81, lateral: 0, model: 'stump_round', radius: 2, obstacleHeight: 1.8 },
     ],
+    jumps: [0.18, 0.46, 0.79],
+    launchSpeed: 16,
     layout: {
-      radius: 185,
+      radius: 270,
       stretch: [1.15, 0.85],
       harmonics: [
         [3, 0.22, 0.2],
@@ -86,8 +90,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.69, lateral: -4, model: 'rock_tallA', radius: 2.2, obstacleHeight: 3.6 },
       { fraction: 0.86, lateral: 3, model: 'rock_tallA', radius: 1.8, obstacleHeight: 3.2 },
     ],
+    jumps: [0.22, 0.46, 0.82],
+    launchSpeed: 17,
     layout: {
-      radius: 170,
+      radius: 275,
       stretch: [0.85, 1.2],
       harmonics: [
         [2, 0.23, 1.2],
@@ -119,8 +125,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.72, lateral: 0, model: 'rock_largeC', radius: 2.4, obstacleHeight: 3.4 },
       { fraction: 0.85, lateral: -4, model: 'rock_largeC', radius: 2, obstacleHeight: 2.8 },
     ],
+    jumps: [0.2, 0.53, 0.8],
+    launchSpeed: 17,
     layout: {
-      radius: 190,
+      radius: 295,
       stretch: [1.35, 0.75],
       harmonics: [
         [3, 0.18, 0.6],
@@ -151,8 +159,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.78, lateral: -3, model: 'stump_round', radius: 2, obstacleHeight: 1.8 },
       { fraction: 0.85, lateral: 3, model: 'stump_round', radius: 1.8, obstacleHeight: 1.8 },
     ],
+    jumps: [0.23, 0.5, 0.82],
+    launchSpeed: 16,
     layout: {
-      radius: 165,
+      radius: 260,
       stretch: [1, 1],
       harmonics: [
         [4, 0.18, 0.9],
@@ -184,8 +194,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.73, lateral: -3.5, model: 'mushroom_red', radius: 2.1, obstacleHeight: 3.6 },
       { fraction: 0.83, lateral: 3.5, model: 'mushroom_red', radius: 2.1, obstacleHeight: 3.6 },
     ],
+    jumps: [0.2, 0.49, 0.77],
+    launchSpeed: 18,
     layout: {
-      radius: 160,
+      radius: 250,
       stretch: [1.05, 0.95],
       harmonics: [
         [5, 0.12, 0.4],
@@ -217,8 +229,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.8, lateral: -3.5, model: 'statue_columnDamaged', radius: 2, obstacleHeight: 3.4 },
       { fraction: 0.88, lateral: 3, model: 'statue_columnDamaged', radius: 1.8, obstacleHeight: 3 },
     ],
+    jumps: [0.18, 0.46, 0.81],
+    launchSpeed: 17,
     layout: {
-      radius: 180,
+      radius: 290,
       stretch: [0.8, 1.3],
       harmonics: [
         [3, 0.21, 1.9],
@@ -248,8 +262,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.58, lateral: 3, model: 'rock_largeD', radius: 2, obstacleHeight: 3 },
       { fraction: 0.84, lateral: 0, model: 'rock_largeD', radius: 2.1, obstacleHeight: 3.2 },
     ],
+    jumps: [0.21, 0.51, 0.84],
+    launchSpeed: 18,
     layout: {
-      radius: 175,
+      radius: 300,
       stretch: [1, 1.1],
       harmonics: [
         [2, 0.24, 0.4],
@@ -281,8 +297,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.77, lateral: -3, model: 'rock_largeB', radius: 2.2, obstacleHeight: 3 },
       { fraction: 0.86, lateral: 3, model: 'rock_largeB', radius: 1.8, obstacleHeight: 2.6 },
     ],
+    jumps: [0.2, 0.49, 0.79],
+    launchSpeed: 17,
     layout: {
-      radius: 200,
+      radius: 310,
       stretch: [1.4, 0.75],
       harmonics: [
         [2, 0.17, 0.9],
@@ -315,8 +333,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.82, lateral: -3, model: 'pylon', radius: 1.6, obstacleHeight: 2.5 },
       { fraction: 0.88, lateral: 3, model: 'pylon', radius: 1.6, obstacleHeight: 2.5 },
     ],
+    jumps: [0.17, 0.47, 0.79],
+    launchSpeed: 15,
     layout: {
-      radius: 170,
+      radius: 265,
       stretch: [1.1, 0.85],
       harmonics: [
         [4, 0.21, 0.785],
@@ -349,8 +369,10 @@ export const WORLD_TRACKS: TrackDefinition[] = [
       { fraction: 0.83, lateral: 0, model: 'rock_tallC', radius: 2.4, obstacleHeight: 3.6 },
       { fraction: 0.9, lateral: 3.5, model: 'rock_tallC', radius: 1.8, obstacleHeight: 3 },
     ],
+    jumps: [0.2, 0.53, 0.82],
+    launchSpeed: 19,
     layout: {
-      radius: 185,
+      radius: 300,
       stretch: [1.1, 0.95],
       harmonics: [
         [3, 0.2, 1.4],

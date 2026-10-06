@@ -280,6 +280,34 @@ export const THEMES: Record<string, Theme> = {
     landmarks: () => [{ type: 'volcano', params: { distance: 520 } }],
   },
 
+  space: {
+    id: 'space',
+    palette: { grassA: '#10102a', grassB: '#10102a', shoulder: '#10102a', sand: '#10102a', rock: '#10102a' },
+    noiseAmplitude: 0,
+    lakes: false,
+    lighting: { sunDirection: [0.3, 0.8, 0.4], sunColor: '#d8ccff', sunIntensity: 1.4, skyColor: '#8a7aff', groundColor: '#2a1a4a', hemiIntensity: 1.5, exposure: 1.15 },
+    sky: { top: '#03031a', horizon: '#2a1660', bottom: '#120830', sunGlow: '#b07aff', fogColor: '#1a1040', fogNear: 300, fogFar: 1500, clouds: 0, stars: 1 },
+    mountains: null,
+    music: 'music-neon',
+    halfWidth: 9,
+    noCrowd: true,
+    scatter: () => [],
+  },
+
+  sky: {
+    id: 'sky',
+    palette: { grassA: '#ffffff', grassB: '#ffffff', shoulder: '#ffffff', sand: '#ffffff', rock: '#ffffff' },
+    noiseAmplitude: 0,
+    lakes: false,
+    lighting: { ...DAY_LIGHT, sunIntensity: 2.8, skyColor: '#e0f2ff', groundColor: '#ffffff', hemiIntensity: 1.4, exposure: 1.05 },
+    sky: { top: '#3f8fe8', horizon: '#dff3ff', bottom: '#ffffff', sunGlow: '#fff4cf', fogColor: '#e8f4ff', fogNear: 260, fogFar: 1500, clouds: 40 },
+    mountains: null,
+    music: 'music-sunny',
+    halfWidth: 9,
+    noCrowd: true,
+    scatter: () => [],
+  },
+
   city: {
     id: 'city',
     palette: { grassA: '#2b2f3a', grassB: '#353a4a', shoulder: '#3a3f4f', sand: '#444a5c', rock: '#555b6e' },

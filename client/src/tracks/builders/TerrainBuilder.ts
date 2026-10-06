@@ -1,4 +1,4 @@
-import { BufferAttribute, CircleGeometry, Color, Mesh, MeshStandardMaterial, RingGeometry } from 'three';
+import { BufferAttribute, Color, Mesh, MeshStandardMaterial, RingGeometry } from 'three';
 import type { MeshData } from '@shared/track/Extrude';
 import { Noise2D } from '@shared/math/noise';
 import { clamp, smoothstep } from '@shared/math/scalar';
@@ -60,7 +60,8 @@ export function buildTerrainVisual(ctx: BuildContext, data: MeshData): void {
   mesh.receiveShadow = true;
   ctx.add(mesh);
 
-  // Outer ground ring so the horizon never shows the terrain edge.
+  // Outer ground ring so the horizon never shows the terrain edge. (Nothing may sit
+  // under the terrain itself: roads dip below the base height and chasms go far deeper.)
   const half = terrain.def.size / 2;
   const edgeY = terrain.def.baseHeight - 2;
   const ringMat = new MeshStandardMaterial({ color: grassA.clone().multiplyScalar(0.92), roughness: 1 });
@@ -69,10 +70,4 @@ export function buildTerrainVisual(ctx: BuildContext, data: MeshData): void {
   ring.position.set(terrain.centerX, edgeY, terrain.centerZ);
   ring.name = 'ground-ring';
   ctx.add(ring);
-  // Fill under the grid corners (the ring's inner circle is inscribed in the square).
-  const under = new Mesh(new CircleGeometry(half * 1.05, 48), ringMat);
-  under.rotation.x = -Math.PI / 2;
-  under.position.set(terrain.centerX, edgeY - 0.5, terrain.centerZ);
-  under.name = 'ground-under';
-  ctx.add(under);
 }

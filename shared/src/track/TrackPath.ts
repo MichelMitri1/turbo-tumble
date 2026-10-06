@@ -24,6 +24,13 @@ export interface TrackSample {
   /** Signed curvature (1/m), positive when turning right. */
   curvature: number;
   curb: boolean;
+  /** Collision walls on each side (none over the void, at gaps or shortcut openings). */
+  wallLeft: boolean;
+  wallRight: boolean;
+  /** Inside a gap: no road surface here. */
+  gap: boolean;
+  /** Over the void (no ground below): void segments and gaps. */
+  open: boolean;
 }
 
 export interface TrackLocation {
@@ -50,7 +57,7 @@ export interface TrackFrame {
 }
 
 const WORLD_UP = new Vector3(0, 1, 0);
-const NARROW_SHOULDER: Record<SegmentKind, number> = { ground: 0, bridge: 0.7, tunnel: 1.1 };
+const NARROW_SHOULDER: Record<SegmentKind, number> = { ground: 0, bridge: 0.7, tunnel: 1.1, void: 0.4 };
 const WALL_TAPER_LENGTH = 36;
 
 export class TrackPath {
@@ -109,6 +116,10 @@ export class TrackPath {
         bank: (manualBank * Math.PI) / 180,
         curvature: 0,
         curb: false,
+        wallLeft: true,
+        wallRight: true,
+        gap: false,
+        open: false,
       });
     }
 
@@ -130,7 +141,7 @@ export class TrackPath {
 
     // Bank strength per segment kind (full on ground, reduced on bridges, none in tunnels),
     // smoothed so the road doesn't twist abruptly at kind boundaries.
-    const BANK_BY_KIND: Record<SegmentKind, number> = { ground: 1, bridge: 0.4, tunnel: 0 };
+    const BANK_BY_KIND: Record<SegmentKind, number> = { ground: 1, bridge: 0.4, tunnel: 0, void: 0.7 };
     const bankMul = this.smoothLoop(
       s.map((cur) => BANK_BY_KIND[cur.kind]),
       12,
@@ -167,6 +178,8 @@ export class TrackPath {
       if (cur.kind === 'tunnel') cur.groundBlend = 1;
     });
 
+    this.applyFeatures();
+
     // Curbs on ground corners (dilated so they lead in/out of the corner).
     const cornerThreshold = 1 / 110;
     const isCorner = s.map((cur) => cur.kind === 'ground' && Math.abs(cur.curvature) > cornerThreshold);
@@ -180,6 +193,77 @@ export class TrackPath {
         }
       }
     });
+  }
+
+  /** Gaps, void edges (no walls, no ground) and shortcut openings in the walls. */
+  private applyFeatures(): void {
+    const s = this.samples;
+    const n = s.length;
+    const idx = (lapDistance: number): number => this.wrapIndex(Math.round((this.startDistance + lapDistance) / this.spacing));
+    const span = (from: number, to: number, fn: (cur: TrackSample) => void): void => {
+      const a = idx(from);
+      const count = Math.max(1, Math.round(this.wrapDistance(to - from) / this.spacing));
+      for (let k = 0; k <= count; k++) fn(s[(a + k) % n]!);
+    };
+    // Nothing under the shoulder → the wall (if any) sits right at the road edge.
+    const narrow = (cur: TrackSample): void => {
+      cur.wallOffset = cur.halfWidth + 0.1;
+    };
+    for (const cur of s) {
+      if (this.def.space) {
+        cur.open = true;
+        cur.groundBlend = 0;
+        narrow(cur);
+      }
+      if (cur.kind === 'void') {
+        cur.open = true;
+        cur.wallLeft = cur.wallRight = false;
+        cur.groundBlend = 0;
+      }
+    }
+    for (const gap of this.def.gaps ?? []) {
+      span(gap.distance, gap.distance + gap.length, (cur) => {
+        cur.gap = true;
+        cur.open = true;
+        cur.wallLeft = cur.wallRight = false;
+        cur.groundBlend = 0;
+      });
+      // The run-up and landing are open too (a chasm under the jump).
+      span(gap.distance - 14, gap.distance + gap.length + 14, (cur) => {
+        cur.open = true;
+        cur.groundBlend = 0;
+        narrow(cur);
+      });
+    }
+    for (const sc of this.def.shortcuts) {
+      const open = sc.halfWidth * 2 + 6;
+      const sideIn = sc.side === 'left' ? 'wallLeft' : 'wallRight';
+      const sideOut = (sc.toSide ?? sc.side) === 'left' ? 'wallLeft' : 'wallRight';
+      span(sc.from - 2, sc.from + open, (cur) => (cur[sideIn] = false));
+      span(sc.to - open, sc.to + 2, (cur) => (cur[sideOut] = false));
+    }
+  }
+
+  /** World points of a shortcut's dirt path: road edge at `from` → bulge → road edge at `to`. */
+  shortcutPoints(sc: TrackDefinition['shortcuts'][number], step = 3): Vector3[] {
+    const side = sc.side === 'left' ? -1 : 1;
+    const sideOut = (sc.toSide ?? sc.side) === 'left' ? -1 : 1;
+    const open = sc.halfWidth + 3;
+    const a = this.anchorToWorld({ distance: sc.from + open, lateral: side * (this.frameAtSplineDistance(this.startDistance + sc.from + open).halfWidth - 1) }).position.clone();
+    const b = this.anchorToWorld({ distance: sc.to - open, lateral: sideOut * (this.frameAtSplineDistance(this.startDistance + sc.to - open).halfWidth - 1) }).position.clone();
+    const mid = a.clone().lerp(b, 0.5);
+    const fa = this.anchorToWorld({ distance: sc.from + open });
+    const fb = this.anchorToWorld({ distance: sc.to - open });
+    const out = fa.sample.flatRight.clone().add(fb.sample.flatRight).normalize().multiplyScalar(side * sc.bulge);
+    const ctrl = mid.add(out);
+    const len = a.distanceTo(ctrl) + ctrl.distanceTo(b);
+    const steps = Math.max(4, Math.ceil(len / step));
+    const pts: Vector3[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      pts.push(new Vector3().copy(a).multiplyScalar((1 - t) * (1 - t)).addScaledVector(ctrl, 2 * (1 - t) * t).addScaledVector(b, t * t));
+    }
+    return pts;
   }
 
   private smoothLoop(values: number[], radius: number): number[] {

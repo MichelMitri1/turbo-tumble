@@ -99,6 +99,10 @@ export class Effects {
     }
 
     for (let k = 0; k < ticks; k++) {
+      // Pale wind streaks build while sitting in another kart's wake.
+      if (s.slipstreamCharge > 0.1 || s.slipstreamTimer > 0) {
+        for (const side of [-1, 1]) this.glow.spawn({ position: at(side * 1.2, 0.7 + Math.random(), 0.7), velocity: this.w.copy(this.fwd).multiplyScalar(-14), color: '#b9f5ff', size: [0.22, 0.02], life: 0.25, alpha: 0.6 });
+      }
       // Drift sparks from both rear wheels (stage colour) + tyre smoke.
       if (s.drifting && s.grounded) {
         for (const side of [-1, 1]) {

@@ -13,6 +13,8 @@ import { DIFFICULTY, catchUpMultiplier, type Difficulty } from '../ai/AIDifficul
 import { computeRacingLine, type RacingLine } from '../track/RacingLine';
 import { LapTracker } from './LapTracker';
 import { Pickups } from './Pickups';
+import { stepSlipstream } from './Slipstream';
+import { MoverField, type MoverContact } from './Movers';
 import { createItemSlot, createProgress, v3, type RaceContext, type RaceEvent, type Racer } from './RaceTypes';
 
 export type RacePhase = 'countdown' | 'racing' | 'complete';
@@ -56,6 +58,7 @@ export class RaceSimulation implements RaceContext {
   readonly laps: LapTracker;
   readonly events: RaceEvent[] = [];
   readonly racingLine: RacingLine;
+  readonly movers: MoverField;
   phase: RacePhase = 'countdown';
   /** Seconds since GO (negative during the countdown). */
   time: number;
@@ -65,6 +68,9 @@ export class RaceSimulation implements RaceContext {
   private balanceTimer = 0;
   private sorted: Racer[] = [];
   private readonly n = new Vector3();
+  /** Seconds until each racer can be hit by a moving obstacle again. */
+  private readonly moverCooldown: number[] = [];
+  private readonly contact: MoverContact = { hit: null, nx: 0, nz: 0, depth: 0, launch: 0 };
 
   constructor(
     readonly config: RaceConfig,
@@ -77,6 +83,7 @@ export class RaceSimulation implements RaceContext {
     this.pickups = new Pickups(track, track.def);
     this.laps = new LapTracker(track, config.checkpoints, config.laps);
     this.racingLine = computeRacingLine(track);
+    this.movers = new MoverField(track);
     const profile = DIFFICULTY[config.difficulty];
 
     config.racers.forEach((setup, index) => {
@@ -134,6 +141,7 @@ export class RaceSimulation implements RaceContext {
       return;
     }
     this.time += dt;
+    this.movers.update(this.time);
 
     for (const r of this.racers) {
       const input = r.input;
@@ -153,11 +161,15 @@ export class RaceSimulation implements RaceContext {
       }
       // Slots always run (Time Trial hands out Fizz); `itemsEnabled` only governs item boxes.
       this.items.tickSlot(r, input, dt);
+      r.state.respawnIndex = this.laps.respawnIndex(r);
       r.sim.step(input, dt);
+      if (r.sim.events.jumped) this.emit({ type: 'jump', racer: r.index });
     }
 
     this.balanceField(dt);
     this.collideKarts();
+    this.collideMovers(dt);
+    for (const r of this.racers) if (stepSlipstream(r, this.racers, this.track, dt)) this.emit({ type: 'slipstream', racer: r.index });
     this.collectPickups();
     this.items.update(dt);
     this.pickups.tick(dt);
@@ -259,6 +271,28 @@ export class RaceSimulation implements RaceContext {
     }
   }
 
+  /** Moving obstacles: push karts out of solid ones, hit them (with a short grace period). */
+  private collideMovers(dt: number): void {
+    if (!this.movers.defs.length) return;
+    for (const r of this.racers) {
+      const s = r.state;
+      const cd = Math.max(0, (this.moverCooldown[r.index] ?? 0) - dt);
+      this.moverCooldown[r.index] = cd;
+      if (s.respawnTimer > 0) continue;
+      for (let i = 0; i < this.movers.defs.length; i++) {
+        const c = this.movers.contact(i, s, this.contact);
+        if (!c) continue;
+        MoverField.pushOut(s, c);
+        if (c.hit && cd <= 0 && this.items.entities.hitRacer(r, c.hit, -1, this.movers.defs[i]!.kind)) {
+          this.moverCooldown[r.index] = 1.6;
+          s.velocity.x += c.nx * 6;
+          s.velocity.z += c.nz * 6;
+          if (c.launch) s.velocity.y = c.launch;
+        }
+      }
+    }
+  }
+
   private collectPickups(): void {
     this.racers.forEach((r, i) => {
       const s = r.state;
@@ -274,6 +308,9 @@ export class RaceSimulation implements RaceContext {
         r.sim.giveBoost(0.25, 2);
         this.emit({ type: 'coin', racer: r.index, total: s.coins, position: v3(s.position) });
       }
+      // Streams (water currents, conveyors…) push you along while you ride them.
+      const push = s.grounded && this.pickups.streams.length ? this.pickups.onStream(s.position) : 0;
+      if (push > 0) r.sim.giveBoost(0.12, push);
       const pad = s.grounded && this.pickups.onPad(s.position);
       if (pad) {
         r.sim.giveBoost(1.0, 9);

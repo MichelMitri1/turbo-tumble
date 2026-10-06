@@ -5,12 +5,14 @@ import { packInput, unpackInput } from '@shared/net/InputCodec';
 import { Msg, type EventsMessage, type RaceEndMessage, type RaceStartMessage } from '@shared/net/Protocol';
 import { decodeSnapshot, type RaceSnapshot } from '@shared/net/Snapshot';
 import { PROGRESS_PUBLIC, SLOT_PUBLIC, createBlankEntity } from '@shared/net/StateCodec';
+import { MoverField, type MoverContact } from '@shared/race/Movers';
 import type { RaceSimulation } from '@shared/race/RaceSimulation';
 import type { RaceEvent, Racer } from '@shared/race/RaceTypes';
 import { createEmptyInput, type PlayerInput } from '@shared/types/input';
 import type { KartEntity } from '../vehicles/KartEntity';
 import type { NetClient } from './NetClient';
 import { copyEntity, copyKartState, lerpKartState } from './interpolate';
+import { stepSlipstream } from '@shared/race/Slipstream';
 
 /** Other karts and items are drawn this far in the past so two snapshots always bracket them. */
 const INTERP_DELAY_TICKS = 6; // 100 ms at 60 Hz (3 snapshot intervals)
@@ -52,6 +54,7 @@ export class NetRaceSync {
   /** Racer index per local seat. */
   readonly seats: number[];
   private readonly seatSet: Set<number>;
+  private readonly contact: MoverContact = { hit: null, nx: 0, nz: 0, depth: 0, launch: 0 };
   private seq = 0;
   private history: InputFrame[] = [];
   private snaps: RaceSnapshot[] = [];
@@ -137,7 +140,19 @@ export class NetRaceSync {
     const s = r.state;
     if (reset) r.sim.respawn(s.trackIndex >= 0 ? s.trackIndex : s.safeTrackIndex);
     r.sim.step(input, FIXED_DT);
+    stepSlipstream(r, this.race.racers, this.race.track, FIXED_DT);
     if (s.grounded && this.race.pickups.onPad(s.position)) r.sim.giveBoost(1.0, 9);
+    const push = s.grounded && this.race.pickups.streams.length ? this.race.pickups.onStream(s.position) : 0;
+    if (push > 0) r.sim.giveBoost(0.12, push);
+    // Solid moving obstacles (hits themselves come from the server).
+    const movers = this.race.movers;
+    if (movers.defs.length) {
+      movers.update(this.race.time);
+      for (let i = 0; i < movers.defs.length; i++) {
+        const c = movers.contact(i, s, this.contact);
+        if (c) MoverField.pushOut(s, c);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- snapshots

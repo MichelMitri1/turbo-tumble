@@ -45,6 +45,14 @@ export interface KartState {
   boostTimer: number;
   /** Extra top speed while boosting (m/s). */
   boostPower: number;
+  jumpCooldown: number;
+  /** Sample index to respawn at after a fall (last checkpoint passed), -1 = last safe point. */
+  respawnIndex: number;
+  jumpFlight: boolean;
+  jumpTrick: boolean;
+  slipstreamCharge: number;
+  slipstreamTimer: number;
+  slipstreamCooldown: number;
 
   // --- Status effects (seconds remaining)
   spinTimer: number;
@@ -65,6 +73,7 @@ export interface KartEvents {
   /** Impact speed into a wall, 0 if none. */
   wallHit: number;
   hopped: boolean;
+  jumped: boolean;
   respawned: boolean;
   /** Drift started this tick. */
   driftStarted: boolean;
@@ -100,6 +109,13 @@ export function createKartState(): KartState {
     driftStage: 0,
     boostTimer: 0,
     boostPower: 0,
+    jumpCooldown: 0,
+    respawnIndex: -1,
+    jumpFlight: false,
+    jumpTrick: false,
+    slipstreamCharge: 0,
+    slipstreamTimer: 0,
+    slipstreamCooldown: 0,
     spinTimer: 0,
     tumbleTimer: 0,
     squishTimer: 0,
@@ -112,7 +128,7 @@ export function createKartState(): KartState {
 }
 
 export function createKartEvents(): KartEvents {
-  return { landed: 0, wallHit: 0, hopped: false, respawned: false, driftStarted: false, driftStageUp: 0, miniTurbo: 0, hit: null };
+  return { landed: 0, wallHit: 0, hopped: false, jumped: false, respawned: false, driftStarted: false, driftStageUp: 0, miniTurbo: 0, hit: null };
 }
 
 /** True while the kart has no control (spinning out or tumbling). Squished karts still drive, slowly. */

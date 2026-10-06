@@ -44,6 +44,10 @@ export interface HudData {
   wrongWay: boolean;
   /** 0..1 — speed-line intensity (flat out / boosting). */
   speedFx: number;
+  slipstreamCharge: number;
+  slipstreamActive: boolean;
+  jumpFlight: boolean;
+  jumpTrick: boolean;
 }
 
 export interface ResultRow {
@@ -76,6 +80,7 @@ export class Hud {
   private readonly coinValue: HTMLElement;
   private readonly center: HTMLElement;
   private readonly wrongWay: HTMLElement;
+  private readonly drivingHint = el('div', 'tt-driving-hint tt-chip tt-display');
   private readonly ink: HTMLElement;
   private readonly flashEl: HTMLElement;
   private readonly results: HTMLElement;
@@ -129,7 +134,7 @@ export class Hud {
     this.results = el('div', 'tt-results');
 
     const item = (keys: string[], label: string): HTMLElement => el('div', 'tt-hint__item', [...keys.map((k) => el('span', 'tt-key', k)), label]);
-    this.hint = el('div', 'tt-hint', [item(['W', 'A', 'S', 'D'], 'Drive'), item(['Space'], 'Hop / Drift'), item(['Shift'], 'Item'), item(['S', '+', 'Shift'], 'Throw back'), item(['R'], 'Reset'), item(['Esc'], 'Pause')]);
+    this.hint = el('div', 'tt-hint', [item(['W', 'A', 'S', 'D'], 'Drive'), item(['Space'], 'Hop / Drift / Trick'), item(['Shift'], 'Item'), item(['S', '+', 'Shift'], 'Throw back'), item(['R'], 'Reset'), item(['Esc'], 'Pause')]);
 
     this.timerMain = el('div', 'tt-timer__main tt-display', '0:00.00');
     this.timerSplits = el('div', 'tt-timer__splits');
@@ -142,6 +147,7 @@ export class Hud {
     if (!options.hint) this.hint.style.display = 'none';
     this.root = el('div', 'tt-hud', [this.ink, this.flashEl, this.itemBox, this.standings, stats, timer, this.posWrap, this.center, this.wrongWay, this.hint, this.results]);
     parent.appendChild(this.root);
+    this.root.appendChild(this.drivingHint);
     this.minimap = options.minimap ? new Minimap(this.root, track, track.def.minimap.rotation) : null;
     this.speedLines = new SpeedLines(this.root);
     this.root.prepend(this.speedLines.canvas); // under every other HUD element
@@ -158,6 +164,8 @@ export class Hud {
   update(dt: number, d: HudData): void {
     this.updateItem(dt, d);
     this.speedLines.draw(d.speedFx, dt);
+    this.drivingHint.hidden = !d.jumpFlight && !d.slipstreamActive && d.slipstreamCharge < 0.05;
+    this.drivingHint.textContent = d.jumpFlight ? (d.jumpTrick ? 'TRICK! Landing boost ready' : 'Hop / Drift to trick!') : d.slipstreamActive ? 'SLIPSTREAM BOOST!' : `SLIPSTREAM ${Math.round(d.slipstreamCharge * 100)}%`;
 
     if (d.position !== this.lastPosition) {
       this.posNum.textContent = String(d.position);
