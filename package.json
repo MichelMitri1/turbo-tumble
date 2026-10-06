@@ -15,6 +15,7 @@
     "server": "npm run start -w server",
     "build": "npm run build -w client",
     "start": "npm run build && npm run server",
+    "lan": "node tools/lan.mjs",
     "typecheck": "tsc -p shared --noEmit && tsc -p client --noEmit && tsc -p server --noEmit",
     "preview": "npm run preview -w client"
   },

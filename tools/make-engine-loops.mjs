@@ -4,7 +4,7 @@
  * decode → mono 32 kHz → firing-frequency track (YIN) → RPM → find steady, loud
  * stretches → cut up to 3 seamless crossfaded loops at different RPMs → 16-bit WAV.
  *
- *   node tools/make-engine-loops.mjs <dir with the .ogg sources> [url=http://localhost:5174/]
+ *   node tools/make-engine-loops.mjs <dir with the .ogg sources> [url=http://localhost:5174/turbo-tumble/]
  *
  * Prints the `samples` arrays to paste into client/src/audio/EngineProfiles.ts.
  */
@@ -14,7 +14,7 @@ import path from 'node:path';
 
 const args = process.argv.slice(2);
 const srcDir = args.find((a) => !a.startsWith('http'));
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/turbo-tumble/';
 const outDir = 'client/public/assets/audio/engines';
 fs.mkdirSync(outDir, { recursive: true });
 

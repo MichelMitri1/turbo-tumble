@@ -4,6 +4,7 @@ import { CHARACTERS, KART_BODIES } from '../config/roster';
 import { TRACKS } from '@shared/tracks/registry';
 import { CUPS } from '@shared/tracks/cups';
 import { el } from './dom';
+import { bindFullscreenButton } from './fullscreen';
 import { engineLabel, getEngineProfile } from '../audio/EngineProfiles';
 
 export type MenuMode = 'race' | 'grandprix' | 'timetrial' | 'online';
@@ -25,7 +26,7 @@ const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }>
   { id: 'race', title: 'Single Race', blurb: 'One race against the CPU field', icon: '🏁' },
   { id: 'grandprix', title: 'Grand Prix', blurb: 'Four races · points decide the cup', icon: '🏆' },
   { id: 'timetrial', title: 'Time Trial', blurb: 'Race the clock and your ghost', icon: '⏱️' },
-  { id: 'online', title: 'Online', blurb: 'Race friends with a room code', icon: '🌐' },
+  { id: 'online', title: 'Online', blurb: 'Room codes · or LAN on your Wi-Fi', icon: '🌐' },
 ];
 
 type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'engine' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
@@ -102,6 +103,11 @@ export class MainMenu {
     enginePreview.addEventListener('click', () => this.onEnginePreview(this.choice.kart));
     this.rows.set('engine', enginePreview);
 
+    const arcade = el('a', 'tt-button', '← Arcade');
+    arcade.href = '/';
+    const fullscreen = el('button', 'tt-button');
+    bindFullscreenButton(fullscreen);
+
     this.root = el('div', 'tt-menu', [
       el('div', 'tt-menu__panel', [
         el('div', 'tt-logo tt-menu__logo', [el('div', 'tt-logo__top tt-display', 'TURBO'), el('div', 'tt-logo__bottom tt-display', 'TUMBLE')]),
@@ -111,6 +117,7 @@ export class MainMenu {
         controls,
         el('div', 'tt-menu__help', '↑↓ choose · ←→ change · Enter / Ⓐ select'),
       ]),
+      el('div', 'tt-menu__corner', [fullscreen, arcade]),
     ]);
     parent.appendChild(this.root);
     this.render();

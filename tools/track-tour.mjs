@@ -1,13 +1,13 @@
 /**
  * Loads every track in Chrome, races on autopilot and screenshots a few moments.
- *   node tools/track-tour.mjs [url=http://localhost:5174/] [outDir=smoke-out/tour] [trackId…]
+ *   node tools/track-tour.mjs [url=http://localhost:5174/turbo-tumble/] [outDir=smoke-out/tour] [trackId…]
  */
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/turbo-tumble/';
 const outDir = args.find((a) => !a.startsWith('http') && a.includes('/')) ?? 'smoke-out/tour';
 const only = args.filter((a) => !a.startsWith('http') && !a.startsWith('--') && !a.includes('/'));
 const jumps = args.includes('--jumps');

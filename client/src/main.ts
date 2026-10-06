@@ -2,6 +2,7 @@ import './ui/styles.css';
 import { Game, type GameOptions } from './game/Game';
 import { DEFAULT_GRAPHICS } from './config/graphics';
 import { LoadingScreen } from './ui/LoadingScreen';
+import { installFullscreenKey } from './ui/fullscreen';
 import type { DeviceAssignment } from './input/InputManager';
 import type { GameMode, SessionConfig } from './game/SessionConfig';
 import type { Difficulty } from '@shared/ai/AIDifficulty';
@@ -65,4 +66,5 @@ async function boot(): Promise<void> {
   }
 }
 
+installFullscreenKey();
 void boot();

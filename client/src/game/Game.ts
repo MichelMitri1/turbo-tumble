@@ -494,7 +494,7 @@ export class Game {
     const client = this.online.client;
     if (!net) return `${client?.room ? `online lobby ${client.code} · rtt ${client.rtt.toFixed(0)} ms · ` : 'offline · '}${this.session.config.mode} · ${base}`;
     const lag = client?.lag.delay ? ` (sim +${(client.lag.delay * 2).toFixed(0)} ms)` : '';
-    return `online ${client?.code ?? ''} · ${net.status} · rtt ${net.rtt.toFixed(0)} ms${lag}\n  snaps ${net.snapshotsPerSec.toFixed(0)}/s · ${net.kibPerSec.toFixed(1)} KiB/s · unacked ${net.unacked} · corr ${(net.correction * 100).toFixed(1)} cm\n  ${base}`;
+    return `online ${client?.code ?? ''} · ${net.status} · rtt ${net.rtt.toFixed(0)} ms${lag}\n  snaps ${net.snapshotsPerSec.toFixed(0)}/s · ${net.kibPerSec.toFixed(1)} KiB/s · interp ${net.interpMs.toFixed(0)} ms · unacked ${net.unacked} · corr ${(net.correction * 100).toFixed(1)} cm\n  ${base}`;
   }
 
   private debugSnapshot(): DebugSnapshot {

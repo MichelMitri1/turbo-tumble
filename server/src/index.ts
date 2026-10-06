@@ -7,6 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { initPhysics } from '../../shared/src/physics/PhysicsWorld';
 import { DEFAULT_SERVER_PORT, PROTOCOL_VERSION, ROOM_NAME } from '../../shared/src/net/Protocol';
 import { RaceRoom } from './rooms/RaceRoom';
+import { LAN_MODE, lanAddresses } from './lan';
 
 /**
  * Turbo Tumble game server: Colyseus rooms over WebSockets. If the client has
@@ -39,14 +40,19 @@ interface ExpressLike {
   use(handler: (req: IncomingMessage, res: ServerResponse, next: Next) => void): void;
 }
 
-/** Minimal static file handler for client/dist (SPA fallback to index.html). */
+/** Minimal static file handler for client/dist: one page per game, plus the hub at /. */
 function serveClient(req: IncomingMessage, res: ServerResponse, next: Next): void {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   const url = new URL(req.url ?? '/', 'http://x');
   if (url.pathname.startsWith('/matchmake')) return next();
   let file = normalize(join(dist, decodeURIComponent(url.pathname)));
   if (!file.startsWith(dist)) return next();
-  if (!existsSync(file) || statSync(file).isDirectory()) file = join(dist, 'index.html');
+  if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
+  if (!existsSync(file)) {
+    // Unknown path: fall back to its game's page (first path segment), else the hub.
+    const game = join(dist, url.pathname.split('/')[1] ?? '', 'index.html');
+    file = game.startsWith(dist) && existsSync(game) ? game : join(dist, 'index.html');
+  }
   if (!existsSync(file)) return next();
   res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
   if (file.includes(`${join('dist', 'assets')}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -61,7 +67,7 @@ const server = new Server({
   express: (app: ExpressLike) => {
     app.get('/health', (_req, res) => {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ok: true, game: 'turbo-tumble', protocol: PROTOCOL_VERSION }));
+      res.end(JSON.stringify({ ok: true, game: 'turbo-tumble', protocol: PROTOCOL_VERSION, ...(LAN_MODE ? { lan: lanAddresses(), port } : {}) }));
     });
     if (existsSync(join(dist, 'index.html'))) app.use(serveClient);
   },
@@ -76,3 +82,11 @@ if (latency > 0) {
 
 await server.listen(port, '0.0.0.0');
 console.log(`Turbo Tumble server listening on :${port}${existsSync(join(dist, 'index.html')) ? ' (also serving client/dist)' : ''}`);
+if (LAN_MODE) {
+  const ips = lanAddresses();
+  console.log('\n  LAN mode — snapshots every tick.');
+  console.log(`  This laptop:   http://localhost:${port}/turbo-tumble/`);
+  for (const ip of ips) console.log(`  Other laptops: http://${ip}:${port}/turbo-tumble/`);
+  if (!ips.length) console.log('  (No local network address found — is Wi-Fi connected?)');
+  console.log('  Same Wi-Fi only. If macOS asks, allow "node" to accept incoming connections.\n');
+}

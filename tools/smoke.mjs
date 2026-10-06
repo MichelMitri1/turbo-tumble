@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5173/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5173/turbo-tumble/';
 const outDir = args.find((a) => !a.startsWith('http') && !a.startsWith('--')) ?? 'smoke-out';
 const script = (args.find((a) => a.startsWith('--script=')) ?? '--script=drive').split('=')[1];
 const [W, H] = (args.find((a) => a.startsWith('--size=')) ?? '--size=1600x900').split('=')[1].split('x').map(Number);

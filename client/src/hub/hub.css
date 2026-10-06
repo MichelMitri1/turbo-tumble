@@ -1,0 +1,88 @@
+:root {
+  --ink: #1b1446;
+  --ink-soft: #2e2670;
+  --yellow: #ffd23f;
+  --orange: #ff8c1a;
+  --pink: #ff4f9a;
+  --cyan: #3fd8ff;
+  --white: #fffaf0;
+  --font-display: 'Lilita One', 'Arial Black', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; min-height: 100%; }
+body {
+  background:
+    radial-gradient(circle at 15% 10%, rgba(255, 79, 154, 0.28), transparent 45%),
+    radial-gradient(circle at 85% 90%, rgba(63, 216, 255, 0.22), transparent 45%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 18px, transparent 18px 36px),
+    var(--ink);
+  background-attachment: fixed;
+  color: var(--white);
+  font-family: var(--font-body);
+}
+
+#hub { max-width: 1100px; margin: 0 auto; padding: clamp(24px, 6vh, 64px) 16px 32px; display: flex; flex-direction: column; gap: 36px; min-height: 100vh; }
+
+.hub-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-shadow: 0 4px 0 var(--ink), 3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 -3px 0 var(--ink), 2px 2px 0 var(--ink), -2px 2px 0 var(--ink), 2px -2px 0 var(--ink), -2px -2px 0 var(--ink);
+}
+
+.hub-header { text-align: center; }
+.hub-logo { display: inline-flex; flex-direction: column; align-items: center; transform: rotate(-4deg); }
+.hub-logo__top { font-size: clamp(36px, 7vw, 76px); line-height: 0.9; color: var(--yellow); }
+.hub-logo__bottom { font-size: clamp(52px, 11vw, 120px); line-height: 0.9; color: var(--pink); margin-top: -0.04em; }
+.hub-sub { margin: 18px 0 0; font-weight: 900; font-size: 15px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--cyan); }
+
+.hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 24px; }
+
+.hub-card {
+  display: flex; flex-direction: column;
+  border-radius: 22px; overflow: hidden;
+  background: var(--ink-soft);
+  border: 4px solid var(--white);
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.4);
+  color: inherit; text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+a.hub-card:hover, a.hub-card:focus-visible, a.hub-card:focus { transform: translateY(-6px) rotate(-1deg); box-shadow: 0 14px 0 rgba(0, 0, 0, 0.4), 0 0 0 5px var(--yellow); }
+a.hub-card:active { transform: translateY(0); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.4); }
+.hub-card.is-locked { opacity: 0.55; filter: saturate(0.5); cursor: not-allowed; }
+
+.hub-card__art {
+  position: relative; aspect-ratio: 16 / 9;
+  display: grid; place-items: center;
+  background:
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.08) 0 14px, transparent 14px 28px),
+    linear-gradient(135deg, var(--from), var(--to));
+  border-bottom: 4px solid var(--white);
+}
+.hub-card__emoji { font-size: 84px; filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.3)); transition: transform 0.2s ease; }
+a.hub-card:hover .hub-card__emoji, a.hub-card:focus .hub-card__emoji { transform: scale(1.12) rotate(-6deg); }
+.hub-card__badge { position: absolute; top: 12px; right: 12px; padding: 4px 10px; border-radius: 999px; background: var(--ink); font-weight: 900; font-size: 12px; letter-spacing: 0.15em; }
+
+.hub-card__body { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 18px; }
+.hub-card__title { margin: 0; font-size: 30px; color: var(--yellow); }
+.hub-card__tagline { margin: 0; font-weight: 700; font-size: 15px; line-height: 1.4; opacity: 0.9; }
+.hub-card__tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-tag { padding: 3px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.3); font-weight: 800; font-size: 12px; color: var(--cyan); }
+.hub-card__play { margin-top: auto; align-self: flex-end; font-size: 22px; color: var(--orange); }
+
+.hub-fullscreen {
+  position: fixed; top: 16px; right: 16px; z-index: 2;
+  font-family: var(--font-display); font-size: 17px; letter-spacing: 0.03em;
+  padding: 8px 16px; border-radius: 14px; border: 4px solid var(--ink);
+  background: var(--white); color: var(--ink); cursor: pointer; box-shadow: 0 5px 0 var(--ink);
+}
+.hub-fullscreen:hover, .hub-fullscreen:focus-visible { background: var(--yellow); }
+
+.hub-footer { margin-top: auto; text-align: center; font-weight: 800; font-size: 13px; opacity: 0.6; }
+
+@media (hover: none) { .hub-footer { display: none; } }
+@media (prefers-reduced-motion: reduce) { .hub-card, .hub-card__emoji { transition: none; } }

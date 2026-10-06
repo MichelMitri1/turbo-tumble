@@ -5,14 +5,14 @@
  *  3. while the room is racing, browser B tries the code and must get a clear "race in progress"
  *  4. quick match: B and C both press Quick match and land in the same public room
  *
- *   node tools/online-flow.mjs [url=http://localhost:5174/] [outDir=smoke-out/online-flow]
+ *   node tools/online-flow.mjs [url=http://localhost:5174/turbo-tumble/] [outDir=smoke-out/online-flow]
  */
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 
 const args = process.argv.slice(2);
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/turbo-tumble/';
 const outDir = args.find((a) => !a.startsWith('http') && !a.startsWith('--')) ?? 'smoke-out/online-flow';
 fs.mkdirSync(outDir, { recursive: true });
 const chrome = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';

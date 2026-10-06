@@ -14,8 +14,14 @@ import type { NetClient } from './NetClient';
 import { copyEntity, copyKartState, lerpKartState } from './interpolate';
 import { stepSlipstream } from '@shared/race/Slipstream';
 
-/** Other karts and items are drawn this far in the past so two snapshots always bracket them. */
-const INTERP_DELAY_TICKS = 6; // 100 ms at 60 Hz (3 snapshot intervals)
+/**
+ * Other karts and items are drawn this far in the past so two snapshots always
+ * bracket them: two and a half snapshot gaps plus the measured arrival jitter.
+ * Internet (30 Hz, jittery) lands near the old fixed 100 ms; a LAN server sending
+ * every tick gets ~45 ms.
+ */
+const INTERP_MIN_TICKS = 2;
+const INTERP_MAX_TICKS = 8;
 const SNAPSHOT_BUFFER = 40;
 const MAX_HISTORY = TICK_RATE * 10;
 const NO_INPUT = createEmptyInput();
@@ -35,6 +41,8 @@ export interface NetStats {
   correction: number;
   /** Inputs sent but not yet acknowledged. */
   unacked: number;
+  /** How far in the past other karts are drawn. */
+  interpMs: number;
   status: string;
 }
 
@@ -60,6 +68,10 @@ export class NetRaceSync {
   private snaps: RaceSnapshot[] = [];
   private latestAt = 0;
   private renderTick = -1;
+  /** Smoothed ticks between snapshots and arrival jitter (ticks). */
+  private snapGap = 2;
+  private jitter = 0.5;
+  private interpDelay = 6;
   private readonly wasPredicted: boolean[];
   private readonly offs: Array<() => void> = [];
   private readonly entityPool = new Map<number, ItemEntity>();
@@ -72,7 +84,7 @@ export class NetRaceSync {
   private statBytes = 0;
   private statCorr = 0;
   private statCorrN = 0;
-  readonly stats: NetStats = { rtt: 0, snapshotsPerSec: 0, kibPerSec: 0, correction: 0, unacked: 0, status: 'connected' };
+  readonly stats: NetStats = { rtt: 0, snapshotsPerSec: 0, kibPerSec: 0, correction: 0, unacked: 0, interpMs: 100, status: 'connected' };
 
   constructor(
     private readonly net: NetClient,
@@ -162,9 +174,17 @@ export class NetRaceSync {
     const snap = decodeSnapshot(bytes, race.pickups.boxes.length, race.pickups.coins.length);
     const prev = this.latest;
     if (prev && snap.tick <= prev.tick) return;
+    const now = performance.now();
+    if (prev) {
+      const gap = snap.tick - prev.tick;
+      const late = Math.abs((now - this.latestAt) / 1000 * TICK_RATE - gap);
+      this.snapGap += (Math.min(gap, 6) - this.snapGap) * 0.1;
+      this.jitter += (Math.min(late, 6) - this.jitter) * 0.05;
+      this.interpDelay = Math.min(INTERP_MAX_TICKS, Math.max(INTERP_MIN_TICKS, this.snapGap * 2.5 + this.jitter * 1.5));
+    }
     this.snaps.push(snap);
     if (this.snaps.length > SNAPSHOT_BUFFER) this.snaps.shift();
-    this.latestAt = performance.now();
+    this.latestAt = now;
     this.statSnaps++;
     this.statBytes += bytes.length;
 
@@ -220,7 +240,7 @@ export class NetRaceSync {
     const sinceLatest = (now - this.latestAt) / 1000;
 
     // Render clock: chase (latest tick − delay), easing out jitter; resync if far off.
-    const target = latest.tick + sinceLatest * TICK_RATE - INTERP_DELAY_TICKS;
+    const target = latest.tick + sinceLatest * TICK_RATE - this.interpDelay;
     if (this.renderTick < 0 || Math.abs(target - this.renderTick) > 30) this.renderTick = target;
     else this.renderTick += dt * TICK_RATE + (target - this.renderTick) * Math.min(1, dt * 2);
 
@@ -288,6 +308,7 @@ export class NetRaceSync {
     this.statWindow += dt;
     const s = this.stats;
     s.rtt = this.net.rtt;
+    s.interpMs = (this.interpDelay / TICK_RATE) * 1000;
     s.unacked = this.history.length;
     s.status = this.net.status;
     if (this.statWindow < 1) return;

@@ -26,8 +26,11 @@ import type { RacerSetup } from '../../../shared/src/race/RaceSimulation';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { ServerRace } from '../race/ServerRace';
 import { LobbyState, Member, Seat } from '../state/LobbyState';
+import { LAN_MODE } from '../lan';
 
 const MAX_STEPS_PER_UPDATE = 5;
+/** On a LAN bandwidth is free, so every tick goes out — remote karts can then be drawn closer to now. */
+const SNAPSHOT_EVERY = LAN_MODE ? 1 : SNAPSHOT_EVERY_TICKS;
 
 function cleanName(raw: unknown, fallback: string): string {
   const name = String(raw ?? '')
@@ -268,7 +271,7 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
     while (this.accumulator >= FIXED_DT) {
       this.accumulator -= FIXED_DT;
       race.step();
-      if (race.tick % SNAPSHOT_EVERY_TICKS === 0) this.sendSnapshots(race);
+      if (race.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots(race);
     }
     if (this.state.phase === 'racing' && race.over) this.endRace();
     if (this.state.phase === 'results') {

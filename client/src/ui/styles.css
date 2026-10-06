@@ -243,6 +243,8 @@ html, body {
 .tt-menu__start { font-size: 30px; }
 .tt-menu__start.is-focused { background: var(--tt-yellow); transform: translateY(-2px); }
 .tt-menu__help { font-weight: 800; font-size: 13px; opacity: 0.8; }
+.tt-menu__corner { position: absolute; top: max(16px, 2vh); right: max(16px, 2vw); display: flex; gap: 10px; }
+.tt-menu__corner .tt-button { padding: 8px 18px; font-size: 18px; text-decoration: none; }
 
 /* ---------- Grand Prix standings ---------- */
 .tt-gp {
@@ -344,6 +346,9 @@ html, body {
 .tt-online__status.is-error { color: #ffb0c8; }
 .tt-online__footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .tt-online__server { font-size: 12px; opacity: 0.6; font-weight: 800; }
+.tt-online__lan { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-radius: 14px; background: rgba(63,216,255,0.14); border: 3px solid var(--tt-cyan); }
+.tt-online__lan-url { font-weight: 900; font-size: 18px; color: var(--tt-white); user-select: text; -webkit-user-select: text; word-break: break-all; }
+.tt-online__lan.is-hint { background: none; border: none; padding: 0; font-size: 13px; font-weight: 700; opacity: 0.7; }
 .tt-online__room { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
 .tt-online__code { font-size: 54px; color: var(--tt-yellow); letter-spacing: 0.12em; line-height: 1; user-select: all; }
 .tt-online__members { display: flex; flex-direction: column; gap: 5px; }

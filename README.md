@@ -11,10 +11,15 @@ npm run dev          # game http://localhost:5173 (next free port if taken) + ga
 npm run dev:client   # just the game (offline modes)   · npm run dev:server — just the server
 npm run build        # type-check + production bundle (client/dist)
 npm start            # build, then ONE process on :2567 serves the game and the online rooms
+npm run lan          # same, in LAN mode for zero-lag play on your home Wi-Fi (see below)
 npm run typecheck    # shared + client + server
 ```
 
-Opening the site shows the **main menu** (over a live CPU race): pick Single Race,
+The site opens on the **arcade hub** (`/`, one card per game — registry in
+`client/src/hub/games.ts`); Turbo Tumble lives at `/turbo-tumble/`. **Fullscreen** is in the
+hub, the game menu and the pause menu, or press **F** anywhere.
+
+Opening the game shows the **main menu** (over a live CPU race): pick Single Race,
 Grand Prix, Time Trial or Online, players (1–4), racer/kart, CPU difficulty, laps and items.
 **Controls & Sound** in the menu rebinds keys/buttons, sets music / sound volume and the stick dead zone (M mutes anytime).
 
@@ -37,8 +42,12 @@ only) and CPU difficulty, then starts. Up to **8 human racers per room** (any mi
 browsers and split-screen seats) plus CPUs up to 12. After each race the room shows results
 with Grand Prix points, keeps a running points total and returns to the lobby.
 
-- **Friends on your Wi-Fi/LAN:** run `npm run dev`, they open `http://<your-ip>:5173`
-  (the game finds the server on the same host, port 2567).
+- **Same house, no lag (LAN):** on one laptop run `npm run lan`. It prints an address like
+  `http://192.168.1.20:2567/turbo-tumble/` — every laptop on the same Wi-Fi opens it (the
+  host can use `localhost`). Online then shows **LAN PLAY** with that address; Create room /
+  Quick match as usual. LAN mode sends snapshots every tick (60 Hz) and other karts are drawn
+  ~45 ms behind instead of ~100 ms; ping is ~1 ms. If macOS asks, allow `node` incoming
+  connections; guest Wi-Fi networks that isolate devices won't work.
 - **Over the internet:** deploy `npm start` on any Node host (it serves the game and the
   rooms on one port, `PORT` env to change it), or point a client at a server with
   `?server=host:port`.

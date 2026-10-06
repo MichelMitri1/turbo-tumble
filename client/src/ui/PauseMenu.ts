@@ -1,4 +1,5 @@
 import { el } from './dom';
+import { bindFullscreenButton } from './fullscreen';
 
 export interface PauseActions {
   resume(): void;
@@ -30,8 +31,10 @@ export class PauseMenu {
       }),
       button('Restart Race', () => actions.restart()),
       button('Quit to Menu', () => actions.quit()),
+      button('Fullscreen', () => undefined),
       button('Toggle Debug', () => actions.toggleDebug()),
     ];
+    bindFullscreenButton(this.buttons[4]!, ['Fullscreen', 'Exit Fullscreen']);
     this.title = el('h2', 'tt-panel__title tt-display', 'PAUSED');
     this.root = el('div', 'tt-pause', [el('div', 'tt-panel', [this.title, ...this.buttons])]);
     parent.appendChild(this.root);

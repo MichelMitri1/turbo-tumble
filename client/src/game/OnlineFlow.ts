@@ -78,6 +78,18 @@ export class OnlineFlow {
     this.screen.setStatus(players.length > 1 ? `${players.length} players on this screen will race in split-screen.` : '');
     this.screen.showConnect(code);
     this.screen.setOpen(true);
+    void this.detectLan();
+  }
+
+  /** A `npm run lan` server says so in /health — the screen then shows the address to share. */
+  private async detectLan(): Promise<void> {
+    try {
+      const res = await fetch(`${defaultServerUrl().replace(/^ws/, 'http')}/health`, { signal: AbortSignal.timeout(2500) });
+      const info = (await res.json()) as { lan?: string[] };
+      if (info.lan) this.screen.setLan(info.lan);
+    } catch {
+      /* no server yet — connect() reports that */
+    }
   }
 
   handle(nav: MenuNav, escape: boolean): void {

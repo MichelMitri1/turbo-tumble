@@ -4,7 +4,7 @@
  *   A: Start race → both drive with key events → screenshots, net stats, motion smoothness.
  * Needs `npm run dev` (client + server).
  *
- *   node tools/online-smoke.mjs [url=http://localhost:5174/] [outDir=smoke-out/online] [--lag=150] [--jitter=20] [--bots=0] [--seconds=20]
+ *   node tools/online-smoke.mjs [url=http://localhost:5174/turbo-tumble/] [outDir=smoke-out/online] [--lag=150] [--jitter=20] [--bots=0] [--seconds=20]
  *
  * --lag/--jitter apply simulated round-trip latency to browser B (client-side).
  * --drop       B's connection is cut mid-race; it must reconnect and keep racing.
@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const flag = (n, d) => args.find((a) => a.startsWith(`--${n}=`))?.split('=')[1] ?? d;
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/turbo-tumble/';
 const outDir = args.find((a) => !a.startsWith('http') && !a.startsWith('--')) ?? 'smoke-out/online';
 const lag = Number(flag('lag', '0'));
 const jitter = Number(flag('jitter', '0'));

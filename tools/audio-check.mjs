@@ -4,13 +4,13 @@
  *   - not silent (RMS), no clipping (peak), sensible length
  * Writes WAVs to <outDir> so they can be auditioned.
  *
- *   node tools/audio-check.mjs [url=http://localhost:5174/] [outDir=smoke-out/audio] [--songs=8]  (seconds of each song)
+ *   node tools/audio-check.mjs [url=http://localhost:5174/turbo-tumble/] [outDir=smoke-out/audio] [--songs=8]  (seconds of each song)
  */
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
-const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/';
+const url = args.find((a) => a.startsWith('http')) ?? 'http://localhost:5174/turbo-tumble/';
 const outDir = args.find((a) => !a.startsWith('http') && !a.startsWith('--')) ?? 'smoke-out/audio';
 const enginesOnly = args.includes('--engines-only');
 const songSeconds = Number(args.find((a) => a.startsWith('--songs='))?.split('=')[1] ?? 0);

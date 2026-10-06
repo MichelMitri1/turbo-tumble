@@ -54,6 +54,8 @@ export class OnlineScreen {
   private busy = false;
   private lobby: LobbyStateView | null = null;
   private me = '';
+  /** Set when the server is a LAN server (`npm run lan`): the page URL other laptops should open. */
+  private lanUrl: string | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -106,6 +108,20 @@ export class OnlineScreen {
     this.status.className = `tt-online__status is-${kind}`;
   }
 
+  /** The server turned out to be on the home network: switch the screen to LAN wording. */
+  setLan(addresses: string[]): void {
+    const local = /^(localhost|127\.|\[?::1)/.test(location.hostname);
+    const ip = local ? addresses[0] : location.hostname;
+    if (!ip) return;
+    this.lanUrl = `${location.protocol}//${ip}${location.port ? `:${location.port}` : ''}${location.pathname}`;
+    if (this.open && this.view === 'connect') this.showConnect(this.codeInput.value);
+    else if (this.view === 'lobby' && this.lobby) this.renderLobby();
+  }
+
+  private inviteUrl(code: string): string {
+    return `${this.lanUrl ?? location.origin + location.pathname}?room=${code}`;
+  }
+
   // ---------------------------------------------------------------- connect view
 
   showConnect(code = ''): void {
@@ -120,17 +136,21 @@ export class OnlineScreen {
     quick.addEventListener('click', () => this.run(() => this.actions.quickMatch(this.name)));
     join.addEventListener('click', () => this.doJoin());
     back.addEventListener('click', () => this.actions.back());
+    const lan = this.lanUrl;
     this.panel.replaceChildren(
-      el('h2', 'tt-gp__title tt-display', 'ONLINE'),
-      el('div', 'tt-gp__sub', 'Race friends anywhere'),
+      el('h2', 'tt-gp__title tt-display', lan ? 'LAN PLAY' : 'ONLINE'),
+      el('div', 'tt-gp__sub', lan ? 'Same Wi-Fi · near-zero lag' : 'Race friends anywhere'),
+      lan
+        ? el('div', 'tt-online__lan', [el('span', 'tt-online__label', 'Other laptops open'), el('span', 'tt-online__lan-url', lan)])
+        : el('div', 'tt-online__lan is-hint', 'Laggy? Race over your home Wi-Fi instead: run npm run lan on one laptop and open the address it prints on the others.'),
       el('label', 'tt-online__field', [el('span', 'tt-online__label', 'Your name'), this.nameInput]),
       el('div', 'tt-online__choices', [
         el('div', 'tt-online__choice', [create, el('div', 'tt-online__blurb', 'Private room — share the code')]),
-        el('div', 'tt-online__choice', [quick, el('div', 'tt-online__blurb', 'Jump into any open room')]),
+        el('div', 'tt-online__choice', [quick, el('div', 'tt-online__blurb', lan ? 'Everyone on this Wi-Fi lands in the same room' : 'Jump into any open room')]),
         el('div', 'tt-online__choice', [el('div', 'tt-online__join', [this.codeInput, join]), el('div', 'tt-online__blurb', 'Got a code? Type it here')]),
       ]),
       this.status,
-      el('div', 'tt-online__footer', [back, el('span', 'tt-online__server', `Server: ${this.serverLabel}`)]),
+      el('div', 'tt-online__footer', [back, el('span', 'tt-online__server', `${lan ? 'LAN server' : 'Server'}: ${this.serverLabel}`)]),
     );
     this.items = [{ el: this.nameInput, activate: () => this.nameInput.focus() }, { el: create, activate: () => create.click() }, { el: quick, activate: () => quick.click() }, { el: this.codeInput, activate: () => (this.codeInput.value ? this.doJoin() : this.codeInput.focus()) }, { el: join, activate: () => join.click() }, { el: back, activate: () => back.click() }];
     this.focus = this.codeInput.value ? 4 : 1;
@@ -176,7 +196,7 @@ export class OnlineScreen {
 
     const invite = el('button', 'tt-button tt-online__btn is-small', 'Copy invite link');
     invite.addEventListener('click', () => {
-      const url = `${location.origin}${location.pathname}?room=${v.code}`;
+      const url = this.inviteUrl(v.code);
       void navigator.clipboard?.writeText(url).then(
         () => this.setStatus('Invite link copied — send it to your friends!'),
         () => this.setStatus(url),
