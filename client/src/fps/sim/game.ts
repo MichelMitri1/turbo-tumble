@@ -325,15 +325,17 @@ export class Game {
     let best: SpawnPoint = pts[0]!;
     let bestScore = -Infinity;
     for (const p of pts) {
-      let near = 60;
-      let seen = false;
+      let near = 80;
+      let seen = 0;
       for (const e of enemies) {
         const d = Math.hypot(e.m.x - p.x, e.m.z - p.z);
         near = Math.min(near, d);
-        if (d < 40 && this.level.visible(e.m.x, e.m.y + 1.5, e.m.z, p.x, p.y + 1.5, p.z)) seen = true;
+        // Anyone who could see you appear (any range a rifle reaches).
+        if (d < 75 && Math.abs(e.m.y - p.y) < 12 && this.level.visible(e.m.x, e.m.y + 1.5, e.m.z, p.x, p.y + 1.5, p.z)) seen++;
       }
-      const own = this.mode !== 'ffa' && this.map.spawns[s.team].includes(p) ? 8 : 0;
-      const sc = Math.min(near, 30) + own - (seen ? 25 : 0) + this.rand() * 6;
+      const own = this.mode !== 'ffa' && this.map.spawns[s.team].includes(p) ? 14 : 0;
+      const close = near < 10 ? 45 : near < 18 ? 20 : 0;
+      const sc = Math.min(near, 40) + own - seen * 40 - close + this.rand() * 5;
       if (sc > bestScore) {
         bestScore = sc;
         best = p;

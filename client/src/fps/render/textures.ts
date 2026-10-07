@@ -45,6 +45,15 @@ export const TILE: Record<Material, number> = {
   plaster: 3,
   tile: 2,
   invisible: 1,
+  marble: 2.4,
+  carpet: 2,
+  wallpaper: 2.4,
+  darkwood: 1.6,
+  shingle: 2,
+  hedge: 2,
+  facade: 6,
+  paint: 3,
+  fabric: 1,
 };
 
 export function texture(mat: Material): THREE.Texture {
@@ -162,6 +171,153 @@ export function texture(mat: Material): THREE.Texture {
           g.fillStyle = `rgb(${s + 30},${s * 0.45},${s * 0.35})`;
           g.fillRect(x + (y % 64 ? 24 : 0), y, 46, 30);
         }
+      break;
+    }
+    case 'marble': {
+      g.fillStyle = '#e4e0d8';
+      g.fillRect(0, 0, n, n);
+      blotches(g, n, 'rgba(180,175,165,0.25)', 30, 30, 120);
+      for (let i = 0; i < 14; i++) {
+        g.strokeStyle = `rgba(110,105,100,${0.15 + Math.random() * 0.2})`;
+        g.lineWidth = 1 + Math.random() * 1.5;
+        g.beginPath();
+        let x = Math.random() * n;
+        let y = 0;
+        g.moveTo(x, y);
+        while (y < n) {
+          x += (Math.random() - 0.5) * 60;
+          y += 20 + Math.random() * 40;
+          g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+      // Floor tiles.
+      g.strokeStyle = 'rgba(90,85,80,0.35)';
+      g.lineWidth = 2;
+      g.strokeRect(1, 1, n / 2 - 2, n / 2 - 2);
+      g.strokeRect(n / 2 + 1, n / 2 + 1, n / 2 - 2, n / 2 - 2);
+      g.strokeRect(n / 2 + 1, 1, n / 2 - 2, n / 2 - 2);
+      g.strokeRect(1, n / 2 + 1, n / 2 - 2, n / 2 - 2);
+      break;
+    }
+    case 'carpet': {
+      g.fillStyle = '#d8d0c4';
+      g.fillRect(0, 0, n, n);
+      noise(g, n, 90000, 0.08, 2);
+      g.strokeStyle = 'rgba(255,240,200,0.35)';
+      g.lineWidth = 6;
+      g.strokeRect(24, 24, n - 48, n - 48);
+      g.strokeStyle = 'rgba(60,40,30,0.25)';
+      g.lineWidth = 3;
+      for (let i = 0; i < 4; i++) {
+        g.beginPath();
+        g.arc(n / 2, n / 2, 40 + i * 50, 0, Math.PI * 2);
+        g.stroke();
+      }
+      break;
+    }
+    case 'wallpaper': {
+      g.fillStyle = '#e2d8c4';
+      g.fillRect(0, 0, n, n);
+      // Vertical stripes and a damask diamond.
+      for (let x = 0; x < n; x += 64) {
+        g.fillStyle = 'rgba(120,100,70,0.12)';
+        g.fillRect(x, 0, 20, n);
+      }
+      g.fillStyle = 'rgba(140,110,70,0.16)';
+      for (let y = 0; y < n; y += 128)
+        for (let x = 0; x < n; x += 128) {
+          g.beginPath();
+          g.moveTo(x + 64, y + 24);
+          g.lineTo(x + 96, y + 64);
+          g.lineTo(x + 64, y + 104);
+          g.lineTo(x + 32, y + 64);
+          g.fill();
+        }
+      noise(g, n, 20000, 0.04);
+      break;
+    }
+    case 'darkwood': {
+      g.fillStyle = '#4a2e1c';
+      g.fillRect(0, 0, n, n);
+      for (let y = 0; y < n; y += n / 8) {
+        g.fillStyle = `rgba(${Math.random() < 0.5 ? '255,200,150' : '20,8,0'},0.1)`;
+        g.fillRect(0, y, n, n / 8);
+        g.fillStyle = 'rgba(15,6,0,0.6)';
+        g.fillRect(0, y, n, 2);
+      }
+      for (let i = 0; i < 400; i++) {
+        g.strokeStyle = `rgba(20,8,0,${Math.random() * 0.2})`;
+        g.beginPath();
+        const y = Math.random() * n;
+        g.moveTo(0, y);
+        g.bezierCurveTo(n / 3, y + 4, (2 * n) / 3, y - 4, n, y);
+        g.stroke();
+      }
+      break;
+    }
+    case 'shingle': {
+      g.fillStyle = '#8a8a8e';
+      g.fillRect(0, 0, n, n);
+      for (let y = 0; y < n; y += 32)
+        for (let x = -32; x < n; x += 48) {
+          const v = 150 + Math.random() * 60;
+          g.fillStyle = `rgb(${v},${v},${v + 4})`;
+          g.fillRect(x + (y % 64 ? 24 : 0), y, 46, 30);
+          g.fillStyle = 'rgba(0,0,0,0.3)';
+          g.fillRect(x + (y % 64 ? 24 : 0), y + 26, 46, 4);
+        }
+      break;
+    }
+    case 'hedge': {
+      g.fillStyle = '#2f4a22';
+      g.fillRect(0, 0, n, n);
+      for (let i = 0; i < 2600; i++) {
+        const v = 40 + Math.random() * 60;
+        g.fillStyle = `rgba(${v * 0.6},${v + 25},${v * 0.35},0.8)`;
+        g.beginPath();
+        g.arc(Math.random() * n, Math.random() * n, 3 + Math.random() * 6, 0, Math.PI * 2);
+        g.fill();
+      }
+      break;
+    }
+    case 'facade': {
+      // Office / apartment windows: one 6 m tile = 2 floors × 2 bays.
+      g.fillStyle = '#8a8680';
+      g.fillRect(0, 0, n, n);
+      noise(g, n, 20000, 0.05);
+      for (let fy = 0; fy < 2; fy++)
+        for (let bx = 0; bx < 2; bx++) {
+          const x = bx * 256 + 40;
+          const y = fy * 256 + 50;
+          const lit = Math.random() < 0.25;
+          const grd = g.createLinearGradient(x, y, x + 176, y + 150);
+          grd.addColorStop(0, lit ? '#e8d8a0' : '#4c6a80');
+          grd.addColorStop(1, lit ? '#b89a60' : '#1c2a36');
+          g.fillStyle = grd;
+          g.fillRect(x, y, 176, 150);
+          g.fillStyle = 'rgba(30,30,30,0.8)';
+          g.fillRect(x + 86, y, 4, 150);
+          g.fillRect(x - 6, y + 150, 188, 8);
+        }
+      break;
+    }
+    case 'paint': {
+      g.fillStyle = '#ece8e0';
+      g.fillRect(0, 0, n, n);
+      blotches(g, n, 'rgba(160,150,140,0.12)', 30, 20, 100);
+      noise(g, n, 20000, 0.04);
+      break;
+    }
+    case 'fabric': {
+      g.fillStyle = '#ddd6cc';
+      g.fillRect(0, 0, n, n);
+      for (let i = 0; i < n; i += 4) {
+        g.fillStyle = 'rgba(0,0,0,0.06)';
+        g.fillRect(i, 0, 2, n);
+        g.fillRect(0, i, n, 2);
+      }
+      noise(g, n, 20000, 0.05);
       break;
     }
     default:

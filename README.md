@@ -420,8 +420,8 @@ maps and UI). 18 weapons across AR / SMG / LMG / shotgun / marksman / sniper / p
 damage falloff, headshot multipliers, recoil and ADS; attachments (optics, suppressor, grip,
 laser, extended mag); 6 perks; 5 editable create-a-class slots; camo progression per gun
 (Woodland → Gold → Platinum → Diamond → Dark Matter, unlocked by kills). Modes: Team
-Deathmatch, Free-for-All, Domination, Kill Confirmed on three maps (Freight, Cul-de-sac,
-Outpost). Killstreaks: UAV (3), Airstrike (5), Attack Heli (7). Frag grenades with cooking,
+Deathmatch, Free-for-All, Domination, Kill Confirmed on six maps (Atomic Row, Freight, Cul-de-Sac, Downtown, Ravenmoor Manor, Outpost), each surrounded by scenery past the border (`render/backdrop.ts`); maps are built from boxes + props in `sim/maps/*.ts` with the kit in `sim/mapkit.ts`.
+Killstreaks: UAV (3), Airstrike (5), Attack Heli (7). Frag grenades with cooking,
 melee, slide, health regen, medals, spawn logic, bots in four skills on a layered nav grid.
 Shared sim in `client/src/fps/sim/` runs authoritative on the server at 60 Hz
 (`server/src/rooms/FpsRoom.ts`) with client prediction + reconciliation, lag-compensated hits

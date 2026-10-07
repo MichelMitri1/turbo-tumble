@@ -4,12 +4,13 @@ import type { Box, Material } from '../sim/level';
 import type { MapDef } from '../sim/maps';
 import { TILE, texture } from './textures';
 import { cloneModel } from './assets';
+import { backdrop } from './backdrop';
 
 const SKY: Record<MapDef['theme']['sky'], { top: string; mid: string; bottom: string; sun: string; sunI: number; hemi: number; exposure: number }> = {
-  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff4e0', sunI: 2.6, hemi: 1.0, exposure: 1.0 },
-  dusk: { top: '#2a3b6a', mid: '#d88a58', bottom: '#f2c48a', sun: '#ffc890', sunI: 2.4, hemi: 0.8, exposure: 1.05 },
-  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#e8eef4', sunI: 1.4, hemi: 1.25, exposure: 1.0 },
-  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.6, hemi: 0.45, exposure: 1.2 },
+  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff4e0', sunI: 2.3, hemi: 2.3, exposure: 1.0 },
+  dusk: { top: '#2a3b6a', mid: '#d88a58', bottom: '#f2c48a', sun: '#ffc890', sunI: 2.1, hemi: 1.9, exposure: 1.05 },
+  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#e8eef4', sunI: 1.2, hemi: 2.6, exposure: 1.0 },
+  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.6, hemi: 0.9, exposure: 1.2 },
 };
 
 /** Geometry for one box with UVs in world metres (so textures tile at a fixed scale). */
@@ -70,7 +71,8 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   scene.fog = new THREE.Fog(map.theme.fog[0], map.theme.fog[1], map.theme.fog[2]);
   scene.background = new THREE.Color(sky.bottom);
   // Lights.
-  group.add(new THREE.HemisphereLight(sky.mid, '#4a4036', sky.hemi));
+  // Strong sky fill so shade and interiors stay readable (bounce light).
+  group.add(new THREE.HemisphereLight(sky.mid, '#7a6e5c', sky.hemi));
   const sun = new THREE.DirectionalLight(sky.sun, sky.sunI);
   const sd = new THREE.Vector3(...map.theme.sun).normalize();
   sun.position.copy(sd.multiplyScalar(80));
@@ -84,9 +86,9 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   // Ground.
   const ground = texture(map.theme.ground);
   const gt = ground.clone();
-  gt.repeat.set(400 / TILE[map.theme.ground], 400 / TILE[map.theme.ground]);
+  gt.repeat.set(1400 / TILE[map.theme.ground], 1400 / TILE[map.theme.ground]);
   gt.needsUpdate = true;
-  const gm = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ map: gt, roughness: 0.95 }));
+  const gm = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ map: gt, roughness: 0.95 }));
   gm.rotation.x = -Math.PI / 2;
   gm.receiveShadow = true;
   group.add(gm);
@@ -100,19 +102,53 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     p.receiveShadow = true;
     group.add(p);
   });
-  // Boxes, merged per material.
-  const byMat = new Map<Material, THREE.BufferGeometry[]>();
-  for (const b of map.boxes) {
+  // Boxes (map + decor + the scenery outside the border), merged per material and tint.
+  const scenery = backdrop(map);
+  const byMat = new Map<string, { mat: Material; tint?: string; geos: THREE.BufferGeometry[] }>();
+  for (const b of [...map.boxes, ...map.decor, ...scenery.boxes]) {
     if (b.hidden || b.mat === 'invisible') continue;
-    let l = byMat.get(b.mat);
-    if (!l) byMat.set(b.mat, (l = []));
-    l.push(boxGeometry(b, TILE[b.mat]));
+    const key = `${b.mat}|${b.tint ?? ''}`;
+    let l = byMat.get(key);
+    if (!l) byMat.set(key, (l = { mat: b.mat, tint: b.tint, geos: [] }));
+    l.geos.push(boxGeometry(b, TILE[b.mat]));
   }
-  for (const [mat, geos] of byMat) {
+  const ROUGH: Partial<Record<Material, number>> = { metal: 0.6, marble: 0.3, glass: 0.15, darkwood: 0.6, paint: 0.7 };
+  for (const { mat, tint, geos } of byMat.values()) {
     const geo = mergeGeometries(geos);
-    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: texture(mat), roughness: mat === 'metal' ? 0.6 : 0.9, metalness: mat === 'metal' ? 0.3 : 0 }));
+    const m = new THREE.Mesh(
+      geo,
+      new THREE.MeshStandardMaterial({ map: texture(mat), color: tint ? new THREE.Color(tint) : 0xffffff, roughness: ROUGH[mat] ?? 0.9, metalness: mat === 'metal' ? 0.08 : mat === 'glass' ? 0.2 : 0 }),
+    );
     m.castShadow = true;
     m.receiveShadow = true;
+    group.add(m);
+  }
+  for (const p of scenery.props) {
+    const o = cloneModel(p.model, p.tint, 0.35);
+    o.position.set(p.x, p.y, p.z);
+    o.rotation.y = (p.rot * Math.PI) / 2;
+    o.scale.set(p.sx, p.sy, p.sz);
+    o.traverse((n) => (n.castShadow = false));
+    group.add(o);
+  }
+  // Rolling hills and mountains on the horizon.
+  const mound = new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2);
+  const peak = new THREE.ConeGeometry(1, 1, 7, 1);
+  peak.translate(0, 0.5, 0);
+  const landMat = new Map<string, THREE.MeshStandardMaterial>();
+  const land = (c: string) => landMat.get(c) ?? (landMat.set(c, new THREE.MeshStandardMaterial({ color: c, roughness: 1, flatShading: true })), landMat.get(c)!);
+  for (const [x, z, rad, h, c] of scenery.hills) {
+    const m = new THREE.Mesh(mound, land(c));
+    m.position.set(x, -0.05, z);
+    m.scale.set(rad, h, rad * 0.8);
+    m.receiveShadow = true;
+    group.add(m);
+  }
+  for (const [x, z, rad, h, c] of scenery.peaks) {
+    const m = new THREE.Mesh(peak, land(c));
+    m.position.set(x, -1, z);
+    m.scale.set(rad, h, rad);
+    m.rotation.y = x * 0.13;
     group.add(m);
   }
   // Props.
