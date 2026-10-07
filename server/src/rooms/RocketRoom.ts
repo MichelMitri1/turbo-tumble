@@ -2,7 +2,7 @@ import { Room, ServerError, type Client } from '@colyseus/core';
 import { World, type PlayerInfo, type WorldEvent } from '../../../client/src/rocket/sim/world';
 import { Bots, BOT_NAMES } from '../../../client/src/rocket/sim/bot';
 import { NO_CONTROLS, type Controls } from '../../../client/src/rocket/sim/car';
-import { TICK } from '../../../client/src/rocket/sim/constants';
+import { CAR_IDS, TICK } from '../../../client/src/rocket/sim/constants';
 import { unpackControls, writeSnapshot } from '../../../client/src/rocket/sim/snapshot';
 import { RB_MAX_PER_TEAM, RB_VERSION, RbMsg, type RbBegin, type RbConfig, type RbInput, type RbJoin, type RbLobby, type RbLobbyPlayer } from '../../../client/src/rocket/net/protocol';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
@@ -16,7 +16,7 @@ interface Member {
   connected: boolean;
 }
 
-const BODIES = new Set(['octane', 'dominus', 'breakout']);
+const BODIES = new Set<string>(CAR_IDS);
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Player';
 const SERVER_EVENTS = new Set<WorldEvent['k']>(['goal', 'demo', 'over', 'overtime', 'kickoff']);
 
@@ -106,7 +106,7 @@ export class RocketRoom extends Room {
     const t0 = [...this.members.values()].filter((m) => m.team === 0).length;
     const t1 = this.members.size - t0;
     const team: 0 | 1 = t0 <= t1 ? 0 : 1;
-    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, body: BODIES.has(o?.body) ? o.body : 'octane', connected: true });
+    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, body: o?.body && BODIES.has(o.body) ? o.body : 'octane', connected: true });
     if (!this.hostId) this.hostId = client.sessionId;
     this.balance();
     this.sendLobby();
@@ -169,7 +169,7 @@ export class RocketRoom extends Room {
     if (this.config.bots) {
       for (const team of [0, 1] as const) {
         const have = players.filter((p) => p.team === team).length;
-        for (let i = have; i < this.config.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: (['octane', 'dominus', 'breakout'] as const)[Math.floor(Math.random() * 3)]! });
+        for (let i = have; i < this.config.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: CAR_IDS[Math.floor(Math.random() * CAR_IDS.length)]! });
       }
     }
     this.world = new World(players, this.config.length, (Math.random() * 1e9) | 0);

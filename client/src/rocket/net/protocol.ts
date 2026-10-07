@@ -1,10 +1,10 @@
 import type { BotLevel } from '../sim/bot';
-import type { CarBody } from '../sim/constants';
+import type { CarId } from '../sim/constants';
 import type { PlayerInfo, Stats, WorldEvent } from '../sim/world';
 
 /** Boostball online protocol (browser ↔ server). */
 export const RB_ROOM = 'boostball';
-export const RB_VERSION = 1;
+export const RB_VERSION = 2;
 export const RB_MAX_PER_TEAM = 3;
 
 export const RbMsg = {
@@ -37,7 +37,7 @@ export interface RbLobbyPlayer {
   id: string;
   name: string;
   team: 0 | 1;
-  body: CarBody['id'];
+  body: CarId;
   bot: boolean;
   connected: boolean;
 }
@@ -75,7 +75,7 @@ export interface RbChat {
 export interface RbJoin {
   version: number;
   name: string;
-  body: CarBody['id'];
+  body: CarId;
   visibility?: 'private' | 'public';
 }
 

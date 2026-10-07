@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { arenaNormal, arenaRaycast } from './arena';
 import * as C from './constants';
+import { DEFAULT_RULES, type Rules } from './rules';
 
 /** Per-tick inputs, Rocket League style (all analog values in −1..1). */
 export interface Controls {
@@ -73,6 +74,8 @@ export class Car {
   lastJump = false;
   /** Controls used this tick (renderer reads steer / boost / handbrake). */
   readonly controls: Controls = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false };
+  /** Match rules (gravity, jump, boost, air control…). */
+  rules: Readonly<Rules> = DEFAULT_RULES;
   readonly invInertia: Vector3;
   readonly halfExtents: Vector3;
   readonly hitboxOffset: Vector3;
@@ -117,7 +120,7 @@ export class Car {
   }
 
   /** Place the car at rest (kickoff / respawn). */
-  place(x: number, y: number, yaw: number, boost = C.BOOST_SPAWN): void {
+  place(x: number, y: number, yaw: number, boost = this.rules.boostMode === 'unlimited' ? C.BOOST_MAX : this.rules.boostMode === 'none' ? 0 : C.BOOST_SPAWN): void {
     this.pos.set(x, y, C.CAR_REST_Z);
     this.vel.set(0, 0, 0);
     this.angVel.set(0, 0, 0);
@@ -152,7 +155,8 @@ export class Car {
 
   // ---------------------------------------------------------------------- wheels
 
-  private updateWheels(): void {
+  /** Raycast the wheels (also used by replays, which only restore snapshots). */
+  updateWheels(): void {
     const dir = this.t1.copy(this.up).negate();
     let n = 0;
     const normalSum = this.t3.set(0, 0, 0);
@@ -197,7 +201,7 @@ export class Car {
     this.updateBoost(dt, ctl);
 
     // Gravity, speed limits, supersonic.
-    this.vel.z += C.GRAVITY * dt;
+    this.vel.z += C.GRAVITY * this.rules.gravity * dt;
     if (this.vel.lengthSq() > C.CAR_MAX_SPEED * C.CAR_MAX_SPEED) this.vel.setLength(C.CAR_MAX_SPEED);
     if (this.angVel.lengthSq() > C.CAR_MAX_ANG * C.CAR_MAX_ANG) this.angVel.setLength(C.CAR_MAX_ANG);
     const sp = this.speed;
@@ -330,11 +334,12 @@ export class Car {
       const dP = w.dot(right) * C.AIR_DAMPING.pitch * (1 - Math.abs(p));
       const dY = -w.dot(this.up) * C.AIR_DAMPING.yaw * (1 - Math.abs(ctl.yaw));
       const dR = w.dot(this.forward) * C.AIR_DAMPING.roll;
+      const k = this.rules.airControl;
       const acc = this.t2
         .copy(right)
-        .multiplyScalar(p * C.AIR_TORQUE.pitch - dP)
-        .addScaledVector(this.up, -(ctl.yaw * C.AIR_TORQUE.yaw - dY))
-        .addScaledVector(this.forward, ctl.roll * C.AIR_TORQUE.roll - dR);
+        .multiplyScalar(p * C.AIR_TORQUE.pitch * k - dP)
+        .addScaledVector(this.up, -(ctl.yaw * C.AIR_TORQUE.yaw * k - dY))
+        .addScaledVector(this.forward, ctl.roll * C.AIR_TORQUE.roll * k - dR);
       w.addScaledVector(acc, C.TORQUE_SCALE * dt);
     }
     if (ctl.throttle) this.vel.addScaledVector(this.forward, ctl.throttle * C.THROTTLE_AIR_ACCEL * dt);
@@ -352,11 +357,11 @@ export class Car {
     } else if (this.onGround && pressed) {
       this.isJumping = true;
       this.jumpTime = 0;
-      this.vel.addScaledVector(this.up, C.JUMP_IMPULSE);
+      this.vel.addScaledVector(this.up, C.JUMP_IMPULSE * this.rules.jumpHeight);
     }
     if (this.isJumping) {
       this.hasJumped = true;
-      this.vel.addScaledVector(this.up, C.JUMP_ACCEL * (this.jumpTime < C.JUMP_MIN_TIME ? 0.62 : 1) * dt);
+      this.vel.addScaledVector(this.up, C.JUMP_ACCEL * this.rules.jumpHeight * (this.jumpTime < C.JUMP_MIN_TIME ? 0.62 : 1) * dt);
     }
     if (this.isJumping || this.hasJumped) this.jumpTime += dt;
   }
@@ -408,7 +413,7 @@ export class Car {
         const mag = Math.abs(ctl.yaw) + Math.abs(ctl.pitch) + Math.abs(ctl.roll);
         if (mag >= C.DODGE_DEADZONE) this.startFlip(ctl, fwdSpeed);
         else {
-          this.vel.addScaledVector(this.up, C.JUMP_IMPULSE);
+          this.vel.addScaledVector(this.up, C.JUMP_IMPULSE * this.rules.jumpHeight);
           this.hasDoubleJumped = true;
         }
       }
@@ -460,8 +465,9 @@ export class Car {
     } else this.isBoosting = false;
     this.boostingTime = this.isBoosting ? this.boostingTime + dt : 0;
     if (this.isBoosting) {
-      this.boost = Math.max(0, this.boost - C.BOOST_PER_SECOND * dt);
-      this.vel.addScaledVector(this.forward, (this.onGround ? C.BOOST_ACCEL_GROUND : C.BOOST_ACCEL_AIR) * dt);
+      if (this.rules.boostMode === 'unlimited') this.boost = C.BOOST_MAX;
+      else this.boost = Math.max(0, this.boost - C.BOOST_PER_SECOND * dt);
+      this.vel.addScaledVector(this.forward, (this.onGround ? C.BOOST_ACCEL_GROUND : C.BOOST_ACCEL_AIR) * this.rules.boostStrength * dt);
     }
   }
 

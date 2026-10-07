@@ -7,6 +7,7 @@ import { World, type PlayerInfo } from '../client/src/rocket/sim/world';
 import { Bots, type BotLevel } from '../client/src/rocket/sim/bot';
 import { arenaDistance } from '../client/src/rocket/sim/arena';
 import type { Controls } from '../client/src/rocket/sim/car';
+import { CAR_IDS } from '../client/src/rocket/sim/constants';
 const args = process.argv.slice(2);
 const flag = (k: string, d: string) => args.find((a) => a.startsWith(`--${k}=`))?.split('=')[1] ?? d;
 const matches = Number(args.find((a) => !a.startsWith('--')) ?? 4);
@@ -17,7 +18,7 @@ let totalGoals = 0, escapes = 0, nans = 0, touches = 0, demos = 0, flips = 0, ti
 const t0 = performance.now();
 for (let m = 0; m < matches; m++) {
   const players: PlayerInfo[] = [];
-  for (let i = 0; i < size * 2; i++) players.push({ id: i + 1, name: `Bot${i}`, team: (i % 2) as 0 | 1, bot: true, body: (['octane', 'dominus', 'breakout'] as const)[i % 3] });
+  for (let i = 0; i < size * 2; i++) players.push({ id: i + 1, name: `Bot${i}`, team: (i % 2) as 0 | 1, bot: true, body: CAR_IDS[(m * 4 + i) % CAR_IDS.length]! });
   const w = new World(players, length, 100 + m);
   const bots = new Bots(w, level);
   const inputs = new Map<number, Controls>();

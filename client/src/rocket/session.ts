@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { World, type PlayerInfo, type WorldEvent } from './sim/world';
 import { Bots, BOT_NAMES, type BotLevel } from './sim/bot';
 import { NO_CONTROLS, type Controls } from './sim/car';
-import { TICK } from './sim/constants';
+import { CAR_IDS, TICK } from './sim/constants';
+import type { Rules } from './sim/rules';
 import { packControls, readSnapshot, snapshotControls } from './sim/snapshot';
 import type { Pose } from './render/scene';
 import { toThree } from './render/arenaMesh';
@@ -10,6 +11,7 @@ import { toThreeQuat } from './render/entities';
 import type { RbBegin } from './net/protocol';
 import type { RocketNet } from './net/online';
 import type { CarView } from './render/entities';
+import { ReplayRecorder } from './replay';
 
 /** What the game screen drives: a local match vs bots, or an online match. */
 export interface Session {
@@ -21,12 +23,14 @@ export interface Session {
   /** Interpolation factor between prev and current tick. */
   alpha: number;
   paused: boolean;
+  /** Recent ticks, for goal replays. */
+  readonly recorder: ReplayRecorder;
   /** Advance by real time with the local player's controls; returns events to show. */
   update(dt: number, controls: Controls): WorldEvent[];
   dispose(): void;
 }
 
-function savePrev(world: World, prev: Map<number, Pose>, prevBall: THREE.Vector3): void {
+export function savePrev(world: World, prev: Map<number, Pose>, prevBall: THREE.Vector3): void {
   for (const c of world.cars) {
     let p = prev.get(c.id);
     if (!p) prev.set(c.id, (p = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }));
@@ -47,6 +51,8 @@ export interface LocalOptions {
   freePlay?: boolean;
   /** No human: bots on both teams (menu background). */
   spectate?: boolean;
+  /** Mutators (the object is shared, so edits apply mid-match). */
+  rules?: Readonly<Rules>;
 }
 
 export class LocalSession implements Session {
@@ -57,24 +63,24 @@ export class LocalSession implements Session {
   readonly prevBall = new THREE.Vector3();
   alpha = 0;
   paused = false;
+  readonly recorder = new ReplayRecorder();
   private readonly bots: Bots;
   private acc = 0;
   private readonly inputs = new Map<number, Controls>();
 
   constructor(o: LocalOptions) {
     const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-    const bodies: Array<PlayerInfo['body']> = ['octane', 'dominus', 'breakout'];
     const players: PlayerInfo[] = [];
     let id = 1;
     if (!o.spectate) players.push({ id: id++, name: o.name, team: o.team, bot: false, body: o.body });
     if (!o.freePlay) {
       for (const team of [0, 1] as const) {
         const have = players.filter((p) => p.team === team).length;
-        for (let i = have; i < o.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: bodies[Math.floor(Math.random() * 3)]! });
+        for (let i = have; i < o.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: CAR_IDS[Math.floor(Math.random() * CAR_IDS.length)]! });
       }
     }
     this.myId = o.spectate ? -1 : 1;
-    this.world = new World(players, o.length, (Math.random() * 1e9) | 0, !!o.freePlay);
+    this.world = new World(players, o.length, (Math.random() * 1e9) | 0, !!o.freePlay, o.rules);
     this.bots = new Bots(this.world, o.level);
     savePrev(this.world, this.prev, this.prevBall);
   }
@@ -82,7 +88,7 @@ export class LocalSession implements Session {
   update(dt: number, controls: Controls): WorldEvent[] {
     const events: WorldEvent[] = [];
     if (this.paused) return events;
-    this.acc = Math.min(this.acc + dt, 0.25);
+    this.acc = Math.min(this.acc + dt * Math.max(0.1, this.world.rules.gameSpeed), 0.25);
     while (this.acc >= TICK) {
       this.acc -= TICK;
       savePrev(this.world, this.prev, this.prevBall);
@@ -90,6 +96,7 @@ export class LocalSession implements Session {
       this.bots.update(TICK, this.inputs);
       if (this.myId > 0) this.inputs.set(this.myId, controls);
       this.world.step(this.inputs);
+      this.recorder.record(this.world, this.world.events);
       events.push(...this.world.events.splice(0));
     }
     this.alpha = this.acc / TICK;
@@ -118,6 +125,7 @@ export class OnlineSession implements Session {
   readonly prevBall = new THREE.Vector3();
   alpha = 0;
   paused = false;
+  readonly recorder = new ReplayRecorder();
   private acc = 0;
   private readonly history = new Map<number, Controls>();
   private readonly known = new Map<number, Controls>();
@@ -183,7 +191,9 @@ export class OnlineSession implements Session {
     for (const car of this.world.cars) this.inputs.set(car.id, this.known.get(car.id) ?? NO_CONTROLS);
     if (this.myId > 0) this.inputs.set(this.myId, mine);
     savePrev(this.world, this.prev, this.prevBall);
+    const n0 = this.world.events.length;
     this.world.step(this.inputs);
+    this.recorder.record(this.world, this.world.events.slice(n0));
   }
 
   private applySnapshot(): void {

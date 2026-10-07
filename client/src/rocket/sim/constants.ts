@@ -104,22 +104,48 @@ export const BUMP_GROUND_CURVE = [[0, 5 / 6], [1400, 1100], [2200, 1530]] as con
 export const BUMP_AIR_CURVE = [[0, 5 / 6], [1400, 1390], [2200, 1945]] as const;
 export const BUMP_UP_CURVE = [[0, 2 / 6], [1400, 278], [2200, 417]] as const;
 
-/** Car bodies: hitbox (size, offset) and wheels, from RocketSim's CarConfig. */
+/** Hitbox families: hitbox (size, offset) and wheels, from RocketSim's CarConfig. */
 export interface CarBody {
-  id: 'octane' | 'dominus' | 'breakout';
+  id: 'octane' | 'dominus' | 'plank' | 'breakout' | 'hybrid' | 'merc';
   name: string;
   hitbox: [number, number, number];
   offset: [number, number, number];
   front: { radius: number; rest: number; offset: [number, number, number] };
   back: { radius: number; rest: number; offset: [number, number, number] };
-  model: string;
 }
 
 export const BODIES: Record<CarBody['id'], CarBody> = {
-  octane: { id: 'octane', name: 'Octane', hitbox: [120.507, 86.6994, 38.6591], offset: [13.8757, 0, 20.755], front: { radius: 12.5, rest: 38.755, offset: [51.25, 25.9, 20.755] }, back: { radius: 15, rest: 37.055, offset: [-33.75, 29.5, 20.755] }, model: 'hatchback-sports' },
-  dominus: { id: 'dominus', name: 'Dominus', hitbox: [130.427, 85.7799, 33.8], offset: [9, 0, 15.75], front: { radius: 12, rest: 33.95, offset: [50.3, 31.1, 15.75] }, back: { radius: 13.5, rest: 33.85, offset: [-34.75, 33, 15.75] }, model: 'sedan-sports' },
-  breakout: { id: 'breakout', name: 'Breakout', hitbox: [133.992, 83.021, 32.8], offset: [12.5, 0, 11.75], front: { radius: 13.5, rest: 29.7, offset: [51.5, 26.67, 11.75] }, back: { radius: 15, rest: 29.666, offset: [-35.75, 35, 11.75] }, model: 'race-future' },
+  octane: { id: 'octane', name: 'Octane', hitbox: [120.507, 86.6994, 38.6591], offset: [13.8757, 0, 20.755], front: { radius: 12.5, rest: 38.755, offset: [51.25, 25.9, 20.755] }, back: { radius: 15, rest: 37.055, offset: [-33.75, 29.5, 20.755] } },
+  dominus: { id: 'dominus', name: 'Dominus', hitbox: [130.427, 85.7799, 33.8], offset: [9, 0, 15.75], front: { radius: 12, rest: 33.95, offset: [50.3, 31.1, 15.75] }, back: { radius: 13.5, rest: 33.85, offset: [-34.75, 33, 15.75] } },
+  plank: { id: 'plank', name: 'Plank', hitbox: [131.32, 87.1704, 31.8944], offset: [9.00857, 0, 12.0942], front: { radius: 12.5, rest: 31.9395, offset: [49.97, 27.8, 10.08] }, back: { radius: 17, rest: 27.3995, offset: [-35.43, 20.28, 10.08] } },
+  breakout: { id: 'breakout', name: 'Breakout', hitbox: [133.992, 83.021, 32.8], offset: [12.5, 0, 11.75], front: { radius: 13.5, rest: 29.7, offset: [51.5, 26.67, 11.75] }, back: { radius: 15, rest: 29.666, offset: [-35.75, 35, 11.75] } },
+  hybrid: { id: 'hybrid', name: 'Hybrid', hitbox: [129.519, 84.6879, 36.6591], offset: [13.8757, 0, 20.755], front: { radius: 12.5, rest: 38.755, offset: [51.25, 25.9, 20.755] }, back: { radius: 15, rest: 37.055, offset: [-34, 29.5, 20.755] } },
+  merc: { id: 'merc', name: 'Merc', hitbox: [123.22, 79.2103, 44.1591], offset: [11.3757, 0, 21.505], front: { radius: 15, rest: 39.505, offset: [51.25, 25.9, 21.505] }, back: { radius: 15, rest: 39.105, offset: [-33.75, 29.5, 21.505] } },
 };
+
+/** Selectable cars: each uses one of the six hitbox families (like the real game). */
+export interface CarInfo {
+  name: string;
+  desc: string;
+  hitbox: CarBody['id'];
+  model: string;
+}
+export const CARS = {
+  octane: { name: 'Vortex', desc: 'Tall all-rounder. Great for 50/50s and flicks.', hitbox: 'octane', model: 'hatchback-sports' },
+  dominus: { name: 'Phantom', desc: 'Long, flat body. Powerful shots and dribbles.', hitbox: 'dominus', model: 'sedan-sports' },
+  breakout: { name: 'Razor', desc: 'Longest, sharpest nose. Pinches and air dribbles.', hitbox: 'breakout', model: 'race-future' },
+  stinger: { name: 'Stinger', desc: 'Wide and ultra-low. Huge reach on the ground.', hitbox: 'plank', model: 'race' },
+  venom: { name: 'Venom', desc: 'Between tall and flat. Forgiving in the air.', hitbox: 'hybrid', model: 'sedan' },
+  patrol: { name: 'Interceptor', desc: 'Pursuit cruiser on the all-rounder frame.', hitbox: 'octane', model: 'police' },
+  regent: { name: 'Regent', desc: 'Luxury cruiser with an all-rounder frame.', hitbox: 'octane', model: 'suv-luxury' },
+  cabbie: { name: 'Cabbie', desc: 'City runner on the hybrid frame.', hitbox: 'hybrid', model: 'taxi' },
+  outback: { name: 'Outback', desc: 'Tallest frame. A wall for saves and bumps.', hitbox: 'merc', model: 'suv' },
+  brute: { name: 'Brute', desc: 'Boxy bruiser. Blocks everything.', hitbox: 'merc', model: 'van' },
+} as const satisfies Record<string, CarInfo>;
+export type CarId = keyof typeof CARS;
+export const CAR_IDS = Object.keys(CARS) as CarId[];
+export const carInfo = (id: string): CarInfo => (CARS as Record<string, CarInfo>)[id] ?? CARS.octane;
+export const carBody = (id: string): CarBody => BODIES[carInfo(id).hitbox];
 
 export const CAR_REST_Z = 17;
 
@@ -131,8 +157,9 @@ export const BOOST_PADS: Array<{ x: number; y: number; big: boolean }> = [
   ].map(([x, y]) => ({ x: x!, y: y!, big: false })),
   ...[[-3584, 0], [3584, 0], [-3072, 4096], [3072, 4096], [-3072, -4096], [3072, -4096]].map(([x, y]) => ({ x: x!, y: y!, big: true })),
 ];
-export const PAD_RADIUS_SMALL = 144;
-export const PAD_RADIUS_BIG = 208;
+/** Pickup radii (smaller than RocketSim's 144 / 208 to match the smaller pads). */
+export const PAD_RADIUS_SMALL = 110;
+export const PAD_RADIUS_BIG = 160;
 export const PAD_HEIGHT = 165;
 export const PAD_COOLDOWN_SMALL = 4;
 export const PAD_COOLDOWN_BIG = 10;

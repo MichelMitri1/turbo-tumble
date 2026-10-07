@@ -41,7 +41,7 @@ document.getElementById('hub')!.append(
     el('p', 'hub-sub', ['Pick a game']),
   ]),
   el('main', '', [grid]),
-  el('footer', 'hub-footer', ['← → choose · Enter play · F fullscreen']),
+  el('footer', 'hub-footer', [`← → choose · Enter play · ${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘F' : 'Ctrl+F'} fullscreen`]),
 );
 
 // Arrow keys / gamepad-style navigation between playable cards.

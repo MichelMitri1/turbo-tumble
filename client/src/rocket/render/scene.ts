@@ -6,7 +6,8 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { World, WorldEvent } from '../sim/world';
 import { buildArena, buildSky, toThree, S, type ArenaView } from './arenaMesh';
-import { BallView, CarView, PadsView, loadCars } from './entities';
+import { BallView, CarView, PadsView, loadCars, renderCarThumbs } from './entities';
+import type { CarId } from '../sim/constants';
 import { Fx } from './fx';
 import { ChaseCamera } from './camera';
 
@@ -130,7 +131,8 @@ export class RocketRenderer {
     for (const v of this.cars.values()) v.dispose();
     this.cars.clear();
     for (const car of world.cars) {
-      const v = new CarView(car.id, car.team, car.body.id);
+      const model = world.players.find((p) => p.id === car.id)?.body ?? 'octane';
+      const v = new CarView(car.id, car.team, model);
       this.cars.set(car.id, v);
       this.scene.add(v.root);
     }
@@ -149,6 +151,7 @@ export class RocketRenderer {
       case 'goal':
         this.fx.goal(toThree(e.x, Math.sign(e.y) * Math.min(Math.abs(e.y), 5300), e.z, v1), e.team, e.speed);
         this.goalFlash[e.team === 0 ? 1 : 0] = 1;
+        this.arena?.cheer(e.team);
         break;
       case 'demo': {
         const victim = world.car(e.victim);
@@ -172,7 +175,7 @@ export class RocketRenderer {
    * Draw a frame. `prev` holds last-tick poses; `alpha` blends prev → current.
    * `follow` is the car the camera chases (or null to orbit).
    */
-  frame(world: World, prev: Map<number, Pose>, prevBall: THREE.Vector3, alpha: number, dt: number, follow: number | null): void {
+  frame(world: World, prev: Map<number, Pose>, prevBall: THREE.Vector3, alpha: number, dt: number, follow: number | null, fixedCam: THREE.Vector3 | null = null): void {
     for (const car of world.cars) {
       const view = this.cars.get(car.id);
       if (!view) continue;
@@ -193,23 +196,30 @@ export class RocketRenderer {
     }
     this.ballPos.copy(prevBall).lerp(world.ball.pos, alpha);
     this.ball.errPos.multiplyScalar(Math.exp(-dt * 10));
+    this.ball.setScale(world.rules.ballSize);
+    // The ball is destroyed by the goal explosion until the next kickoff.
+    this.ball.mesh.visible = world.phase !== 'goal';
     this.ball.update(this.ballPos, world.ball.angVel, dt);
+    this.pads.setScale(world.rules.padSize);
     this.pads.update(world.pads.map((p) => p.timer), dt);
     this.fx.update(dt);
     // Goal frames pulse after a goal.
     if (this.arena) {
+      this.arena.update(dt);
       for (const t of [0, 1]) {
         this.goalFlash[t] = Math.max(0, this.goalFlash[t]! - dt * 0.4);
         const m = this.arena.goalLights[t] as THREE.MeshBasicMaterial;
         const base = t === 0 ? [0.24, 0.55, 1] : [1, 0.54, 0.12];
-        const k = 2.6 + this.goalFlash[t]! * 6 * (0.5 + 0.5 * Math.sin(performance.now() / 60));
+        const k = 1.8 + this.goalFlash[t]! * 6 * (0.5 + 0.5 * Math.sin(performance.now() / 60));
         m.color.setRGB(base[0]! * k, base[1]! * k, base[2]! * k);
       }
     }
 
     const car = follow != null ? world.car(follow) : undefined;
     const view = follow != null ? this.cars.get(follow) : undefined;
-    if (car && view && !car.demolished) {
+    if (fixedCam) {
+      this.cam.broadcast(toThree(fixedCam.x, fixedCam.y, fixedCam.z, v1), toThree(this.ballPos.x, this.ballPos.y, this.ballPos.z, v2), dt);
+    } else if (car && view && !car.demolished) {
       const p = prev.get(car.id);
       const pos = p ? new THREE.Vector3().copy(p.pos).lerp(car.pos, alpha) : car.pos.clone();
       pos.addScaledVector(view.errPos, 1 / S);
@@ -221,6 +231,11 @@ export class RocketRenderer {
     }
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam.camera);
+  }
+
+  /** Studio shots of every car for the garage. */
+  carThumbs(team: 0 | 1): Map<CarId, string> {
+    return renderCarThumbs(team, this.scene.environment);
   }
 
   /** Screen position of a sim point (null if behind the camera). */

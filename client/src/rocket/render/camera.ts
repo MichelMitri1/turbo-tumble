@@ -11,8 +11,12 @@ export interface CamSettings {
   swivel: number;
   transition: number;
   shake: boolean;
+  invertX: boolean;
+  invertY: boolean;
+  /** Ball cam button: press to toggle, or hold for ball cam. */
+  ballCamMode: 'toggle' | 'hold';
 }
-export const DEFAULT_CAM: CamSettings = { fov: 110, distance: 270, height: 100, angle: -4, stiffness: 0.45, swivel: 2.5, transition: 1.2, shake: true };
+export const DEFAULT_CAM: CamSettings = { fov: 110, distance: 270, height: 100, angle: -4, stiffness: 0.45, swivel: 2.5, transition: 1.2, shake: true, invertX: false, invertY: false, ballCamMode: 'toggle' };
 
 export interface CamTarget {
   pos: THREE.Vector3; // sim units
@@ -40,6 +44,9 @@ export class ChaseCamera {
   swivelY = 0;
   private yaw = 0;
   private pitch = 0;
+  /** Smoothed swivel (follows the stick at the swivel speed). */
+  private swX = 0;
+  private swY = 0;
   private readonly camUp = new THREE.Vector3(0, 1, 0);
   private ballBlend = 1;
   private shakeT = 0;
@@ -67,6 +74,35 @@ export class ChaseCamera {
 
   reset(): void {
     this.initialized = false;
+    this.bcInit = false;
+  }
+
+  private bcInit = false;
+  private readonly bcTarget = new THREE.Vector3();
+  private readonly bcPos = new THREE.Vector3();
+  /** Stadium camera (replays): sits near `pos` and smoothly tracks `target` (three units). */
+  broadcast(pos: THREE.Vector3, target: THREE.Vector3, dt: number): void {
+    if (!this.bcInit) {
+      this.bcTarget.copy(target);
+      this.bcPos.copy(pos);
+      this.bcInit = true;
+    }
+    this.bcTarget.lerp(target, Math.min(1, dt * 7));
+    // Drift slightly toward the action, like a camera operator.
+    this.bcPos.lerp(this.v.copy(pos).lerp(target, 0.12), Math.min(1, dt * 1.5));
+    this.camera.position.copy(this.bcPos);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(this.bcTarget);
+    this.applyShake(dt);
+  }
+  private readonly v = new THREE.Vector3();
+
+  private applyShake(dt: number): void {
+    if (this.shakeT > 0 && this.settings.shake !== false) {
+      this.shakeT -= dt;
+      const a = this.shakeAmp * Math.max(0, this.shakeT / 0.6);
+      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a));
+    } else this.shakeAmp = 0;
   }
 
   /** Free orbit (spectating / replays / end screen). */
@@ -120,8 +156,11 @@ export class ChaseCamera {
     const right0 = new THREE.Vector3().crossVectors(ref, this.camUp).normalize();
     const fwd0 = new THREE.Vector3().crossVectors(this.camUp, right0).normalize();
     let yaw = Math.atan2(flat.dot(right0), flat.dot(fwd0));
-    // Swivel (right stick): up to ~180° around.
-    yaw += this.swivelX * Math.PI;
+    // Swivel (right stick): up to ~180° around, eased at the swivel speed.
+    const swRate = Math.min(1, dt * st.swivel * 4);
+    this.swX += ((st.invertX ? -this.swivelX : this.swivelX) - this.swX) * swRate;
+    this.swY += ((st.invertY ? -this.swivelY : this.swivelY) - this.swY) * swRate;
+    yaw += this.swX * Math.PI;
     // Ball cam: the camera sits on the ball→car line (elevation follows the ball, clamped).
     let elev = 0;
     if (wantBall && ballThree && !this.rearView) {
@@ -129,7 +168,7 @@ export class ChaseCamera {
       const horiz = Math.max(1, d.clone().addScaledVector(this.camUp, -d.dot(this.camUp)).length());
       elev = Math.max(-0.25, Math.min(0.6, Math.atan2(d.dot(this.camUp) - 0.6, horiz + st.distance * S * 0.6))) * this.ballBlend;
     }
-    const pitch = elev + this.swivelY * 0.6;
+    const pitch = elev + this.swY * 0.6;
     if (!this.initialized) {
       this.yaw = yaw;
       this.pitch = pitch;
@@ -158,10 +197,6 @@ export class ChaseCamera {
     this.camera.up.copy(this.camUp);
     this.lookOffset.copy(camPos).add(look);
     this.camera.lookAt(this.lookOffset);
-    if (this.shakeT > 0 && this.settings.shake !== false) {
-      this.shakeT -= dt;
-      const a = this.shakeAmp * Math.max(0, this.shakeT / 0.6);
-      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a));
-    } else this.shakeAmp = 0;
+    this.applyShake(dt);
   }
 }

@@ -3,13 +3,14 @@ import { arenaDistance, arenaNormal, ARENA } from './arena';
 import { Ball } from './ball';
 import { Car, NO_CONTROLS, type Controls } from './car';
 import * as C from './constants';
+import { DEFAULT_RULES, REPLAY_EXTRA, type Rules } from './rules';
 
 export interface PlayerInfo {
   id: number;
   name: string;
   team: 0 | 1;
   bot: boolean;
-  body: C.CarBody['id'];
+  body: C.CarId;
 }
 
 export interface Stats {
@@ -75,12 +76,17 @@ export class World {
     seed = 1,
     /** Free play: no clock, no countdowns; goals just reset the ball. */
     readonly freePlay = false,
+    /** Mutators (live: edits apply immediately). */
+    readonly rules: Readonly<Rules> = DEFAULT_RULES,
   ) {
     this.rng = seed || 1;
     this.clock = matchLength;
+    this.ball.rules = rules;
     for (const p of players) {
       this.players.push(p);
-      this.cars.push(new Car(p.id, p.team, C.BODIES[p.body]));
+      const car = new Car(p.id, p.team, C.carBody(p.body));
+      car.rules = rules;
+      this.cars.push(car);
       this.stats.set(p.id, { goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, touches: 0, score: 0 });
     }
     this.kickoff();
@@ -163,7 +169,7 @@ export class World {
             this.clock = 0;
             this.events.push({ k: 'overtime' });
             this.kickoff();
-          } else if (this.ball.pos.z < C.BALL_WORLD_RADIUS + 10) this.finish();
+          } else if (this.ball.pos.z < this.ball.worldRadius + 10) this.finish();
         }
       } else this.clock += dt;
     } else if (this.phase === 'goal') {
@@ -272,7 +278,9 @@ export class World {
     const closest = this.v3.set(Math.max(-he.x, Math.min(he.x, local.x)), Math.max(-he.y, Math.min(he.y, local.y)), Math.max(-he.z, Math.min(he.z, local.z)));
     const diff = local.clone().sub(closest);
     let dist = diff.length();
-    if (dist >= C.BALL_RADIUS) {
+    const radius = ball.radius;
+    const mass = ball.mass;
+    if (dist >= radius) {
       this.checkFlipReset(car);
       return;
     }
@@ -288,7 +296,7 @@ export class World {
     const n = nLocal.applyQuaternion(car.quat).normalize();
     const contact = closest.applyQuaternion(car.quat).add(center);
     // Separate (ball is 1/6 of the car's mass).
-    const pen = C.BALL_RADIUS - dist;
+    const pen = radius - dist;
     ball.pos.addScaledVector(n, pen * (6 / 7));
     car.pos.addScaledVector(n, -pen / 7);
     // Relative velocity at the contact.
@@ -300,20 +308,20 @@ export class World {
     const rel = vb.sub(vc);
     const vn = rel.dot(n);
     if (vn < 0) {
-      const invM = 1 / C.BALL_MASS + car.invMassAt(contact, n);
+      const invM = 1 / mass + car.invMassAt(contact, n);
       const jn = -vn / invM; // restitution 0 for car-ball
-      ball.vel.addScaledVector(n, jn / C.BALL_MASS);
+      ball.vel.addScaledVector(n, jn / mass);
       car.applyImpulse(n.clone().multiplyScalar(-jn), contact);
       // Friction (high: the ball grips the car).
       const vt = rel.addScaledVector(n, -vn);
       const vtl = vt.length();
       if (vtl > 1e-3) {
         const t = vt.multiplyScalar(1 / vtl);
-        const I = 0.4 * C.BALL_MASS * C.BALL_RADIUS * C.BALL_RADIUS;
-        const invMt = 1 / C.BALL_MASS + (C.BALL_RADIUS * C.BALL_RADIUS) / I + car.invMassAt(contact, t);
+        const I = 0.4 * mass * radius * radius;
+        const invMt = 1 / mass + (radius * radius) / I + car.invMassAt(contact, t);
         const jt = Math.min(C.CARBALL_FRICTION * jn, vtl / invMt);
         const J = t.multiplyScalar(-jt);
-        ball.vel.addScaledVector(J, 1 / C.BALL_MASS);
+        ball.vel.addScaledVector(J, 1 / mass);
         ball.angVel.add(new Vector3().crossVectors(rb, J).multiplyScalar(1 / I));
         car.applyImpulse(J.clone().negate(), contact);
       }
@@ -327,11 +335,11 @@ export class World {
       if (relSpeed > 0) {
         const hitDir = ball.pos.clone().sub(car.pos).multiply(new Vector3(1, 1, C.BALL_EXTRA_Z_SCALE)).normalize();
         hitDir.addScaledVector(car.forward, -hitDir.dot(car.forward) * (1 - C.BALL_EXTRA_FORWARD_SCALE)).normalize();
-        ball.vel.addScaledVector(hitDir, relSpeed * C.curve(C.BALL_EXTRA_CURVE, relSpeed));
+        ball.vel.addScaledVector(hitDir, (relSpeed * C.curve(C.BALL_EXTRA_CURVE, relSpeed) * this.rules.hitPower) / Math.sqrt(this.rules.ballWeight));
       }
       this.touch(car, relSpeed);
     }
-    if (ball.vel.lengthSq() > C.BALL_MAX_SPEED ** 2) ball.vel.setLength(C.BALL_MAX_SPEED);
+    if (ball.vel.lengthSq() > this.rules.ballMaxSpeed ** 2) ball.vel.setLength(this.rules.ballMaxSpeed);
   }
 
   private touch(car: Car, power: number): void {
@@ -363,7 +371,7 @@ export class World {
     let touching = 0;
     for (const w of car.wheels) {
       const hp = this.v4.copy(w.local).applyQuaternion(car.quat).add(car.pos);
-      const d = hp.distanceTo(b) - C.BALL_RADIUS;
+      const d = hp.distanceTo(b) - this.ball.radius;
       if (d < w.radius + 8) touching++;
     }
     if (touching >= 3) car.flipReset();
@@ -421,21 +429,31 @@ export class World {
       if (nose < 0.5 || front < 30) continue;
       if (att.forwardSpeed < 400) continue;
       att.bumpCooldown = C.BUMP_COOLDOWN;
-      if (att.supersonic && att.team !== vic.team) {
-        vic.demolished = true;
-        vic.respawnTimer = C.DEMO_RESPAWN;
-        this.stats.get(att.id)!.demos++;
-        this.stats.get(att.id)!.score += 15;
-        this.events.push({ k: 'demo', attacker: att.id, victim: vic.id, x: vic.pos.x, y: vic.pos.y, z: vic.pos.z });
-      } else {
+      const mode = this.rules.demolish;
+      const enemy = att.team !== vic.team;
+      const demo = mode === 'default' ? att.supersonic && enemy : mode === 'friendly' ? att.supersonic : mode === 'contact' ? enemy : false;
+      if (demo) this.demolish(vic, att);
+      else {
         const speed = att.forwardSpeed;
         const flat = dir.clone().setZ(0).normalize();
-        vic.vel.addScaledVector(flat, C.curve(vic.onGround ? C.BUMP_GROUND_CURVE : C.BUMP_AIR_CURVE, speed) * 0.6);
-        vic.vel.z += C.curve(C.BUMP_UP_CURVE, speed) * 0.6;
+        const k = 0.6 * this.rules.bumpStrength;
+        vic.vel.addScaledVector(flat, C.curve(vic.onGround ? C.BUMP_GROUND_CURVE : C.BUMP_AIR_CURVE, speed) * k);
+        vic.vel.z += C.curve(C.BUMP_UP_CURVE, speed) * k;
         this.events.push({ k: 'bump', car: att.id, other: vic.id });
       }
       break;
     }
+  }
+
+  /** Blow up a car (attacker null = the goal explosion). */
+  private demolish(vic: Car, att: Car | null): void {
+    vic.demolished = true;
+    vic.respawnTimer = this.rules.respawnTime;
+    if (att) {
+      this.stats.get(att.id)!.demos++;
+      this.stats.get(att.id)!.score += 15;
+    }
+    this.events.push({ k: 'demo', attacker: att?.id ?? -1, victim: vic.id, x: vic.pos.x, y: vic.pos.y, z: vic.pos.z });
   }
 
   // ---------------------------------------------------------------- pads & goals
@@ -446,7 +464,8 @@ export class World {
         pad.timer -= dt;
         return;
       }
-      const r = pad.big ? C.PAD_RADIUS_BIG : C.PAD_RADIUS_SMALL;
+      if (this.rules.boostMode === 'none') return;
+      const r = (pad.big ? C.PAD_RADIUS_BIG : C.PAD_RADIUS_SMALL) * this.rules.padSize;
       for (const car of this.cars) {
         if (car.demolished || car.boost >= 100) continue;
         if (car.pos.z > C.PAD_HEIGHT + 20) continue;
@@ -461,7 +480,7 @@ export class World {
 
   private checkGoal(): void {
     const b = this.ball.pos;
-    if (Math.abs(b.y) < ARENA.goalLineY + C.BALL_RADIUS) return;
+    if (Math.abs(b.y) < ARENA.goalLineY + this.ball.radius) return;
     const team: 0 | 1 = b.y > 0 ? 0 : 1;
     this.score[team]++;
     // Credit: the last toucher on the scoring team, an assist to their previous teammate.
@@ -482,7 +501,33 @@ export class World {
     }
     this.events.push({ k: 'goal', team, scorer: scorer?.car ?? -1, assist: assist?.car ?? -1, speed: this.ball.vel.length(), x: b.x, y: b.y, z: b.z });
     this.phase = 'goal';
-    this.phaseTimer = 3;
+    // The goal phase also covers the replay (clients show it; the server just waits).
+    this.phaseTimer = this.rules.goalDelay + (this.freePlay || this.rules.replayTime <= 0 ? 0 : this.rules.replayTime + REPLAY_EXTRA);
     this.touches = [];
+    this.goalExplosion(b);
+  }
+
+  /** The ball explodes: cars nearby are blown away (and the closest demolished). */
+  private goalExplosion(at: Vector3): void {
+    const R = this.rules;
+    const radius = R.explosionRadius * Math.max(1, R.ballSize);
+    for (const car of this.cars) {
+      if (car.demolished) continue;
+      const d = car.pos.distanceTo(at);
+      if (d > radius) continue;
+      if (R.explosionDemos && d < radius * 0.3) {
+        this.demolish(car, null);
+        continue;
+      }
+      if (R.explosionForce <= 0) continue;
+      const k = R.explosionForce * (1 - d / radius) ** 0.7;
+      const dir = this.v1.copy(car.pos).sub(at);
+      dir.z = Math.max(0, dir.z) + d * 0.35 + 60;
+      dir.normalize();
+      car.vel.addScaledVector(dir, 2600 * k);
+      car.angVel.x += (this.rand() - 0.5) * 8 * k;
+      car.angVel.y += (this.rand() - 0.5) * 8 * k;
+      car.angVel.z += (this.rand() - 0.5) * 4 * k;
+    }
   }
 }
