@@ -396,6 +396,23 @@ or online / LAN rooms with codes + bots. Code in `client/src/lastcard/` (`engine
 `bots.ts`, `art.ts` SVG cards, `main.ts` table UI); server room `server/src/rooms/LastCardRoom.ts`.
 - `npx tsx tools/lastcard-sim.ts 300 [--stacking] [--match] [--target=500]` — headless bot games (card conservation, no stalls, stats)
 
+## Corner Pocket (`/corner-pocket/`)
+
+8-ball pool in the style of the popular online game (original name and art). Physics in
+`client/src/pool/physics.ts` follows the classic Leckie–Greenspan ball model at 1 kHz: sliding →
+rolling friction, follow / draw / stun, side english that bites on cushions, ball-to-ball
+throw, soft pocket jaws and real pocket throats on a 7-ft table. It only uses + − × ÷ √, so
+every browser replays a shot identically: the server simulates the authoritative result and
+clients replay it from the inputs. WPA-style rules (`engine.ts`): break from the kitchen, open
+table, groups, fouls → ball in hand, call the pocket for the 8. Bots (`bots.ts`) find
+pottable target/pocket pairs with ghost-ball geometry; Hustler/Shark verify them by simulation
+and Shark also plans cue-ball position. Balls are rendered per pixel as textured spheres that
+roll with their real spin (`art.ts`). Controls: drag on the table to aim (wheel / ←→ fine),
+pull the power bar (or hold Space), set spin on the cue-ball icon, drag the cue ball with
+ball in hand, tap a pocket to call the 8. Online / LAN 1v1 rooms with live opponent aim.
+Server room: `server/src/rooms/PoolRoom.ts`.
+- `npx tsx tools/pool-sim.ts 30 hard normal` — headless bot-vs-bot games (rules, stalls, think time)
+
 ## Tools
 
 - `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).

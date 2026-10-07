@@ -12,10 +12,12 @@ import { CrownfallRoom } from './rooms/CrownfallRoom';
 import { KittensRoom } from './rooms/KittensRoom';
 import { RocketRoom } from './rooms/RocketRoom';
 import { LastCardRoom } from './rooms/LastCardRoom';
+import { PoolRoom } from './rooms/PoolRoom';
 import { KK_ROOM } from '../../client/src/kittens/net/protocol';
 import { CF_ROOM } from '../../client/src/arena/net/protocol';
 import { RB_ROOM } from '../../client/src/rocket/net/protocol';
 import { LC_ROOM } from '../../client/src/lastcard/net/protocol';
+import { PL_ROOM } from '../../client/src/pool/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
 /**
@@ -98,6 +100,7 @@ server.define(CF_ROOM, CrownfallRoom);
 server.define(KK_ROOM, KittensRoom);
 server.define(RB_ROOM, RocketRoom);
 server.define(LC_ROOM, LastCardRoom);
+server.define(PL_ROOM, PoolRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {

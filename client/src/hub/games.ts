@@ -56,4 +56,12 @@ export const GAMES: GameEntry[] = [
     tags: ['Cards', 'vs Bots', 'Online · LAN', '2–8 players'],
     art: { emoji: '🃏', from: '#e8262f', to: '#1f6fd6' },
   },
+  {
+    id: 'corner-pocket',
+    title: 'Corner Pocket',
+    tagline: '8-ball pool with real ball physics: spin, draw, follow, english. Pot your group, then the 8.',
+    href: '/corner-pocket/',
+    tags: ['Pool', 'vs Bot', 'Online · LAN', '1v1'],
+    art: { emoji: '🎱', from: '#16854a', to: '#5a2a12' },
+  },
 ];
