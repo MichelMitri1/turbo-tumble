@@ -10,8 +10,12 @@ import { DEFAULT_SERVER_PORT, PROTOCOL_VERSION, ROOM_NAME } from '../../shared/s
 import { RaceRoom } from './rooms/RaceRoom';
 import { CrownfallRoom } from './rooms/CrownfallRoom';
 import { KittensRoom } from './rooms/KittensRoom';
+import { RocketRoom } from './rooms/RocketRoom';
+import { LastCardRoom } from './rooms/LastCardRoom';
 import { KK_ROOM } from '../../client/src/kittens/net/protocol';
 import { CF_ROOM } from '../../client/src/arena/net/protocol';
+import { RB_ROOM } from '../../client/src/rocket/net/protocol';
+import { LC_ROOM } from '../../client/src/lastcard/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
 /**
@@ -92,6 +96,8 @@ const server = new Server({
 server.define(ROOM_NAME, RaceRoom);
 server.define(CF_ROOM, CrownfallRoom);
 server.define(KK_ROOM, KittensRoom);
+server.define(RB_ROOM, RocketRoom);
+server.define(LC_ROOM, LastCardRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {
@@ -104,8 +110,8 @@ console.log(`Turbo Tumble server listening on :${port}${existsSync(join(dist, 'i
 if (LAN_MODE) {
   const ips = lanAddresses();
   console.log('\n  LAN mode — snapshots every tick.');
-  console.log(`  This laptop:   http://localhost:${port}/turbo-tumble/`);
-  for (const ip of ips) console.log(`  Other laptops: http://${ip}:${port}/turbo-tumble/`);
+  console.log(`  This laptop:   http://localhost:${port}/`);
+  for (const ip of ips) console.log(`  Other laptops: http://${ip}:${port}/   (e.g. /boostball/, /turbo-tumble/)`);
   if (!ips.length) console.log('  (No local network address found — is Wi-Fi connected?)');
   console.log('  Same Wi-Fi only. If macOS asks, allow "node" to accept incoming connections.\n');
 }

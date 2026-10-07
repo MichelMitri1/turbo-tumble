@@ -17,6 +17,8 @@ export default defineConfig({
         'turbo-tumble': fileURLToPath(new URL('./turbo-tumble/index.html', import.meta.url)),
         'arena-crown': fileURLToPath(new URL('./arena-crown/index.html', import.meta.url)),
         'kitten-kaboom': fileURLToPath(new URL('./kitten-kaboom/index.html', import.meta.url)),
+        boostball: fileURLToPath(new URL('./boostball/index.html', import.meta.url)),
+        'last-card': fileURLToPath(new URL('./last-card/index.html', import.meta.url)),
       },
     },
   },

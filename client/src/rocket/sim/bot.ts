@@ -279,4 +279,5 @@ export class Bots {
 }
 
 export const BOT_LEVELS: BotLevel[] = ['rookie', 'pro', 'allstar'];
+export const BOT_NAMES = ['Merlin', 'Sundown', 'Rainmaker', 'Bandit', 'Hound', 'Sticks', 'Fury', 'Jester', 'Tusk', 'Viper', 'Casper', 'Gerwin', 'Junker', 'Squall', 'Raja', 'Saltie'];
 void C;

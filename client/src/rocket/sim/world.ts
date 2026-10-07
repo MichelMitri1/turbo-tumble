@@ -60,19 +60,21 @@ export class World {
   tickCount = 0;
   events: WorldEvent[] = [];
   winner: 0 | 1 | -1 = -1;
-  private lastCountdown = 4;
+  lastCountdownN = 4;
   private touches: Array<{ car: number; team: 0 | 1; t: number }> = [];
   private readonly extraHitTick = new Map<number, number>();
   private readonly v1 = tmp();
   private readonly v2 = tmp();
   private readonly v3 = tmp();
   private readonly v4 = tmp();
-  private rng: number;
+  rng: number;
 
   constructor(
     players: PlayerInfo[],
     readonly matchLength = 300,
     seed = 1,
+    /** Free play: no clock, no countdowns; goals just reset the ball. */
+    readonly freePlay = false,
   ) {
     this.rng = seed || 1;
     this.clock = matchLength;
@@ -97,6 +99,10 @@ export class World {
 
   kickoff(): void {
     this.ball.reset();
+    if (this.freePlay && this.tickCount > 0) {
+      this.phase = 'play';
+      return;
+    }
     for (const p of this.pads) p.timer = 0;
     const perTeam = [0, 1].map((t) => this.cars.filter((c) => c.team === t));
     const n = Math.max(perTeam[0]!.length, perTeam[1]!.length);
@@ -109,9 +115,9 @@ export class World {
         else car.place(-x, -y, yaw + Math.PI);
       });
     }
-    this.phase = 'countdown';
+    this.phase = this.freePlay ? 'play' : 'countdown';
     this.phaseTimer = 3;
-    this.lastCountdown = 4;
+    this.lastCountdownN = 4;
     this.events.push({ k: 'kickoff' });
   }
 
@@ -127,8 +133,8 @@ export class World {
     if (this.phase === 'countdown') {
       this.phaseTimer -= dt;
       const n = Math.ceil(this.phaseTimer);
-      if (n !== this.lastCountdown && n > 0) {
-        this.lastCountdown = n;
+      if (n !== this.lastCountdownN && n > 0) {
+        this.lastCountdownN = n;
         this.events.push({ k: 'countdown', n });
       }
       if (this.phaseTimer <= 0) {
@@ -146,7 +152,9 @@ export class World {
     this.physics(dt, inputs, this.phase !== 'play');
     if (this.phase === 'play') {
       this.checkGoal();
-      if (!this.overtime) {
+      if (this.freePlay) {
+        // No clock in free play.
+      } else if (!this.overtime) {
         this.clock = Math.max(0, this.clock - dt);
         // Time's up: the match ends once the ball touches the ground (unless tied).
         if (this.clock <= 0 && this.phase === 'play') {
@@ -161,7 +169,8 @@ export class World {
     } else if (this.phase === 'goal') {
       this.phaseTimer -= dt;
       if (this.phaseTimer <= 0) {
-        if (this.overtime) this.finish();
+        if (this.freePlay) this.kickoff();
+        else if (this.overtime) this.finish();
         else if (this.clock <= 0 && this.score[0] !== this.score[1]) this.finish();
         else if (this.clock <= 0) {
           this.overtime = true;

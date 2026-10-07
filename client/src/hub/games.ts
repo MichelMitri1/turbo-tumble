@@ -40,4 +40,20 @@ export const GAMES: GameEntry[] = [
     tags: ['Cards', 'vs Bots', 'Online · LAN', '2–5 players'],
     art: { emoji: '💣', from: '#ff8c1a', to: '#b0122c' },
   },
+  {
+    id: 'boostball',
+    title: 'Boostball',
+    tagline: 'Rocket-powered car soccer: boost, jump, flip, aerial. Real game physics at 120 Hz.',
+    href: '/boostball/',
+    tags: ['Sports', 'vs Bots', 'Online · LAN', 'PS4 pad'],
+    art: { emoji: '🚀', from: '#3d86ff', to: '#ff8a1f' },
+  },
+  {
+    id: 'last-card',
+    title: 'Last Card',
+    tagline: 'Match colours, dump your hand, shout LAST CARD! The classic colour-matching card game.',
+    href: '/last-card/',
+    tags: ['Cards', 'vs Bots', 'Online · LAN', '2–8 players'],
+    art: { emoji: '🃏', from: '#e8262f', to: '#1f6fd6' },
+  },
 ];

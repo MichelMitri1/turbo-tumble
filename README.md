@@ -354,6 +354,48 @@ each player may see), `bots.ts`, `art.ts` (all card art as inline SVG), `main.ts
 server room `server/src/rooms/KittensRoom.ts`.
 - `npx tsx tools/kittens-sim.ts 400` — headless bot games (card conservation, no stalls, stats)
 
+## Boostball (`/boostball/`)
+
+Rocket-powered car soccer, built to play like the real thing. The simulation in
+`client/src/rocket/sim/` is a TypeScript port of Rocket League's physics as measured by
+RocketSim / the RLBot community: 120 Hz ticks, the exact arena shape (8192 × 10240 × 2044 uu,
+256 uu curved seams, 45° corners, 1786 × 642 × 880 goals) as a signed-distance field, raycast
+suspension wheels, the throttle/steer/powerslide curves, boost (991.67 uu/s² ground, 33.3/s),
+jump impulse + hold, double jump within 1.25 s, dodges (front/side/back scaling, flip
+cancels, z-damping), air control torques + damping, auto-roll/auto-flip, ball drag/bounce/spin,
+the Psyonix extra ball impulse, bumps, supersonic demolitions, 34 boost pads on the real
+coordinates, real kickoff spawns, overtime when tied, flip resets.
+
+- **Modes**: exhibition 1v1 / 2v2 / 3v3 vs bots (Rookie / Pro / All-Star), free play, and
+  online / LAN rooms (codes, quick match, team picking, bots fill seats).
+- **Controls**: Rocket League default bindings for a PS4 controller (R2/L2, ✕ jump, ○ boost,
+  □ powerslide/air roll, △ ball cam, R3 rear view, L1 scoreboard, D-pad quick chat, rumble) and
+  keyboard + mouse (WASD, right mouse jump, left mouse boost, Shift, Q/E, Space). Menus work
+  with the controller too.
+- **Camera**: the game's defaults (110 FOV, 270 distance, 100 height, −4° angle, 0.45
+  stiffness), ball cam, swivel; all adjustable in Settings.
+- **Netcode**: the server runs the authoritative world at 120 Hz and sends each client a ~0.9 KB
+  binary snapshot 60× a second. Clients run ahead with tick-stamped inputs, rewind to each
+  snapshot and replay (rollback), with visual error smoothing — your own car never waits on
+  the network. LAN mode (`npm run lan`) shortens the input buffer.
+- Code: `sim/` (arena, car, ball, world, bots, snapshot), `render/` (three.js arena, cars,
+  particles, camera), `input.ts`, `hud.ts`, `session.ts` (local + online prediction),
+  `main.ts` (menus). Server room: `server/src/rooms/RocketRoom.ts`.
+- `npx tsx tools/rocket-sim.ts 4 --size=2 --level=pro` — headless bot matches (stability,
+  goals, µs per tick). Car models: Kenney Car Kit (CC0), recoloured per team.
+
+## Last Card (`/last-card/`)
+
+The classic colour-matching shedding game (original name and card art): the official
+108-card deck (0–9, Skip, Reverse, Draw Two, Wild, Wild Draw Four), drawing and playing the
+drawn card, Reverse = Skip with two players, Wild Draw Four challenges (bluff → they draw 4,
+legit → challenger draws 6), shouting **LAST CARD!** or getting caught for +2, round scoring
+(numbers face value, actions 20, wilds 50) for one round or first to 200 / 500, and optional
+house rules (stacking +2/+4, draw until playable). 2–8 players: vs bots (Easy / Normal / Hard)
+or online / LAN rooms with codes + bots. Code in `client/src/lastcard/` (`engine.ts`, `view.ts`,
+`bots.ts`, `art.ts` SVG cards, `main.ts` table UI); server room `server/src/rooms/LastCardRoom.ts`.
+- `npx tsx tools/lastcard-sim.ts 300 [--stacking] [--match] [--target=500]` — headless bot games (card conservation, no stalls, stats)
+
 ## Tools
 
 - `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).
