@@ -20,6 +20,7 @@ export default defineConfig({
         boostball: fileURLToPath(new URL('./boostball/index.html', import.meta.url)),
         'last-card': fileURLToPath(new URL('./last-card/index.html', import.meta.url)),
         'corner-pocket': fileURLToPath(new URL('./corner-pocket/index.html', import.meta.url)),
+        'zero-hour': fileURLToPath(new URL('./zero-hour/index.html', import.meta.url)),
       },
     },
   },
