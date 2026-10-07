@@ -13,3 +13,8 @@ https://creativecommons.org/publicdomain/zero/1.0/
 All textures in `textures/` and all procedural content are original to this project.
 
 Engine recordings (`audio/engines/`) are CC BY-SA adaptations of Wikimedia Commons recordings — see `audio/engines/LICENSES.md`.
+
+## Zero Hour (`fps/`)
+
+CC0 by [Quaternius](https://quaternius.com): Ultimate Gun Pack, Ultimate Modular Characters
+(SWAT), Toon Shooter Game Kit. Converted with `tools/fps-assets.mjs`.

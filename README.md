@@ -413,6 +413,23 @@ ball in hand, tap a pocket to call the 8. Online / LAN 1v1 rooms with live oppon
 Server room: `server/src/rooms/PoolRoom.ts`.
 - `npx tsx tools/pool-sim.ts 30 hard normal` — headless bot-vs-bot games (rules, stalls, think time)
 
+## Zero Hour (`/zero-hour/`)
+
+Modern military FPS multiplayer in the style of the big annual shooter (original name, guns,
+maps and UI). 18 weapons across AR / SMG / LMG / shotgun / marksman / sniper / pistol with
+damage falloff, headshot multipliers, recoil and ADS; attachments (optics, suppressor, grip,
+laser, extended mag); 6 perks; 5 editable create-a-class slots; camo progression per gun
+(Woodland → Gold → Platinum → Diamond → Dark Matter, unlocked by kills). Modes: Team
+Deathmatch, Free-for-All, Domination, Kill Confirmed on three maps (Freight, Cul-de-sac,
+Outpost). Killstreaks: UAV (3), Airstrike (5), Attack Heli (7). Frag grenades with cooking,
+melee, slide, health regen, medals, spawn logic, bots in four skills on a layered nav grid.
+Shared sim in `client/src/fps/sim/` runs authoritative on the server at 60 Hz
+(`server/src/rooms/FpsRoom.ts`) with client prediction + reconciliation, lag-compensated hits
+and interpolated remote players; up to 12 players online or on LAN, bots fill the teams.
+Keyboard/mouse (CoD binds) or PS4 pad with aim assist.
+- `npx tsx tools/fps-sim.ts` — headless bot matches on every map/mode (stuck checks, timings)
+- `node tools/fps-assets.mjs <dir>` — rebuilds `client/public/assets/fps/` from the CC0 Quaternius packs
+
 ## Tools
 
 - `npx tsx tools/ai-bench.ts [easy|normal|hard] [track…]` — CPU lap-time benchmark on every track (tuning AIDifficulty).

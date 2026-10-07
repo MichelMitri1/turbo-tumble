@@ -64,4 +64,12 @@ export const GAMES: GameEntry[] = [
     tags: ['Pool', 'vs Bot', 'Online · LAN', '1v1'],
     art: { emoji: '🎱', from: '#16854a', to: '#5a2a12' },
   },
+  {
+    id: 'zero-hour',
+    title: 'Zero Hour',
+    tagline: 'Fast multiplayer FPS: 18 guns, camos, killstreaks, TDM / Domination / FFA / Kill Confirmed on 3 maps.',
+    href: '/zero-hour/',
+    tags: ['FPS', 'vs Bots', 'Online · LAN', 'up to 12'],
+    art: { emoji: '🎯', from: '#3a4a2a', to: '#c4f24a' },
+  },
 ];
