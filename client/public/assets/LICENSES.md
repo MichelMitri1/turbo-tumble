@@ -26,3 +26,13 @@ Kevin Heras and Matthew Nanney — CC0
 
 400 playing cards (`400/cards/`): Vector Playing Cards by Byron Knoll (via
 github.com/notpeter/Vector-Playing-Cards) — public domain. Rendered to WebP.
+
+## Matchday 27 (`football/`)
+
+Footballer: "Casual 2" from [Quaternius](https://quaternius.com)' Ultimate Modular Characters — CC0.
+Kit-split (shirt / shorts / socks / boots) with `tools/football-assets.mjs`.
+
+Sounds (`football/sfx/`), all CC0 from [Freesound](https://freesound.org), trimmed with `tools/football-sfx.py`:
+crowd loop + goal roar — #528799 "Football Crowd - Reaction To Goal"; cheer — #397434 "Crowd Cheer";
+ooh — #619007 "crowd oh disappointed"; whistle — #538422 "Referee whistle sound";
+kicks — #555042 "Soccer Ball Kick", #261267 "Soccer Kick".
