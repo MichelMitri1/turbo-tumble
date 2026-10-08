@@ -208,3 +208,29 @@ body { background: radial-gradient(ellipse at 50% 45%, #2a3a52 0%, #141c2a 55%, 
   .pl-msg { top: 112px; }
   .pl-hint { white-space: normal; text-align: center; width: max-content; max-width: calc(100vw - 24px); font-size: 12px; }
 }
+
+@media (any-pointer: coarse) {
+  .pl-chip { min-height: 40px; }
+  .pl-panel { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .pl-seg button { min-height: 40px; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .pl-menu {
+    display: grid;
+    grid-template-columns: minmax(230px, 0.7fr) minmax(430px, 1.3fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    align-items: center;
+    column-gap: 18px;
+    row-gap: 4px;
+    padding: max(58px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .pl-logo { grid-column: 1; grid-row: 1; align-self: end; gap: 8px; }
+  .pl-tag { grid-column: 1; grid-row: 2; align-self: start; }
+  .pl-menu > .pl-panel { grid-column: 2; grid-row: 1 / 3; max-height: calc(100dvh - 70px); overflow-y: auto; padding: 12px 14px; gap: 6px; }
+  .pl-logo-ball { width: 78px; }
+  .pl-wordmark span:first-child { font-size: 42px; }
+  .pl-wordmark span:last-child { font-size: 48px; }
+  .pl-row { gap: 6px; }
+}

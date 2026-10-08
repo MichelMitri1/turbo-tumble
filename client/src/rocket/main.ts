@@ -1,4 +1,5 @@
 import './styles.css';
+import { touchDevice } from '../input/TouchControls';
 import * as THREE from 'three';
 import { RocketRenderer, type Quality } from './render/scene';
 import { BIND_ACTIONS, DEFAULT_PREFS, Input, QUICK_CHAT, keyLabel, padLabel, sanitizePrefs, type BindAction, type InputPrefs } from './input';
@@ -48,7 +49,7 @@ interface Settings {
 }
 const KEY = 'boostball:settings';
 const settings: Settings = (() => {
-  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: 'high', volume: 0.7, mode: 2, level: 'pro', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined), arena: 'dome', music: true, motion: true };
+  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: touchDevice() ? 'low' : 'high', volume: 0.7, mode: 2, level: 'pro', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined), arena: 'dome', music: true, motion: true };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
     return {
@@ -260,6 +261,7 @@ function show(id: ScreenId, push = true): void {
   screen = id;
   for (const s of ['menu', 'setup', 'garage', 'settings', 'controls', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
   input.active = id === 'game';
+  input.touch.setActive(input.active);
   hud.show(!!session && session !== attract && (id === 'game' || id === 'pause'));
   audio.music(id === 'game' && session && session !== attract ? 'match' : id === 'pause' ? 'match' : 'menu');
   if (id !== 'game') queueMicrotask(() => app.querySelector<HTMLElement>(`#${id} button.primary, #${id} button`)?.focus());
@@ -1209,7 +1211,7 @@ function loop(now: number): void {
     }
   } else audio.silence();
   // Controller status on the menu.
-  const pad = input.hasPad ? `🎮 ${input.padName.replace(/\(.*?\)/g, '').trim().slice(0, 40) || 'Controller'} connected` : '🎮 Plug in a PS4 controller (or use keyboard + mouse)';
+  const pad = input.hasPad ? `🎮 ${input.padName.replace(/\(.*?\)/g, '').trim().slice(0, 40) || 'Controller'} connected` : touchDevice() ? 'Touch controls · Portrait or landscape · AUTO toggles driving' : '🎮 Plug in a PS4 controller (or use keyboard + mouse)';
   if (pad !== padShown && screen === 'menu') $('#pad-status').textContent = padShown = pad;
 }
 

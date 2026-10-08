@@ -190,8 +190,9 @@ export class ChaseCamera {
     cam.up.set(0, 1, 0);
     cam.lookAt(this.look.x, this.look.y + this.landOffset * 0.12, this.look.z);
     if (this.roll !== 0) cam.rotateZ(this.roll);
-    if (Math.abs(cam.fov - this.fov) > 0.01) {
-      cam.fov = this.fov;
+    const framedFov = Math.min(105, 2 * Math.atan(Math.tan(this.fov * Math.PI / 360) / Math.min(1, cam.aspect)) * 180 / Math.PI);
+    if (Math.abs(cam.fov - framedFov) > 0.01) {
+      cam.fov = framedFov;
       cam.updateProjectionMatrix();
     }
   }

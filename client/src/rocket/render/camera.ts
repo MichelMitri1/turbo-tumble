@@ -71,7 +71,7 @@ export class ChaseCamera {
     this.camera.aspect = aspect;
     // Rocket League's FOV is horizontal.
     const h = (this.settings.fov * Math.PI) / 180;
-    this.baseFov = (2 * Math.atan(Math.tan(h / 2) / aspect) * 180) / Math.PI;
+    this.baseFov = Math.min(110, (2 * Math.atan(Math.tan(h / 2) / aspect) * 180) / Math.PI);
     this.camera.fov = this.baseFov;
     this.camera.updateProjectionMatrix();
   }

@@ -1,4 +1,5 @@
 import type { Controls } from './sim/car';
+import { TouchControls } from '../input/TouchControls';
 
 /**
  * Rebindable input, Rocket League style. Defaults:
@@ -171,6 +172,7 @@ const DODGE_WINDOW = 0.03;
 export type Capture = { kind: 'kb'; done: (code: string | null) => void } | { kind: 'pad'; done: (button: number | null) => void };
 
 export class Input {
+  readonly touch = new TouchControls('ball');
   private readonly keys = new Set<string>();
   private readonly mouse = [false, false, false, false, false];
   private prevPad: boolean[] = [];
@@ -270,19 +272,23 @@ export class Input {
 
   /** Sample controls + UI actions for this frame. */
   poll(dt: number): { controls: Controls; ui: UiInput } {
+    const p = this.pad();
+    // A connected controller is the primary mobile input. Restore touch
+    // controls automatically if it disconnects.
+    this.touch.setActive(this.active && !p);
+    const touch = this.touch;
     const pr = this.prefs;
     const kbDown = (c: string) => (c.startsWith('Mouse') ? !!this.mouse[Number(c.slice(5))] : this.keys.has(c));
     const kbEdge = (c: string) => !c.startsWith('Mouse') && this.pressedKeys.has(c);
-    const p = this.pad();
     const btn = (i: number) => !!p?.buttons[i]?.pressed;
     const val = (i: number) => p?.buttons[i]?.value ?? 0;
     const edge = (i: number) => btn(i) && !this.prevPad[i];
     const kbAct = (a: BindAction) => pr.binds.kb[a].some(kbDown);
     const padAct = (a: BindAction) => !!p && pr.binds.pad[a].some(btn);
-    const act = (a: BindAction) => kbAct(a) || padAct(a);
+    const act = (a: BindAction) => kbAct(a) || padAct(a) || touch.down(a) || (a === 'jump' && touch.pressed(a)) || (a === 'airRoll' && touch.down('powerslide'));
     // Mouse edges come from the held state of the previous frame.
     const mouseEdge = (a: BindAction) => pr.binds.kb[a].some((c) => c.startsWith('Mouse') && kbDown(c) && !this.prevMouse[Number(c.slice(5))]);
-    const actEdge = (a: BindAction) => pr.binds.kb[a].some(kbEdge) || mouseEdge(a) || (!!p && pr.binds.pad[a].some(edge));
+    const actEdge = (a: BindAction) => touch.pressed(a) || pr.binds.kb[a].some(kbEdge) || mouseEdge(a) || (!!p && pr.binds.pad[a].some(edge));
     const padVal = (a: BindAction) => (p ? Math.max(0, ...pr.binds.pad[a].map(val)) : 0);
     const padBound = new Set(Object.values(pr.binds.pad).flat());
     const kbBound = new Set(Object.values(pr.binds.kb).flat());
@@ -292,6 +298,11 @@ export class Input {
     let steer = (kbAct('steerRight') ? 1 : 0) - (kbAct('steerLeft') ? 1 : 0);
     let pitch = (kbAct('pitchUp') ? 1 : 0) - (kbAct('pitchDown') ? 1 : 0);
     let stickMag = Math.abs(steer) + Math.abs(pitch);
+    if (touch.active) {
+      if (touch.x || touch.y) { steer = touch.x; pitch = touch.y; }
+      throttle = touch.down('reverse') ? -1 : touch.autoDrive ? 1 : -touch.y;
+      stickMag = Math.hypot(steer, pitch);
+    }
     const jump = act('jump');
     const boost = act('boost');
     const powerslide = act('powerslide');
@@ -303,7 +314,7 @@ export class Input {
       ballCamHeld: act('ballCam'),
       rearView: act('rearView'),
       scoreboard: act('scoreboard'),
-      pause: this.pressedKeys.has('Escape') || (this.pressedKeys.has('KeyP') && !kbBound.has('KeyP')),
+      pause: touch.pressed('pause') || this.pressedKeys.has('Escape') || (this.pressedKeys.has('KeyP') && !kbBound.has('KeyP')),
       chat: null,
       chatGroup: -1,
       swivelX: 0,
@@ -413,6 +424,7 @@ export class Input {
       boost,
       handbrake: powerslide,
     };
+    touch.endFrame();
     return { controls, ui };
   }
   private readonly prevMouse = [false, false, false, false, false];

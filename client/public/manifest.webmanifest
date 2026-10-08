@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Mitris' Arcade",
+  "short_name": "Arcade",
+  "description": "A collection of touch-friendly multiplayer arcade games.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#1b1446",
+  "theme_color": "#1b1446",
+  "icons": [
+    {
+      "src": "/arcade-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

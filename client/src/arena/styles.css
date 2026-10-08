@@ -261,6 +261,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); 
   .cf-next .cf-card { width: 46px; }
 }
 
+@media (any-pointer: coarse) {
+  .cf-chip-btn { min-height: 42px; }
+  .cf-builder__panel, .cf-online__panel { max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .cf-menu { align-items: flex-start; overflow-y: auto; padding: max(62px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+  .cf-menu__panel { width: min(560px, 68vw); max-height: calc(100dvh - 74px); margin: 0; overflow-y: auto; gap: 8px; padding: 2px 4px 10px; overscroll-behavior: contain; }
+  .cf-logo__top { font-size: 46px; }
+  .cf-logo__bottom { font-size: 58px; }
+  .cf-tag { font-size: 11px; }
+  .cf-deckrow { gap: 4px; padding: 6px; }
+  .cf-button { min-height: 46px; padding-block: 7px; }
+}
+
 /* ---------- battle polish ---------- */
 .cf-crowns i { font-size: 30px; line-height: 1; }
 .cf-foe-elixir { font-family: var(--font-display); font-size: 14px; padding: 2px 8px; border-radius: 10px; background: rgba(230, 79, 208, 0.25); border: 2px solid var(--elixir); color: #ffd0f6; min-width: 42px; text-align: center; }
@@ -304,4 +319,3 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); 
 @keyframes cf-plus { 0% { opacity: 0; transform: translateY(6px) scale(0.6); } 25% { opacity: 1; transform: translateY(-8px) scale(1.15); } 100% { opacity: 0; transform: translateY(-34px) scale(1); } }
 @keyframes cf-bump { 50% { transform: scale(1.25); } }
 @keyframes cf-vig { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
-
