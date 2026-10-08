@@ -347,3 +347,52 @@ body { background: radial-gradient(ellipse at 50% 42%, #18806a 0%, var(--felt) 3
   /* Phones: the gap under the ring is free, the top is all seats. */
   .lc-result { grid-template-columns: 96px 1fr 44px; }
 }
+
+@media (any-pointer: coarse) {
+  .lc-chip { min-height: 40px; }
+  .lc-panel { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .lc-seg button { min-height: 40px; }
+}
+
+@media (any-pointer: coarse) and (max-width: 540px) {
+  .lc-menu { justify-content: flex-start; gap: 6px; }
+  .lc-logo { gap: 8px; }
+  .lc-logo-fan { width: 104px; height: 88px; }
+  .lc-logo-card { left: 28px; width: 52px; }
+  .lc-wordmark span:first-child { font-size: 44px; }
+  .lc-wordmark span:last-child { font-size: 52px; }
+  .lc-tag { font-size: 11px; margin: 0 0 4px; }
+  .lc-panel { gap: 6px; padding: 12px 14px; }
+  .lc-row { grid-template-columns: 88px minmax(0, 1fr); gap: 6px; }
+  .lc-row label { font-size: 11px; }
+  .lc-av { padding: 1px; }
+  .lc-av .lc-avatar { --s: 30px; }
+  .lc-avatars { gap: 2px; }
+  .lc-toggles { grid-template-columns: 1fr 1fr; gap: 2px 6px; font-size: 11px; }
+  .lc-toggles label { font-size: 11px; gap: 3px; }
+  .lc-row--pair { grid-template-columns: 88px minmax(0, 1fr); }
+  .lc-btn { min-height: 46px; padding-block: 7px; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .lc-menu {
+    display: grid;
+    grid-template-columns: minmax(230px, 0.7fr) minmax(430px, 1.3fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    align-items: center;
+    column-gap: 18px;
+    row-gap: 4px;
+    padding: max(58px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .lc-logo { grid-column: 1; grid-row: 1; align-self: end; }
+  .lc-tag { grid-column: 1; grid-row: 2; align-self: start; }
+  .lc-menu > .lc-panel { grid-column: 2; grid-row: 1 / 3; max-height: calc(100dvh - 70px); overflow-y: auto; padding: 12px 14px; gap: 6px; }
+  .lc-logo-fan { width: 104px; height: 90px; }
+  .lc-logo-card { left: 28px; width: 52px; }
+  .lc-wordmark span:first-child { font-size: 46px; }
+  .lc-wordmark span:last-child { font-size: 56px; }
+  .lc-row { gap: 6px; }
+  .lc-row--pair { grid-template-columns: 86px 1fr 76px 1fr; }
+  .lc-toggles { grid-template-columns: 1fr 1fr; gap: 2px 6px; }
+}

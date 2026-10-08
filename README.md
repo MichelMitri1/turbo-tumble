@@ -23,6 +23,21 @@ Opening the game shows the **main menu** (over a live CPU race): pick Single Rac
 Grand Prix, Time Trial or Online, players (1–4), racer/kart, CPU difficulty, laps and items.
 **Controls & Sound** in the menu rebinds keys/buttons, sets music / sound volume and the stick dead zone (M mutes anytime).
 
+### Phone controls
+
+Turbo Tumble and Boostball support portrait and landscape touch play. On the same Wi-Fi,
+run `npm run lan` and open the printed network address on your phone. Choose one local
+player for Turbo Tumble; touch controls also work for your player in online matches.
+
+- The left thumbstick steers. In Boostball it also aims jumps and aerials; hold SLIDE / ROLL while steering to air-roll.
+- AUTO ON drives forward automatically. Tap it to switch to manual driving: push the stick up to accelerate, down to brake/reverse. The BRAKE button overrides automatic driving.
+- Turbo Tumble: hold DRIFT through corners, tap ITEM to use an item, RESET to recover, and PAUSE for the menu.
+- Boostball: hold BOOST, tap JUMP again for a double jump or directional dodge, use SLIDE / ROLL for powerslides, and BALL CAM to change the camera.
+- Rotate at any time. Touches clear on rotation, cancellation and leaving the page; menus remain scrollable. Fullscreen is optional.
+
+Browser regression check: `node tools/mobile-smoke.mjs http://localhost:5173` with the Vite
+server running and Chrome installed (`CHROME_PATH` overrides its macOS default).
+
 ### Local multiplayer (split-screen)
 
 Set *Players* to 2–4 and press Start. On the **Who's racing?** screen each player joins

@@ -17,6 +17,7 @@ import {
   type KeyboardProfileId,
 } from './bindings';
 import { KeyboardState } from './KeyboardState';
+import { TouchControls } from './TouchControls';
 import { DEFAULT_STICK, GamepadState, type StickSettings } from './GamepadState';
 
 export const sameDevice = (a: DeviceAssignment, b: DeviceAssignment): boolean =>
@@ -62,6 +63,7 @@ const GAMEPAD_SLOTS = 4;
  * sources. Supports mixing keyboard profiles and up to four controllers.
  */
 export class InputManager {
+  readonly touch = new TouchControls('race');
   readonly keyboard = new KeyboardState();
   readonly gamepads: GamepadState[] = Array.from({ length: GAMEPAD_SLOTS }, (_, i) => new GamepadState(i));
   stick: StickSettings = { ...DEFAULT_STICK, deadZone: loadDeadZone(DEFAULT_STICK.deadZone) };
@@ -118,6 +120,7 @@ export class InputManager {
 
   /** Call once at the end of every frame (clears pressed-this-frame edges). */
   endFrame(): void {
+    this.touch.endFrame();
     this.keyboard.endFrame();
   }
 
@@ -158,7 +161,7 @@ export class InputManager {
       down: kb.wasPressed('ArrowDown') || kb.wasPressed('KeyS') || any('down'),
       left: kb.wasPressed('ArrowLeft') || kb.wasPressed('KeyA') || any('left'),
       right: kb.wasPressed('ArrowRight') || kb.wasPressed('KeyD') || any('right'),
-      confirm: kb.wasPressed('Enter') || kb.wasPressed('Space') || any('confirm'),
+      confirm: kb.wasPressed('Enter') || kb.wasPressed('Space') || any('confirm') || this.touch.pressed('item'),
       back: kb.wasPressed('Backspace') || any('back'),
     };
   }
@@ -251,6 +254,14 @@ class ManagedSource implements InputSource {
       item ||= g.value(gb, 'item') > 0.5;
     }
 
+    if (this.assignment.kind === 'any' && this.mgr.touch.active) {
+      const t = this.mgr.touch;
+      steer += t.x;
+      brake = Math.max(brake, t.down('brake') ? 1 : Math.max(0, t.y));
+      throttle = Math.max(throttle, brake > .1 ? 0 : t.autoDrive ? 1 : Math.max(0, -t.y));
+      drift ||= t.down('drift');
+      item ||= t.down('item') || t.pressed('item');
+    }
     out.throttle = clamp(throttle, 0, 1);
     out.brake = clamp(brake, 0, 1);
     out.steer = clamp(steer, -1, 1);
@@ -260,6 +271,7 @@ class ManagedSource implements InputSource {
   }
 
   pressed(action: InputAction): boolean {
+    if (this.assignment.kind === 'any' && this.mgr.touch.pressed(action)) return true;
     const profile = this.keyboardProfile();
     if (profile && this.mgr.bindings(profile)[action].some((c) => this.mgr.keyboard.wasPressed(c))) return true;
     return this.pads().some((g) => g.pressed(this.mgr.gamepadBindings, action));

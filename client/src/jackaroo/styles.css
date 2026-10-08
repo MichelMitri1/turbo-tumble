@@ -317,3 +317,26 @@ html, body { margin: 0; height: 100%; overflow: hidden; color: var(--cream); fon
   .jk-split { padding: 4px 10px; gap: 8px; }
   .jk-split__eq { font-size: 20px; }
 }
+
+@media (any-pointer: coarse) {
+  .jk-chip { min-height: 40px; }
+  .jk-panel { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .jk-seg button { min-height: 40px; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .jk-menu {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: clamp(16px, 4vw, 42px);
+    padding: max(58px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .jk-menu .jk-logo { flex: 0 1 34%; min-width: 210px; }
+  .jk-menu .jk-wordmark .jk-display { font-size: clamp(46px, 7vw, 70px); }
+  .jk-logo-row { margin-bottom: -10px; }
+  .jk-tag { margin: 4px 0; font-size: 13px; }
+  .jk-menu > .jk-panel { width: min(520px, 62%); max-height: calc(100dvh - 70px); overflow-y: auto; padding: 12px 14px; gap: 6px; }
+  .jk-row input { padding-block: 7px; }
+  .jk-mode-note { min-height: 0; }
+}

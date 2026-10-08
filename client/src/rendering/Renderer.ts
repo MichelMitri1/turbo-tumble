@@ -22,6 +22,9 @@ export class Renderer {
   readonly gl: WebGLRenderer;
   private width = 1;
   private height = 1;
+  private pendingWidth = 0;
+  private pendingHeight = 0;
+  private pendingSince = 0;
   /** Mirror mode: the canvas is flipped by CSS, so viewports are laid out flipped to land back in place. */
   private mirrored = false;
 
@@ -61,8 +64,22 @@ export class Renderer {
     const h = Math.max(1, this.canvas.clientHeight);
     const ratio = Math.min(window.devicePixelRatio || 1, this.settings.maxPixelRatio);
     if (w === this.width && h === this.height && this.gl.getPixelRatio() === ratio) return false;
+
+    // Mobile browsers report several temporary sizes while their address bar,
+    // safe areas and orientation are changing. Keep rendering the previous
+    // projection until the new CSS viewport has been stable for a moment.
+    if (this.width > 1 && this.height > 1 && (w !== this.pendingWidth || h !== this.pendingHeight)) {
+      this.pendingWidth = w;
+      this.pendingHeight = h;
+      this.pendingSince = performance.now();
+      return false;
+    }
+    if (this.width > 1 && this.height > 1 && performance.now() - this.pendingSince < 120) return false;
+
     this.width = w;
     this.height = h;
+    this.pendingWidth = w;
+    this.pendingHeight = h;
     this.gl.setPixelRatio(ratio);
     this.gl.setSize(w, h, false);
     return true;

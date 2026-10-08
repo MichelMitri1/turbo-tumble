@@ -1,3 +1,6 @@
+import './mobile.css';
+import { installArcadeNavigation } from './navigation';
+
 /**
  * Fullscreen shared by the arcade hub and the games (with Safari's prefixed API).
  *
@@ -12,6 +15,7 @@
 type FsDocument = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> };
 type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
 type KeyboardLock = { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void };
+type StandaloneNavigator = Navigator & { standalone?: boolean };
 
 const doc = document as FsDocument;
 const WANT_KEY = 'arcade:fullscreen';
@@ -19,6 +23,9 @@ const WANT_KEY = 'arcade:fullscreen';
 export const fullscreenSupported = (): boolean => Boolean(document.fullscreenEnabled ?? (document.documentElement as FsElement).webkitRequestFullscreen);
 
 export const isFullscreen = (): boolean => Boolean(document.fullscreenElement ?? doc.webkitFullscreenElement);
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = (): boolean => matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || (navigator as StandaloneNavigator).standalone === true;
 
 const keyboard = (): KeyboardLock | undefined => (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
 
@@ -40,7 +47,51 @@ function wanted(): boolean {
 
 function enter(): void {
   const root = document.documentElement as FsElement;
-  void (root.requestFullscreen ?? root.webkitRequestFullscreen)?.call(root)?.catch(() => undefined); // refused outside a click / key press
+  const request = root.requestFullscreen;
+  if (request) {
+    // Android Chrome honours this hint by hiding its navigation UI as well as
+    // filling the screen. It is ignored by browsers that do not need it.
+    void request.call(root, { navigationUI: 'hide' }).catch(() => undefined); // refused outside a click / key press
+  } else {
+    void root.webkitRequestFullscreen?.call(root)?.catch(() => undefined);
+  }
+}
+
+/** iPhone only permits a whole web app without browser chrome from its Home Screen. */
+function showIOSFullscreenGuide(): void {
+  const old = document.querySelector<HTMLElement>('.arcade-install-guide');
+  if (old) {
+    old.querySelector<HTMLButtonElement>('.arcade-install-guide__close')?.focus();
+    return;
+  }
+
+  const guide = document.createElement('div');
+  guide.className = 'arcade-install-guide';
+  guide.setAttribute('role', 'dialog');
+  guide.setAttribute('aria-modal', 'true');
+  guide.setAttribute('aria-labelledby', 'arcade-install-title');
+  guide.innerHTML = `
+    <div class="arcade-install-guide__panel">
+      <button class="arcade-install-guide__x" type="button" aria-label="Close">×</button>
+      <div class="arcade-install-guide__icon">⛶</div>
+      <h2 id="arcade-install-title">Fullscreen on iPhone</h2>
+      <ol>
+        <li>Tap the <strong>Share</strong> button in Chrome.</li>
+        <li>Choose <strong>Add to Home Screen</strong>.</li>
+        <li>Open Mitris’ Arcade from the new Home Screen icon.</li>
+      </ol>
+      <p>iOS only removes all browser controls when a web app is launched from the Home Screen.</p>
+      <button class="arcade-install-guide__close" type="button">Got it</button>
+    </div>`;
+  const close = () => guide.remove();
+  guide.addEventListener('click', (event) => {
+    if (event.target === guide || (event.target as Element).closest('.arcade-install-guide__x, .arcade-install-guide__close')) close();
+  });
+  guide.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') close();
+  });
+  document.body.append(guide);
+  guide.querySelector<HTMLButtonElement>('.arcade-install-guide__close')?.focus();
 }
 
 export function toggleFullscreen(): void {
@@ -64,6 +115,10 @@ function markLeaving(): void {
 function init(): void {
   if (initialized) return;
   initialized = true;
+  installArcadeNavigation();
+  // `manipulation` keeps ordinary panning/pinch gestures but tells mobile
+  // browsers that a quick second tap is not a request to zoom the page.
+  document.documentElement.style.touchAction = 'manipulation';
   // Leaving the page drops fullscreen, but the player still wants it on the next page.
   addEventListener('pagehide', markLeaving);
   addEventListener('beforeunload', markLeaving);
@@ -114,10 +169,16 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 /** Ctrl+F (or ⌘F on Mac). */
 const isToggleKey = (e: KeyboardEvent) => e.code === 'KeyF' && (e.ctrlKey || (isMac && e.metaKey)) && !e.altKey && !e.shiftKey;
 
-/** Keep a button's label in sync: `labels` = [windowed, fullscreen]. Hidden where unsupported (iPhone). */
+/** Keep a button's label in sync: `labels` = [windowed, fullscreen]. */
 export function bindFullscreenButton(button: HTMLElement, labels: [string, string] = ['⛶ Fullscreen', '⛶ Exit Fullscreen']): void {
   init();
   if (!fullscreenSupported()) {
+    if (isIOS && !isStandalone()) {
+      button.textContent = labels[0];
+      button.title = 'How to use fullscreen on iPhone';
+      button.addEventListener('click', showIOSFullscreenGuide);
+      return;
+    }
     button.style.display = 'none';
     return;
   }

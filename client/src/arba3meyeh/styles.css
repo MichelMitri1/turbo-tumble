@@ -201,5 +201,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .fh-team { min-width: 92px; }
   .fh-bid__nums { grid-template-columns: repeat(4, 1fr); }
 }
+
+@media (any-pointer: coarse) {
+  .fh-chip { min-width: 42px; min-height: 42px; }
+  .fh-panel { max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .fh-seg button { min-height: 40px; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  #menu.fh-screen {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: clamp(28px, 8vw, 90px);
+    padding: max(54px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  }
+  .fh-logo__cards img { width: 44px; }
+  .fh-logo b { font-size: 72px; }
+  .fh-logo i { font-size: 30px; }
+  .fh-brand small { max-width: 300px; font-size: 11px; }
+  .fh-menu { gap: 5px; width: min(360px, 46vw); max-height: calc(100dvh - 66px); overflow-y: auto; }
+  .fh-btn { min-height: 44px; padding: 8px 18px; }
+}
 /* The hand summary never blocks the table buttons (score sheet, last trick…). */
 #summary, #summary * { pointer-events: none; }

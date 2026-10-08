@@ -1,0 +1,19 @@
+.mobile-controls { position: fixed; inset: 0; z-index: 8; pointer-events: none; user-select: none; -webkit-user-select: none; --touch-bottom: max(14px, env(safe-area-inset-bottom)); }
+.mobile-controls[hidden] { display: none; }
+.mobile-controls button, .mobile-stick { pointer-events: auto; touch-action: none; -webkit-touch-callout: none; }
+.mobile-controls button { min-width: 54px; min-height: 54px; border: 1px solid #ffffff80; border-radius: 18px; background: #101b38c9; color: white; font: 800 12px system-ui; padding: 8px; box-shadow: 0 3px 12px #0005; }
+.mobile-controls button.is-down { background: #258acfe8; transform: scale(.95); }
+.mobile-stick { position: absolute; bottom: var(--touch-bottom); left: max(16px, env(safe-area-inset-left)); width: 128px; height: 128px; border-radius: 50%; background: #101b3880; border: 2px solid #ffffff60; display: grid; place-items: center; }
+.mobile-stick span { width: 52px; height: 52px; border-radius: 50%; background: #d1eeffc0; border: 2px solid white; pointer-events: none; }
+.mobile-stick small { position: absolute; bottom: 8px; color: white; font: 700 10px system-ui; pointer-events: none; }
+.mobile-actions { position: absolute; bottom: var(--touch-bottom); right: max(16px, env(safe-area-inset-right)); display: grid; grid-template-columns: repeat(2, 66px); gap: 8px; }
+.mobile-actions button { height: 60px; }
+.mobile-actions [data-action="boost"], .mobile-actions [data-action="item"] { background: #a8580dcc; }
+.mobile-tools { position: absolute; top: max(70px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; gap: 6px; }
+.mobile-tools button { min-height: 44px; font-size: 10px; border-radius: 12px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .mobile-stick { width: 112px; height: 112px; }
+  .mobile-actions { grid-template-columns: repeat(2, 62px); gap: 6px; }
+  .mobile-actions button { height: 52px; min-height: 52px; }
+  .mobile-tools { top: max(8px, env(safe-area-inset-top)); }
+}
