@@ -131,12 +131,39 @@ export const PERKS: Record<Perk, { name: string; tier: 1 | 2 | 3; desc: string }
   quickfix: { name: 'Quick Fix', tier: 3, desc: 'Health starts regenerating sooner.' },
 };
 
-export type Streak = 'uav' | 'airstrike' | 'heli';
-export const STREAKS: Record<Streak, { name: string; kills: number; desc: string }> = {
+// ---------------------------------------------------------------- equipment
+
+export type Lethal = 'frag' | 'semtex' | 'molotov' | 'tknife';
+export type Tactical = 'flash' | 'stun' | 'smoke';
+export const LETHALS: Record<Lethal, { name: string; count: number; desc: string }> = {
+  frag: { name: 'Frag Grenade', count: 2, desc: 'Hold to cook. Bounces, 3.2 s fuse.' },
+  semtex: { name: 'Semtex', count: 2, desc: 'Sticks to whatever it hits — players too. 2 s fuse.' },
+  molotov: { name: 'Molotov', count: 1, desc: 'Shatters on impact into a pool of fire.' },
+  tknife: { name: 'Throwing Knife', count: 2, desc: 'One hit, one kill. Mind the drop.' },
+};
+export const TACTICALS: Record<Tactical, { name: string; count: number; desc: string }> = {
+  flash: { name: 'Flashbang', count: 2, desc: 'Blinds anyone looking at it.' },
+  stun: { name: 'Stun Grenade', count: 2, desc: 'Slows movement and aim of anyone caught.' },
+  smoke: { name: 'Smoke Grenade', count: 1, desc: 'A thick screen that blocks vision and streaks.' },
+};
+
+// ---------------------------------------------------------------- killstreaks
+
+export type Streak = 'uav' | 'rcxd' | 'cuav' | 'drone' | 'sentry' | 'airstrike' | 'heli' | 'dogs' | 'gunner';
+/** `pilot`: you control it (your soldier stands still meanwhile). */
+export const STREAKS: Record<Streak, { name: string; kills: number; desc: string; pilot?: boolean }> = {
   uav: { name: 'UAV', kills: 3, desc: 'Shows enemies on the minimap for 30 s.' },
+  rcxd: { name: 'RC-XD', kills: 3, desc: 'Drive an explosive RC car into the enemy. Fire to detonate.', pilot: true },
+  cuav: { name: 'Counter-UAV', kills: 4, desc: 'Jams the enemy minimap for 25 s.' },
+  drone: { name: 'Recon Drone', kills: 4, desc: 'Fly a drone over the map; fire to mark enemies for your team.', pilot: true },
+  sentry: { name: 'Sentry Gun', kills: 5, desc: 'An automated turret guards where you place it for 60 s.' },
   airstrike: { name: 'Precision Airstrike', kills: 5, desc: 'Jets carpet-bomb the biggest enemy group.' },
   heli: { name: 'Attack Helicopter', kills: 7, desc: 'A gunship circles the map hunting enemies for 40 s.' },
+  dogs: { name: 'Attack Dogs', kills: 8, desc: 'A pack of dogs hunts the enemy team for 45 s.' },
+  gunner: { name: 'Chopper Gunner', kills: 10, desc: 'Man the minigun of a gunship circling the map.', pilot: true },
 };
+export const STREAK_LIST = (Object.keys(STREAKS) as Streak[]).sort((a, b) => STREAKS[a].kills - STREAKS[b].kills);
+export const DEFAULT_STREAKS: [Streak, Streak, Streak] = ['uav', 'airstrike', 'heli'];
 
 export interface Loadout {
   name: string;
@@ -144,12 +171,41 @@ export interface Loadout {
   primaryAtt: Attachments;
   secondary: string;
   perks: [Perk, Perk, Perk];
+  lethal: Lethal;
+  tactical: Tactical;
+  /** Three streaks, cheapest first. */
+  streaks: [Streak, Streak, Streak];
+}
+
+/** A loadout with every field valid (old saves, other clients). */
+export function fixLoadout(l: Partial<Loadout> | undefined, d: Loadout = DEFAULT_CLASSES[0]!): Loadout {
+  const x = l ?? {};
+  const att = x.primaryAtt ?? d.primaryAtt;
+  const perks = (Array.isArray(x.perks) ? x.perks : d.perks).map((p, i) => (p in PERKS && PERKS[p as Perk].tier === i + 1 ? p : d.perks[i]!)) as Loadout['perks'];
+  let streaks = (Array.isArray(x.streaks) ? x.streaks : d.streaks).filter((s, i, a) => s in STREAKS && a.indexOf(s) === i) as Streak[];
+  for (const s of DEFAULT_STREAKS) if (streaks.length < 3 && !streaks.includes(s)) streaks.push(s);
+  streaks = streaks.slice(0, 3).sort((a, b) => STREAKS[a].kills - STREAKS[b].kills);
+  return {
+    name: String(x.name ?? d.name).slice(0, 20),
+    primary: WEAPON[x.primary ?? '']?.slot === 'primary' ? x.primary! : d.primary,
+    secondary: WEAPON[x.secondary ?? '']?.slot === 'secondary' ? x.secondary! : d.secondary,
+    primaryAtt: {
+      optic: (['iron', 'reddot', 'holo', 'acog'] as const).includes(att.optic) ? att.optic : 'iron',
+      muzzle: att.muzzle === 'suppressor' ? 'suppressor' : 'none',
+      under: (['none', 'grip', 'laser'] as const).includes(att.under) ? att.under : 'none',
+      ammo: att.ammo === 'extended' ? 'extended' : 'standard',
+    },
+    perks: perks.length === 3 ? perks : d.perks,
+    lethal: x.lethal && x.lethal in LETHALS ? x.lethal : d.lethal,
+    tactical: x.tactical && x.tactical in TACTICALS ? x.tactical : d.tactical,
+    streaks: streaks as Loadout['streaks'],
+  };
 }
 
 export const DEFAULT_CLASSES: Loadout[] = [
-  { name: 'Assault', primary: 'm13', primaryAtt: { optic: 'reddot', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'x9', perks: ['lightweight', 'hardline', 'quickfix'] },
-  { name: 'Run & Gun', primary: 'viper', primaryAtt: { optic: 'iron', muzzle: 'suppressor', under: 'laser', ammo: 'extended' }, secondary: 'x9', perks: ['lightweight', 'ghost', 'steady'] },
-  { name: 'Sniper', primary: 'kar', primaryAtt: NO_ATTACHMENTS, secondary: 'deagle', perks: ['scavenger', 'ghost', 'quickfix'] },
-  { name: 'Close Quarters', primary: 'r725', primaryAtt: { optic: 'iron', muzzle: 'none', under: 'laser', ammo: 'standard' }, secondary: 'magnum', perks: ['lightweight', 'hardline', 'steady'] },
-  { name: 'Support', primary: 'holger', primaryAtt: { optic: 'holo', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'sawed', perks: ['scavenger', 'hardline', 'quickfix'] },
+  { name: 'Assault', primary: 'm13', primaryAtt: { optic: 'reddot', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'x9', perks: ['lightweight', 'hardline', 'quickfix'], lethal: 'frag', tactical: 'flash', streaks: ['uav', 'airstrike', 'heli'] },
+  { name: 'Run & Gun', primary: 'viper', primaryAtt: { optic: 'iron', muzzle: 'suppressor', under: 'laser', ammo: 'extended' }, secondary: 'x9', perks: ['lightweight', 'ghost', 'steady'], lethal: 'semtex', tactical: 'stun', streaks: ['rcxd', 'cuav', 'sentry'] },
+  { name: 'Sniper', primary: 'kar', primaryAtt: NO_ATTACHMENTS, secondary: 'deagle', perks: ['scavenger', 'ghost', 'quickfix'], lethal: 'tknife', tactical: 'smoke', streaks: ['drone', 'airstrike', 'gunner'] },
+  { name: 'Close Quarters', primary: 'r725', primaryAtt: { optic: 'iron', muzzle: 'none', under: 'laser', ammo: 'standard' }, secondary: 'magnum', perks: ['lightweight', 'hardline', 'steady'], lethal: 'semtex', tactical: 'flash', streaks: ['rcxd', 'sentry', 'dogs'] },
+  { name: 'Support', primary: 'holger', primaryAtt: { optic: 'holo', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'sawed', perks: ['scavenger', 'hardline', 'quickfix'], lethal: 'molotov', tactical: 'smoke', streaks: ['uav', 'heli', 'dogs'] },
 ];

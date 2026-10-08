@@ -356,3 +356,43 @@ img[data-g]:not([src]), img[data-i]:not([src]), img[data-m]:not([src]) { visibil
 .zh-classpick button { align-items: center; justify-content: flex-start; gap: 12px; }
 .zh-classpick button img { width: 84px; height: 40px; object-fit: contain; flex: none; }
 .zh-classpick button span { display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- splitscreen */
+.zh-view { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.zh-view .zh-hud { position: absolute; inset: 0; zoom: var(--hud-scale, 1); }
+.zh-split .zh-view { box-shadow: inset 0 0 0 1px rgba(0,0,0,0.85); }
+.zh-split[data-views='3']::after { content: 'ZERO HOUR'; position: absolute; right: 0; bottom: 0; width: 50%; height: 50%; display: flex; align-items: center; justify-content: center; font-family: var(--head); font-size: 64px; letter-spacing: 0.1em; color: rgba(255,255,255,0.12); background: #0b0d0c; pointer-events: none; }
+.zh-split .zh-compass { display: none; }
+.zh-split-setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.zh-split-p { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; padding: 8px 10px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); }
+.zh-split-p > b { grid-row: span 2; font-family: var(--head); font-size: 30px; font-weight: 400; color: var(--accent); }
+.zh-split-p > small { color: var(--muted); font-size: 12px; }
+.zh-split-p.missing > small em { color: #ff6a4a; font-style: normal; }
+.zh-split-p .zh-seg { grid-column: 1 / -1; margin-top: 4px; }
+.zh-seg.small button { min-width: 0; font-size: 11px; padding: 5px 6px; }
+
+/* ---------------------------------------------------------------- equipment & streak HUD */
+.zh-ammo__nades { display: flex; gap: 10px; justify-content: flex-end; }
+.zh-ammo__nades span { display: inline-flex; align-items: center; gap: 3px; }
+.zh-nade__ico { width: 18px; height: 18px; color: #e8ece8; }
+.zh-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 50; }
+.zh-hud.stunned { filter: blur(1px); }
+.zh-marks i { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border: 2px solid #ff3a2a; background: rgba(255,58,42,0.35); box-shadow: 0 0 6px rgba(255,40,20,0.8); }
+.zh-pilot { position: absolute; inset: 0; pointer-events: none; }
+.zh-hud.piloting .zh-ammo, .zh-hud.piloting .zh-cross, .zh-hud.piloting .zh-streaks { opacity: 0; }
+.zh-pilot__top { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); display: flex; gap: 14px; align-items: baseline; font-family: var(--head); letter-spacing: 0.08em; }
+.zh-pilot__top b { font-size: 30px; font-weight: 400; color: var(--accent); }
+.zh-pilot__top span { font-size: 26px; }
+.zh-pilot__hint { position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); font-weight: 700; letter-spacing: 0.2em; font-size: 14px; background: rgba(0,0,0,0.45); padding: 4px 12px; }
+.zh-pilot__hp { position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); width: 180px; height: 5px; background: rgba(255,255,255,0.15); }
+.zh-pilot__hp i { display: block; height: 100%; background: var(--accent); }
+.zh-pilot__ret { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; transform: translate(-50%, -50%); border: 2px solid rgba(255,255,255,0.7); border-radius: 50%; }
+.zh-pilot__ret::before, .zh-pilot__ret::after { content: ''; position: absolute; background: rgba(255,255,255,0.8); }
+.zh-pilot__ret::before { left: 50%; top: -30px; bottom: -30px; width: 2px; margin-left: -1px; }
+.zh-pilot__ret::after { top: 50%; left: -30px; right: -30px; height: 2px; margin-top: -1px; }
+.zh-pilot__ret.rcxd { width: 40px; height: 40px; top: 62%; }
+.zh-hud.piloting::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55)); pointer-events: none; }
+.zh-card__badge { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #101408; font-style: normal; font-weight: 700; font-size: 12px; }
+.zh-card { position: relative; }
+.zh-card em { color: var(--accent); font-style: normal; }
+.zh-sec small { font-family: var(--ui); font-size: 12px; color: var(--muted); letter-spacing: 0.15em; margin-left: 8px; }

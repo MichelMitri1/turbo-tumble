@@ -19,3 +19,10 @@ Engine recordings (`audio/engines/`) are CC BY-SA adaptations of Wikimedia Commo
 
 CC0 by [Quaternius](https://quaternius.com): Ultimate Gun Pack, Ultimate Modular Characters
 (SWAT), Toon Shooter Game Kit. Converted with `tools/fps-assets.mjs`.
+
+Gun sounds (`fps/sfx/`): The Free Firearm Sound Library by Ben Jaszczak, Brian Nelson,
+Kevin Heras and Matthew Nanney — CC0
+(https://opengameart.org/content/the-free-firearm-sound-library). Trimmed with `tools/fps-sfx.mjs`.
+
+400 playing cards (`400/cards/`): Vector Playing Cards by Byron Knoll (via
+github.com/notpeter/Vector-Playing-Cards) — public domain. Rendered to WebP.

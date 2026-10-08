@@ -1,6 +1,7 @@
 import type { Game, Medal, Soldier } from './sim/game';
 import { MODES } from './sim/game';
-import { STREAKS, WEAPON, type Streak } from './sim/weapons';
+import { LETHALS, STREAKS, TACTICALS, WEAPON } from './sim/weapons';
+import { UNIT_NAMES, type UnitKind } from './sim/game';
 import { icon } from './icons';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -19,11 +20,21 @@ export const MEDAL_NAMES: Record<Medal, string> = {
   grenade: 'FRAG KILL',
   buzzkill: 'BUZZKILL',
   collateral: 'COLLATERAL',
+  stuck: 'STUCK',
+  tknife: 'BULLSEYE',
+  destroyer: 'DESTROYER',
 };
 
-const STREAK_ORDER: Streak[] = ['uav', 'airstrike', 'heli'];
 /** Kill-feed icon for whatever did the killing. */
-const weaponIcon = (w: string) => icon(WEAPON[w]?.cls ?? (w === 'knife' ? 'knife' : w === 'grenade' ? 'grenade' : w === 'airstrike' ? 'airstrike' : w === 'heli' ? 'heli' : 'barrel'), 'zh-feed__ico');
+const FEED_ICON: Record<string, string> = { knife: 'knife', grenade: 'grenade', semtex: 'semtex', molotov: 'molotov', tknife: 'tknife', airstrike: 'airstrike', heli: 'heli', rcxd: 'rcxd', sentry: 'sentry', dog: 'dogs', gunner: 'gunner' };
+const weaponIcon = (w: string) => icon(WEAPON[w]?.cls ?? FEED_ICON[w] ?? 'barrel', 'zh-feed__ico');
+/** What the HUD shows while you pilot a killstreak. */
+export interface PilotInfo {
+  kind: UnitKind;
+  left: number;
+  hp: number;
+}
+const MARKS = 14;
 const SPAWN_PROTECT = 1.5;
 const NUMS = 16;
 
@@ -48,12 +59,18 @@ export class Hud {
   /** Brief edge flash after taking a hit. */
   private hurtT = 0;
   private deadKey = '';
+  /** This HUD's viewport size (the whole window, or one splitscreen quarter). */
+  vw = innerWidth;
+  vh = innerHeight;
+  private marks: HTMLElement[] = [];
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'zh-hud hidden';
     this.el.innerHTML = `
       <div class="zh-blood" id="h-blood"></div>
+      <div class="zh-pilot hidden" id="h-pilot"></div>
+      <div class="zh-marks" id="h-marks"></div>
       <div class="zh-dmg" id="h-dmg"></div>
       <div class="zh-adsvig" id="h-adsvig"></div>
       <div class="zh-scope hidden" id="h-scope"><div class="zh-scope__ret"></div><svg class="zh-scope__chev" viewBox="0 0 40 40"><path d="M8 22 L20 12 L32 22" fill="none" stroke="#ff3a24" stroke-width="2.6" stroke-linejoin="miter"/><path d="M20 12 V30" stroke="#ff3a24" stroke-width="1.2"/></svg></div>
@@ -73,7 +90,8 @@ export class Hud {
       <div class="zh-dead hidden" id="h-dead"></div>
       <div class="zh-board hidden" id="h-board"></div>
       <div class="zh-center" id="h-center"></div>
-      <div class="zh-hint" id="h-hint"></div>`;
+      <div class="zh-hint" id="h-hint"></div>
+      <div class="zh-flash" id="h-flash"></div>`;
     parent.appendChild(this.el);
     this.mini = this.$<HTMLCanvasElement>('#h-mini');
     this.compass = this.$<HTMLCanvasElement>('#h-compass');
@@ -85,6 +103,19 @@ export class Hud {
       numsEl.appendChild(el);
       this.nums.push({ el, t: 0, x: 0, y: 0, z: 0, dmg: 0, target: '' });
     }
+    const marksEl = this.$('#h-marks');
+    for (let i = 0; i < MARKS; i++) {
+      const el = document.createElement('i');
+      el.style.display = 'none';
+      marksEl.appendChild(el);
+      this.marks.push(el);
+    }
+  }
+
+  /** The viewport this HUD covers. */
+  setSize(w: number, h: number): void {
+    this.vw = w;
+    this.vh = h;
   }
 
   show(on: boolean): void {
@@ -192,7 +223,7 @@ export class Hud {
     dt: number,
     g: Game,
     me: Soldier,
-    opts: { spread: number; ads: number; scoped: boolean; scope: '' | 'sniper' | 'acog'; yaw: number; enemyName: string; scoreboard: boolean; pad: boolean; reloadP: number; project: Projector; ping?: (s: Soldier) => number },
+    opts: { spread: number; ads: number; scoped: boolean; scope: '' | 'sniper' | 'acog'; yaw: number; enemyName: string; scoreboard: boolean; pad: boolean; reloadP: number; project: Projector; ping?: (s: Soldier) => number; pilot?: PilotInfo | null },
   ): void {
     const ffa = g.mode === 'ffa';
     // Score banner.
@@ -216,19 +247,21 @@ export class Hud {
     this.set('#h-mag', String(w.ammo));
     this.set('#h-res', `/ ${w.reserve}`);
     this.$('#h-mag').classList.toggle('low', w.ammo <= Math.ceil(w.def.mag * 0.25));
-    this.set('#h-nades', '◆'.repeat(me.grenades));
+    this.set('#h-nades', `<span title="${LETHALS[me.loadout.lethal].name}">${icon(me.loadout.lethal, 'zh-nade__ico')}<b>${me.grenades}</b></span><span title="${TACTICALS[me.loadout.tactical].name}">${icon(me.loadout.tactical, 'zh-nade__ico')}<b>${me.tacticals}</b></span>`, true);
     const showReload = me.alive && w.ammo <= Math.ceil(w.def.mag * 0.25) && me.reloadT <= 0 && w.reserve > 0;
     this.set('#h-reload', me.reloadT > 0 ? 'RELOADING' : opts.pad ? 'RELOAD □' : 'RELOAD [R]');
     this.$('#h-reload').classList.toggle('show', me.alive && (showReload || me.reloadT > 0));
-    // Killstreak chip: kill pips with the 3 / 5 / 7 rewards marked, then the three streak icons.
+    // Killstreak chip: kill pips with your three rewards marked, then their icons (ready ones show their key).
     const off = me.loadout.perks.includes('hardline') ? 1 : 0;
-    const top = STREAKS.heli.kills - off;
-    const marks = new Set(STREAK_ORDER.map((s) => STREAKS[s].kills - off));
+    const mine = me.loadout.streaks;
+    const top = Math.max(...mine.map((s) => STREAKS[s].kills)) - off;
+    const marks = new Set(mine.map((s) => STREAKS[s].kills - off));
     const pips = Array.from({ length: top }, (_, i) => `<i class="${i < me.streak ? 'on' : ''} ${marks.has(i + 1) ? 'mark' : ''}"></i>`).join('');
-    const icons = STREAK_ORDER.map((s) => {
+    const icons = mine.map((s, i) => {
       const ready = me.streaks.includes(s);
       const used = me.earned.has(s) && !ready;
-      return `<span class="zh-streak ${ready ? 'ready' : ''} ${used ? 'used' : ''}">${icon(s, 'zh-streak__ico')}<small>${ready ? (opts.pad ? 'D-PAD →' : 'PRESS 4') : STREAKS[s].kills - off}</small></span>`;
+      const key = opts.pad ? ['D-PAD ←', 'D-PAD ↑', 'D-PAD ↓'][i] : `PRESS ${4 + i}`;
+      return `<span class="zh-streak ${ready ? 'ready' : ''} ${used ? 'used' : ''}" title="${STREAKS[s].name}">${icon(s, 'zh-streak__ico')}<small>${ready ? key : STREAKS[s].kills - off}</small></span>`;
     }).join('');
     this.set('#h-streaks', `<div class="zh-streaks__pips">${pips}</div><div class="zh-streaks__row">${icons}</div>`, true);
     // Spawn protection.
@@ -236,9 +269,34 @@ export class Hud {
     // Crosshair: four lines pushed out by the spread; hidden when aiming.
     const cross = this.$('#h-cross');
     // `spread` is the cone's radius as a fraction of half the screen height.
-    const gap = 3 + opts.spread * innerHeight * 0.5;
+    const gap = 3 + opts.spread * this.vh * 0.5;
     cross.style.setProperty('--gap', `${gap.toFixed(1)}px`);
-    cross.style.opacity = me.alive ? String(Math.max(0, 1 - opts.ads * 3)) : '0';
+    cross.style.opacity = me.alive && !opts.pilot ? String(Math.max(0, 1 - opts.ads * 3)) : '0';
+    // Flashbang: white-out that fades; stun: blurry.
+    const blind = Math.max(0, me.blindT - g.time);
+    this.$('#h-flash').style.opacity = me.alive ? Math.min(1, blind / 1.6).toFixed(3) : '0';
+    this.el.classList.toggle('stunned', me.alive && g.time < me.stunT);
+    // Piloting a killstreak.
+    const pilot = this.$('#h-pilot');
+    pilot.classList.toggle('hidden', !opts.pilot);
+    this.el.classList.toggle('piloting', !!opts.pilot);
+    if (opts.pilot) {
+      const p = opts.pilot;
+      const hint = { rcxd: `${opts.pad ? 'R2' : 'FIRE'} TO DETONATE`, drone: `${opts.pad ? 'R2' : 'FIRE'} TO MARK ENEMIES · ${opts.pad ? 'R3' : 'V'} TO EXIT`, gunner: `${opts.pad ? 'R2' : 'FIRE'} MINIGUN · ${opts.pad ? 'R3' : 'V'} TO EXIT`, sentry: '', dog: '' }[p.kind];
+      this.set('#h-pilot', `<div class="zh-pilot__top"><b>${UNIT_NAMES[p.kind].toUpperCase()}</b><span>${Math.ceil(p.left)}s</span></div><div class="zh-pilot__ret ${p.kind}"></div><div class="zh-pilot__hint">${hint}</div><div class="zh-pilot__hp"><i style="width:${Math.max(0, Math.min(100, p.hp * 100)).toFixed(0)}%"></i></div>`, true);
+    }
+    // Drone-marked enemies: red diamonds through walls.
+    let mi = 0;
+    for (const o of g.soldiers) {
+      if (mi >= MARKS) break;
+      if (!o.alive || !g.enemies(me, o) || !g.marked(me, o)) continue;
+      const p = opts.project(o.m.x, o.m.y + 2.1, o.m.z);
+      if (!p) continue;
+      const el = this.marks[mi++]!;
+      el.style.display = '';
+      el.style.transform = `translate(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px) translate(-50%, -50%) rotate(45deg)`;
+    }
+    for (; mi < MARKS; mi++) this.marks[mi]!.style.display = 'none';
     this.$('#h-scope').classList.toggle('hidden', !opts.scoped);
     this.$('#h-scope').classList.toggle('acog', opts.scope === 'acog');
     // ADS: a soft vignette pulls focus to the sight.
@@ -269,8 +327,8 @@ export class Hud {
       const d = this.damage[i]!;
       d.t -= dt;
       const ang = Math.atan2(-(d.x - me.m.x), -(d.z - me.m.z)) - opts.yaw;
-      const ex = -Math.sin(ang) * innerWidth * 0.42;
-      const ey = -Math.cos(ang) * innerHeight * 0.42;
+      const ex = -Math.sin(ang) * this.vw * 0.42;
+      const ey = -Math.cos(ang) * this.vh * 0.42;
       d.el.style.transform = `translate(${ex.toFixed(1)}px, ${ey.toFixed(1)}px) rotate(${(-ang * 180) / Math.PI}deg)`;
       d.el.style.opacity = String(Math.min(1, d.t));
       if (d.t <= 0) {
@@ -376,6 +434,7 @@ export class Hud {
       }
     };
     for (const f of g.flags) mark(f.x, f.z, f.owner === -1 ? '#ddd' : f.owner === me.team ? '#4aa3ff' : '#ff4a3a', f.name);
+    if (g.jammed(me)) return;
     if (g.uavFor(me)) for (const o of g.soldiers) if (o.alive && g.enemies(me, o) && !o.loadout.perks.includes('ghost')) mark(o.m.x, o.m.z, '#ff3a2a');
     for (const h of g.helis) mark(h.x, h.z, h.team === me.team && g.mode !== 'ffa' ? '#4aa3ff' : '#ff3a2a', '✚');
     // Centre notch.
@@ -400,6 +459,24 @@ export class Hud {
     x.scale(zoom, zoom);
     x.translate(-me.m.x * s, -me.m.z * s);
     if (this.miniBase) x.drawImage(this.miniBase, -256, -256);
+    // Counter-UAV: the map is just static.
+    if (g.jammed(me)) {
+      x.restore();
+      const img = x.createImageData(W, W);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() * 160;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = 200;
+      }
+      x.save();
+      x.beginPath();
+      x.arc(W / 2, W / 2, W / 2 - 2, 0, Math.PI * 2);
+      x.clip();
+      x.putImageData(img, 0, 0);
+      x.restore();
+      this.set('#h-uav', 'JAMMED');
+      return;
+    }
     const uav = g.uavFor(me);
     const dot = (px: number, pz: number, color: string, r: number, arrow?: number) => {
       x.fillStyle = color;
@@ -436,11 +513,16 @@ export class Hud {
       else {
         // Enemies show when firing unsuppressed, or under our UAV (unless Ghost).
         const firing = g.time - o.lastFireT < 1.2 && !o.suppressed;
-        const seen = (uav && !o.loadout.perks.includes('ghost')) || firing;
+        const seen = (uav && !o.loadout.perks.includes('ghost')) || firing || g.marked(me, o);
         if (seen) dot(o.m.x, o.m.z, '#ff3a2a', 8);
       }
     }
     for (const h of g.helis) dot(h.x, h.z, h.team === me.team && g.mode !== 'ffa' ? '#4aa3ff' : '#ff3a2a', 12);
+    // Our own killstreak hardware (enemy hardware only under a UAV).
+    for (const u of g.units) {
+      const ours = g.mode === 'ffa' ? u.owner === me.id : u.team === me.team;
+      if (ours || uav) dot(u.x, u.z, ours ? '#7fd0ff' : '#ff6a4a', u.kind === 'gunner' ? 12 : 6);
+    }
     x.restore();
     // Me: arrow at the centre, pointing up.
     x.fillStyle = '#ffd23f';

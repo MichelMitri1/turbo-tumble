@@ -57,6 +57,14 @@ export const GAMES: GameEntry[] = [
     art: { image: '/assets/hub/last-card.webp', emoji: '🃏', from: '#e8262f', to: '#1f6fd6' },
   },
   {
+    id: 'arba3meyeh',
+    title: '400 · أربعمية',
+    tagline: 'The Lebanese partnership trick-taker: bid your tricks, hearts are trump, first team to 41 wins.',
+    href: '/arba3meyeh/',
+    tags: ['Cards', 'vs Bots', 'Online · LAN', '2 v 2'],
+    art: { image: '/assets/hub/arba3meyeh.webp', emoji: '♥️', from: '#0b4f2c', to: '#a3172b' },
+  },
+  {
     id: 'corner-pocket',
     title: 'Corner Pocket',
     tagline: '8-ball pool with real ball physics: spin, draw, follow, english. Pot your group, then the 8.',

@@ -137,6 +137,20 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     if (!l) byMat.set(key, (l = { mat: b.mat, tint: b.tint, geos: [] }));
     l.geos.push(boxGeometry(b, TILE[b.mat]));
   }
+  // Cylinders (tanks, silos, pipes): UVs in metres like the boxes.
+  for (const c of map.cyls ?? []) {
+    const key = `${c.mat}|${c.tint ?? ''}`;
+    let l = byMat.get(key);
+    if (!l) byMat.set(key, (l = { mat: c.mat, tint: c.tint, geos: [] }));
+    const geo = new THREE.CylinderGeometry(c.r, c.r, c.h, Math.max(12, Math.min(32, Math.round(c.r * 6))), 1);
+    const uv = geo.getAttribute('uv') as THREE.BufferAttribute;
+    const tile = TILE[c.mat];
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * 2 * Math.PI * c.r) / tile, (uv.getY(i) * c.h) / tile);
+    if (c.axis === 'x') geo.rotateZ(Math.PI / 2);
+    if (c.axis === 'z') geo.rotateX(Math.PI / 2);
+    geo.translate(c.x, c.axis === 'y' ? c.y + c.h / 2 : c.y, c.z);
+    l.geos.push(geo);
+  }
   const ROUGH: Partial<Record<Material, number>> = { metal: 0.6, marble: 0.3, glass: 0.15, darkwood: 0.6, paint: 0.7 };
   for (const { mat, tint, geos } of byMat.values()) {
     const geo = keep(mergeGeometries(geos));
@@ -337,5 +351,90 @@ export function makeTag(team: 0 | 1): THREE.Group {
   b.rotation.z = 0.35;
   b.position.x = 0.06;
   g.add(a, b);
+  return g;
+}
+
+// ---------------------------------------------------------------- killstreak hardware (front = −z)
+
+/** RC-XD, recon drone, sentry gun, attack dog or the chopper gunner's gunship. */
+export function makeUnit(kind: 'rcxd' | 'drone' | 'sentry' | 'dog' | 'gunner', team: 0 | 1): THREE.Group {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: team === 0 ? '#3a5a7a' : '#7a5a3a', roughness: 0.55, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#18191c', roughness: 0.6, metalness: 0.4 });
+  const box = (w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z = 0) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+    o.position.set(x, y, z);
+    g.add(o);
+    return o;
+  };
+  if (kind === 'rcxd') {
+    box(0.42, 0.14, 0.72, paint, 0, 0.16, 0);
+    box(0.3, 0.1, 0.3, new THREE.MeshStandardMaterial({ color: '#c8b070', roughness: 0.8 }), 0, 0.28, 0.08); // the charge
+    for (const [x, z] of [[-0.24, -0.24], [0.24, -0.24], [-0.24, 0.26], [0.24, 0.26]] as Array<[number, number]>) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.08, 12), dark);
+      w.rotation.z = Math.PI / 2;
+      w.position.set(x, 0.1, z);
+      w.name = 'wheel';
+      g.add(w);
+    }
+    box(0.02, 0.4, 0.02, dark, 0.14, 0.45, 0.25);
+    const led = box(0.05, 0.05, 0.05, new THREE.MeshBasicMaterial({ color: '#ff2a1a' }), -0.12, 0.33, 0.2);
+    led.name = 'led';
+  } else if (kind === 'drone') {
+    box(0.34, 0.12, 0.34, paint);
+    for (let i = 0; i < 4; i++) {
+      const a = Math.PI / 4 + (i * Math.PI) / 2;
+      const arm = box(0.42, 0.04, 0.05, dark, Math.cos(a) * 0.21, 0, Math.sin(a) * 0.21);
+      arm.rotation.y = -a;
+      const rotor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.01, 0.04), dark);
+      rotor.position.set(Math.cos(a) * 0.42, 0.06, Math.sin(a) * 0.42);
+      rotor.name = 'rotor';
+      g.add(rotor);
+    }
+    const cam = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), new THREE.MeshStandardMaterial({ color: '#101820', roughness: 0.1, metalness: 0.9 }));
+    cam.position.set(0, -0.1, -0.1);
+    g.add(cam);
+  } else if (kind === 'sentry') {
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 6), dark);
+      leg.position.set(Math.cos(a) * 0.25, 0.4, Math.sin(a) * 0.25);
+      leg.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45);
+      g.add(leg);
+    }
+    box(0.06, 0.3, 0.06, dark, 0, 0.85, 0);
+    box(0.42, 0.32, 0.55, paint, 0, 1.05, 0);
+    for (const x of [-0.08, 0.08]) {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.7, 8), dark);
+      b.rotation.x = Math.PI / 2;
+      b.position.set(x, 1.05, -0.55);
+      g.add(b);
+    }
+    box(0.3, 0.2, 0.08, new THREE.MeshStandardMaterial({ color: '#203040', roughness: 0.1, metalness: 0.9 }), 0, 1.2, -0.2);
+  } else if (kind === 'dog') {
+    const fur = new THREE.MeshStandardMaterial({ color: team === 0 ? '#3a3028' : '#5a4430', roughness: 0.95 });
+    box(0.3, 0.3, 0.8, fur, 0, 0.62, 0.05);
+    box(0.24, 0.24, 0.3, fur, 0, 0.82, -0.42);
+    box(0.14, 0.12, 0.2, fur, 0, 0.74, -0.62);
+    box(0.06, 0.12, 0.05, fur, -0.08, 0.98, -0.4);
+    box(0.06, 0.12, 0.05, fur, 0.08, 0.98, -0.4);
+    box(0.32, 0.08, 0.2, new THREE.MeshStandardMaterial({ color: team === 0 ? '#4aa3ff' : '#ff4a3a' }), 0, 0.8, -0.3); // vest collar
+    for (const [x, z, i] of [[-0.1, -0.25, 0], [0.1, -0.25, 1], [-0.1, 0.35, 2], [0.1, 0.35, 3]] as Array<[number, number, number]>) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.5, z);
+      leg.name = `leg${i}`;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), fur);
+      m.position.y = -0.25;
+      leg.add(m);
+      g.add(leg);
+    }
+    const tail = box(0.05, 0.05, 0.3, fur, 0, 0.75, 0.55);
+    tail.rotation.x = -0.6;
+  } else {
+    const heli = makeHeli(team);
+    heli.rotation.y = -Math.PI / 2; // nose (−x) → −z
+    g.add(heli);
+  }
+  g.traverse((n) => ((n as THREE.Mesh).isMesh ? (n.castShadow = true) : null));
   return g;
 }

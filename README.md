@@ -413,22 +413,47 @@ ball in hand, tap a pocket to call the 8. Online / LAN 1v1 rooms with live oppon
 Server room: `server/src/rooms/PoolRoom.ts`.
 - `npx tsx tools/pool-sim.ts 30 hard normal` — headless bot-vs-bot games (rules, stalls, think time)
 
+## 400 · أربعمية (`/arba3meyeh/`)
+
+The Levantine partnership trick-taking game. Four players, partners opposite, everything
+counter-clockwise; hearts are always trump. Each player bids their own tricks once (min 2;
+3 / 4 / 5 at 30 / 40 / 50 points), the table must bid 11+ (12 / 13 / 14 once anyone is at
+30 / 40 / 50) or it's thrown in. Make your bid to score its value (2–4 face, 5→10, 6→12,
+7→14, 8→16, 9→27, 10→30, 11→33, 12→36; 13 made wins outright; optional Jawaker scoring), miss
+it and lose it; first team to 41 with the partner above zero wins. Engine
+`client/src/arba3meyeh/engine.ts`, card-counting bots `bots.ts`, real public-domain card art
+in `client/public/assets/400/cards/`. Online / LAN tables (pick your chair, bots fill the
+rest): `server/src/rooms/FourHundredRoom.ts`.
+- `npx tsx tools/400-sim.ts [games] [easy|normal|hard]` — headless bot games (bids made, throw-ins, legality)
+- `node tools/400-backs.mjs` — renders the four card backs to `client/public/assets/400/backs/`
+
 ## Zero Hour (`/zero-hour/`)
 
 Modern military FPS multiplayer in the style of the big annual shooter (original name, guns,
 maps and UI). 18 weapons across AR / SMG / LMG / shotgun / marksman / sniper / pistol with
-damage falloff, headshot multipliers, recoil and ADS; attachments (optics, suppressor, grip,
-laser, extended mag); 6 perks; 5 editable create-a-class slots; camo progression per gun
-(Woodland → Gold → Platinum → Diamond → Dark Matter, unlocked by kills). Modes: Team
-Deathmatch, Free-for-All, Domination, Kill Confirmed on six maps (Atomic Row, Freight, Cul-de-Sac, Downtown, Ravenmoor Manor, Outpost), each surrounded by scenery past the border (`render/backdrop.ts`); maps are built from boxes + props in `sim/maps/*.ts` with the kit in `sim/mapkit.ts`.
-Killstreaks: UAV (3), Airstrike (5), Attack Heli (7). Frag grenades with cooking,
-melee, slide, health regen, medals, spawn logic, bots in four skills on a layered nav grid.
+damage falloff, headshot multipliers, recoil patterns and ADS, each with its own real recorded
+gunshot (CC0, `client/public/assets/fps/sfx/`, near / far takes); attachments (optics,
+suppressor, grip, laser, extended mag); 6 perks; 5 editable create-a-class slots with a
+primary, a secondary, a lethal (frag, semtex, molotov, throwing knife) and a tactical
+(flashbang, stun, smoke); camo progression per gun (Woodland → Gold → Platinum → Diamond →
+Dark Matter, unlocked by kills).
+Pick 3 of 9 killstreaks per class: UAV, RC-XD (you drive it), Counter-UAV, Recon Drone (you
+fly it, marking enemies), Sentry Gun, Precision Airstrike, Attack Helicopter, Attack Dogs and
+Chopper Gunner (you man the minigun). Bots use them all (piloted ones on autopilot).
+Modes: Team Deathmatch, Free-for-All, Domination, Kill Confirmed on ten maps — Atomic Row,
+Freight, Cul-de-Sac, Downtown, Wreckage, Terminal, Refinery, Farmstead, Ravenmoor Manor,
+Outpost — each surrounded by scenery past the border (`render/backdrop.ts`); maps are built
+from boxes, cylinders and props in `sim/maps/*.ts` with the kit in `sim/mapkit.ts`
+(generic buildings, point-mirroring). Up to 9 a side.
+Splitscreen: 1–4 local players (together or versus) — player 1 on keyboard/mouse or a pad,
+the others on gamepads.
 Shared sim in `client/src/fps/sim/` runs authoritative on the server at 60 Hz
 (`server/src/rooms/FpsRoom.ts`) with client prediction + reconciliation, lag-compensated hits
-and interpolated remote players; up to 12 players online or on LAN, bots fill the teams.
+and interpolated remote players; up to 18 players online or on LAN, bots fill the teams.
 Keyboard/mouse (CoD binds) or PS4 pad with aim assist.
-- `npx tsx tools/fps-sim.ts` — headless bot matches on every map/mode (stuck checks, timings)
+- `npx tsx tools/fps-sim.ts [secs] [--size=9]` — headless bot matches on every map/mode (stuck checks, timings)
 - `node tools/fps-assets.mjs <dir>` — rebuilds `client/public/assets/fps/` from the CC0 Quaternius packs
+- `node tools/fps-sfx.mjs "<Prepared SFX Library>"` — trims the CC0 firearm recordings into the per-gun WAVs
 
 ## Tools
 

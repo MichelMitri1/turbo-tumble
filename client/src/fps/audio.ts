@@ -3,7 +3,39 @@ import type { WeaponClass } from './sim/weapons';
 export type Surface = 'hard' | 'soft' | 'metal' | 'wood';
 
 /** Enemy gunfire further than this is inaudible under the action (and costs nodes). */
-const SHOT_CULL = 70;
+const SHOT_CULL = 90;
+/** Most gunshot voices playing at once (a full lobby on full-auto). */
+const MAX_SHOT_VOICES = 40;
+
+/**
+ * Real recordings per weapon (CC0, The Free Firearm Sound Library; tools/fps-sfx.mjs):
+ * `src` = recording, `rate` = playback rate (heavier calibre → lower), `vol` = level.
+ * Each recording has a `near` take (your gun) and a `far` take (other players at range).
+ */
+export const GUN_SFX: Record<string, { src: string; rate: number; vol: number }> = {
+  m13: { src: 'ar15', rate: 1, vol: 1 },
+  kr47: { src: 'ak47', rate: 1, vol: 1 },
+  grau: { src: 'ar15', rate: 1.08, vol: 0.95 },
+  raptor: { src: 'sks', rate: 1.06, vol: 0.95 },
+  viper: { src: 'm45', rate: 1, vol: 0.9 },
+  striker: { src: 'ppsh', rate: 1, vol: 0.9 },
+  fennec: { src: 'm45', rate: 1.14, vol: 0.85 },
+  carbine: { src: 'ppq', rate: 0.86, vol: 0.95 },
+  holger: { src: 'ak47', rate: 0.86, vol: 1.05 },
+  r725: { src: 'nova', rate: 1, vol: 1.1 },
+  origin: { src: 'daly', rate: 1, vol: 1.05 },
+  hdr: { src: 'tikka', rate: 0.82, vol: 1.15 },
+  kar: { src: 'mosin', rate: 1, vol: 1.1 },
+  ebr: { src: 'm1917', rate: 1, vol: 1.05 },
+  x9: { src: 'ppq', rate: 1, vol: 0.85 },
+  deagle: { src: 'm1911', rate: 0.88, vol: 1 },
+  magnum: { src: 'sw642', rate: 0.9, vol: 1 },
+  sawed: { src: 'model12', rate: 0.95, vol: 1.1 },
+  // Killstreak guns.
+  heli: { src: 'ak47', rate: 1.25, vol: 0.9 },
+  sentry: { src: 'savage', rate: 1.35, vol: 0.85 },
+  gunner: { src: 'm45', rate: 0.72, vol: 1.1 },
+};
 
 /** Procedural war sounds: gunshots per weapon class (with distance), reloads, hits, explosions, announcer. */
 export class FpsAudio {
@@ -14,6 +46,8 @@ export class FpsAudio {
   /** Reverb send shared by every sound (one gain per sound instead of one per burst). */
   private verbIn: GainNode | null = null;
   private heli: { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
+  private samples = new Map<string, AudioBuffer>();
+  private shotVoices = 0;
   volume = 0.7;
   announcer = true;
   /** Slowest speechSynthesis.speak() call so far (ms), for the perf probe. */
@@ -51,6 +85,7 @@ export class FpsAudio {
     this.verbIn = c.createGain();
     this.verbIn.gain.value = 0.25;
     this.verbIn.connect(this.verb).connect(this.master);
+    void this.loadGuns();
     // The first utterance initialises the speech engine (can stall a frame): do it now, silently, at menu time.
     if (typeof speechSynthesis !== 'undefined') {
       try {
@@ -120,9 +155,59 @@ export class FpsAudio {
     o.stop(t + dur + 0.05);
   }
 
-  /** A gunshot. `dist` in metres (0 = you), `pan` −1..1. */
-  shot(cls: WeaponClass, suppressed: boolean, dist = 0, pan = 0): void {
-    if (dist > SHOT_CULL || !this.ctx) return;
+  /** Fetch + decode every gun recording (once, after the audio context exists). */
+  private async loadGuns(): Promise<void> {
+    const c = this.ctx;
+    if (!c) return;
+    const srcs = new Set(Object.values(GUN_SFX).map((g) => g.src));
+    await Promise.all(
+      [...srcs].flatMap((src) =>
+        ['near', 'far'].map(async (tag) => {
+          try {
+            const r = await fetch(`/assets/fps/sfx/${src}-${tag}.wav`);
+            if (r.ok) this.samples.set(`${src}-${tag}`, await c.decodeAudioData(await r.arrayBuffer()));
+          } catch {
+            /* falls back to the synthesised shot */
+          }
+        }),
+      ),
+    );
+  }
+
+  /** A gunshot from `weapon`. `dist` in metres (0 = you), `pan` −1..1. */
+  shot(weapon: string, cls: WeaponClass, suppressed: boolean, dist = 0, pan = 0): void {
+    const c = this.ctx;
+    if (dist > SHOT_CULL || !c) return;
+    const def = GUN_SFX[weapon];
+    const own = dist < 2;
+    const buf = def && (this.samples.get(`${def.src}-${own || dist < 14 ? 'near' : 'far'}`) ?? this.samples.get(`${def.src}-near`));
+    if (!def || !buf) return this.synthShot(cls, suppressed, dist, pan);
+    // Busy firefight: drop distant voices first.
+    if (this.shotVoices >= MAX_SHOT_VOICES && !own) return;
+    const t = c.currentTime;
+    const s = c.createBufferSource();
+    s.buffer = buf;
+    s.playbackRate.value = def.rate * (0.97 + Math.random() * 0.06);
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    // Distance eats the crack; a suppressor eats most of everything.
+    f.frequency.value = suppressed ? (own ? 2600 : 1400) : own ? 20000 : Math.max(1100, 14000 / (1 + dist * 0.045));
+    const g = c.createGain();
+    const near = own ? 1 : Math.max(0.05, 1 / (1 + dist * 0.07));
+    g.gain.value = def.vol * near * (suppressed ? 0.3 : own ? 0.85 : 0.9);
+    const o = this.out(pan, suppressed ? 0.1 : own ? 0.3 : 0.55);
+    if (!o) return;
+    s.connect(f).connect(g).connect(o);
+    s.start(t);
+    this.shotVoices++;
+    s.onended = () => this.shotVoices--;
+    // Your own gun: a little extra low-end punch (the recordings are mic'd from the side).
+    if (own && !suppressed) this.tone(cls === 'pistol' ? 120 : 85, cls === 'sniper' || cls === 'shotgun' ? 0.22 : 0.12, 'sine', cls === 'sniper' || cls === 'shotgun' ? 0.6 : 0.35, 0.5, 0, o);
+    if (suppressed) this.burst(0.05, 2400, 0.8, 0.18 * near, 'bandpass', 0, 0.6, o);
+  }
+
+  /** Fallback (before the recordings have loaded): crack, body, boom, tail. */
+  private synthShot(cls: WeaponClass, suppressed: boolean, dist: number, pan: number): void {
     const near = Math.max(0.04, 1 / (1 + dist * 0.06));
     if (suppressed) {
       if (dist > 30) return;
@@ -132,7 +217,6 @@ export class FpsAudio {
       return;
     }
     const heavy = cls === 'sniper' || cls === 'shotgun' ? 1.6 : cls === 'pistol' ? 0.75 : cls === 'lmg' ? 1.15 : cls === 'smg' ? 0.85 : 1;
-    // Crack (high), body (mid), boom (low), tail (reverb). Far shots are just a dull body.
     const far = dist > 25;
     const o = this.out(pan, 0.6);
     if (!far) this.burst(0.05, 3500, 0.7, 0.55 * near, 'highpass', 0, 0.4, o);
@@ -274,6 +358,44 @@ export class FpsAudio {
       this.heli = null;
     }
     if (this.heli) this.heli.gain.gain.setTargetAtTime(Math.max(0.05, 0.6 / (1 + dist * 0.04)), c.currentTime, 0.2);
+  }
+  /** Flashbang: a sharp crack; `ring` 0..1 adds the tinnitus whine (when it got you). */
+  flashbang(dist: number, pan = 0, ring = 0): void {
+    const v = Math.max(0.1, 1.3 / (1 + dist * 0.06));
+    const o = this.out(pan, 0.8);
+    this.burst(0.35, 4000, 0.5, v, 'highpass', 0, 0.3, o);
+    this.burst(0.5, 900, 0.5, v * 0.8, 'lowpass', 0, 0.2, o);
+    if (ring > 0) this.tone(3600, 1 + ring * 3.5, 'sine', 0.12 * ring, 1);
+  }
+  /** Stun grenade: a heavy thump and a muffled wobble. */
+  stunPop(dist: number, pan = 0, hit = 0): void {
+    const v = Math.max(0.1, 1 / (1 + dist * 0.06));
+    const o = this.out(pan, 0.6);
+    this.tone(70, 0.5, 'sine', v, 0.4, 0, o);
+    this.burst(0.25, 600, 0.6, v * 0.7, 'lowpass', 0, 0.3, o);
+    if (hit > 0) this.tone(220, 1.5 + hit * 2, 'triangle', 0.08 * hit, 0.5);
+  }
+  /** Smoke grenade: a pop then a long hiss. */
+  smokePop(dist: number, pan = 0): void {
+    const v = Math.max(0.05, 0.6 / (1 + dist * 0.07));
+    const o = this.out(pan, 0.3);
+    this.burst(0.06, 1200, 1, v, 'bandpass', 0, 0, o);
+    this.burst(2.2, 5000, 0.4, v * 0.5, 'highpass', 0.05, 0.6, o);
+  }
+  /** Molotov: glass shatter + a whoosh of fire. */
+  molotov(dist: number, pan = 0): void {
+    const v = Math.max(0.05, 0.9 / (1 + dist * 0.07));
+    const o = this.out(pan, 0.5);
+    for (let i = 0; i < 5; i++) this.burst(0.05, 5000 + Math.random() * 3000, 3, v * 0.4, 'bandpass', i * 0.025, 0, o);
+    this.burst(1.2, 700, 0.5, v * 0.8, 'lowpass', 0.05, 2.5, o);
+  }
+  /** Attack dog: a gruff bark (or a snarl on a bite). */
+  bark(dist: number, pan = 0, bite = false): void {
+    if (dist > 45) return;
+    const v = Math.max(0.05, 0.7 / (1 + dist * 0.08));
+    const o = this.out(pan, 0.3);
+    this.tone(bite ? 180 : 420, bite ? 0.35 : 0.13, 'sawtooth', v * 0.5, bite ? 0.7 : 0.55, 0, o);
+    this.burst(bite ? 0.3 : 0.12, bite ? 700 : 1100, 2, v * 0.6, 'bandpass', 0, 0.6, o);
   }
   grenadePin(): void {
     this.click(0, 3000, 0.2);

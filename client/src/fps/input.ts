@@ -3,10 +3,11 @@
  *
  * Keyboard + mouse: WASD move · Shift sprint · Space jump · C / Ctrl crouch (slide
  * while sprinting) · LMB fire · RMB aim · R reload · 1 / 2 / wheel swap · G grenade
- * (hold to cook) · V / E melee · 4 killstreak · Tab scoreboard · Esc menu.
+ * lethal (hold to cook a frag) · Q tactical · V / E melee · 4 / 5 / 6 killstreaks ·
+ * Tab scoreboard · Esc menu.
  *
- * PS4 (CoD "Default"): L2 aim · R2 fire · R1 grenade · ✕ jump · ○ crouch / slide ·
- * □ reload · △ swap · L3 sprint · R3 melee · D-pad → killstreak · OPTIONS menu ·
+ * PS4 (CoD "Default"): L2 aim · R2 fire · R1 lethal · L1 tactical · ✕ jump · ○ crouch / slide ·
+ * □ reload · △ swap · L3 sprint · R3 melee · D-pad → next killstreak (← ↑ ↓: slots 1–3) · OPTIONS menu ·
  * touchpad scoreboard. Right stick looks (with aim assist).
  */
 export interface FrameInput {
@@ -23,8 +24,10 @@ export interface FrameInput {
   swap: boolean;
   slot: number;
   grenade: boolean;
+  tactical: boolean;
   melee: boolean;
-  streak: boolean;
+  /** −1 none, 0–2 a killstreak slot, 3 the next ready one. */
+  streak: number;
   scoreboard: boolean;
   menu: boolean;
   pad: boolean;
@@ -39,6 +42,17 @@ export interface InputSettings {
   toggleAds: boolean;
 }
 export const DEFAULT_INPUT: InputSettings = { sens: 1, adsSens: 0.8, padSens: 1, invert: false, aimAssist: true, toggleAds: false };
+
+/** Which devices drive this player: the keyboard + mouse and/or the n-th connected gamepad. */
+export interface InputSource {
+  kb: boolean;
+  pad: number | null;
+}
+
+/** Connected standard-layout gamepads, in a stable order. */
+export function connectedPads(): Gamepad[] {
+  return [...(navigator.getGamepads?.() ?? [])].filter((p): p is Gamepad => !!p && p.connected && p.buttons.length >= 16);
+}
 
 const PAD = { cross: 0, circle: 1, square: 2, triangle: 3, l1: 4, r1: 5, l2: 6, r2: 7, share: 8, options: 9, l3: 10, r3: 11, up: 12, down: 13, left: 14, right: 15, touch: 17 };
 
@@ -57,7 +71,12 @@ export class FpsInput {
   device: 'kb' | 'pad' = 'kb';
   enabled = false;
 
-  constructor(private readonly el: HTMLElement) {
+  constructor(
+    private readonly el: HTMLElement,
+    /** Splitscreen: player 1 keeps the keyboard, the others get a pad each. */
+    public source: InputSource = { kb: true, pad: 0 },
+  ) {
+    if (!source.kb) this.device = 'pad';
     addEventListener('keydown', (e) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
@@ -98,6 +117,7 @@ export class FpsInput {
 
   /** Ask for pointer lock; browsers refuse without a fresh user gesture (CLICK TO PLAY covers that). */
   lock(): void {
+    if (!this.source.kb) return;
     try {
       const p = this.el.requestPointerLock?.() as Promise<void> | undefined;
       p?.catch?.(() => undefined);
@@ -110,8 +130,8 @@ export class FpsInput {
   }
 
   private gamepad(): Gamepad | null {
-    for (const p of navigator.getGamepads?.() ?? []) if (p && p.connected && p.buttons.length >= 16) return p;
-    return null;
+    if (this.source.pad === null) return null;
+    return connectedPads()[this.source.pad] ?? null;
   }
   get hasPad(): boolean {
     return !!this.gamepad();
@@ -119,8 +139,13 @@ export class FpsInput {
 
   /** Sample the frame. `adsAmount` scales look sensitivity while aiming; `assist` slows the stick near targets. */
   poll(dt: number, adsAmount: number, assist = 1): FrameInput {
-    const k = (c: string) => this.keys.has(c);
-    const pr = (c: string) => this.pressed.has(c);
+    const kb = this.source.kb;
+    const k = (c: string) => kb && this.keys.has(c);
+    const pr = (c: string) => kb && this.pressed.has(c);
+    if (!kb) {
+      this.dx = this.dy = this.wheel = 0;
+      this.mouse = [false, false, false];
+    }
     const S = this.settings;
     const sens = 0.0022 * S.sens * (1 - adsAmount * (1 - S.adsSens));
     const out: FrameInput = {
@@ -137,8 +162,9 @@ export class FpsInput {
       swap: this.wheel !== 0,
       slot: pr('Digit1') ? 0 : pr('Digit2') ? 1 : -1,
       grenade: k('KeyG'),
+      tactical: pr('KeyQ'),
       melee: pr('KeyV') || pr('KeyE'),
-      streak: pr('Digit4') || pr('Digit5'),
+      streak: pr('Digit4') ? 0 : pr('Digit5') ? 1 : pr('Digit6') ? 2 : -1,
       scoreboard: k('Tab'),
       menu: pr('Escape'),
       pad: false,
@@ -181,15 +207,19 @@ export class FpsInput {
       out.reload ||= edge(PAD.square);
       out.swap ||= edge(PAD.triangle);
       out.grenade ||= btn(PAD.r1);
+      out.tactical ||= edge(PAD.l1);
       out.melee ||= edge(PAD.r3);
-      out.streak ||= edge(PAD.right);
+      if (edge(PAD.right)) out.streak = 3;
+      else if (edge(PAD.left)) out.streak = 0;
+      else if (edge(PAD.up)) out.streak = 1;
+      else if (edge(PAD.down)) out.streak = 2;
       out.scoreboard ||= btn(PAD.touch) || btn(PAD.share);
       out.menu ||= edge(PAD.options);
       out.pad = this.device === 'pad';
       this.prevPad = p.buttons.map((b) => b.pressed);
     }
     if (!this.enabled) {
-      return { ...out, fire: false, ads: false, mx: 0, mz: 0, dyaw: 0, dpitch: 0, jump: false, grenade: false };
+      return { ...out, fire: false, ads: false, mx: 0, mz: 0, dyaw: 0, dpitch: 0, jump: false, grenade: false, tactical: false, streak: -1 };
     }
     return out;
   }

@@ -1,6 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
-import { Game, TICK, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
+import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
 import { stepMove, type Input } from '../sim/player';
 import type { Loadout } from '../sim/weapons';
 import type { Session } from '../match';
@@ -156,7 +156,7 @@ export class OnlineSession implements Session {
     return this.lastSnapT + (performance.now() - this.lastSnapAt) / 1000 - this.delay;
   }
 
-  update(dt: number, input: () => Input): GameEvent[] {
+  update(dt: number, input: (id: string) => Input): GameEvent[] {
     const out: GameEvent[] = [];
     for (const m of this.inbox.splice(0)) {
       if ('snap' in m) this.applySnap(m.snap);
@@ -171,13 +171,15 @@ export class OnlineSession implements Session {
     while (this.acc >= TICK) {
       this.acc -= TICK;
       this.prevMe = [this.me.m.x, this.me.m.y, this.me.m.z];
-      const inp = input();
+      const inp = input(this.meId);
       this.batch.push(packInput(inp));
       this.pending.push({ seq: inp.seq, inp });
       if (this.pending.length > 120) this.pending.shift();
-      if (this.me.alive) {
+      // Piloting a killstreak: nothing to predict (the server moves the unit; we just render it).
+      if (this.me.alive && !this.me.ctrl) {
         this.pred.phase = this.game.phase === 'over' ? 'over' : 'play';
-        this.pred.step(new Map([[this.meId, inp]]));
+        // Killstreaks are the server's business (it creates the units and their ids).
+        this.pred.step(new Map([[this.meId, { ...inp, streak: -1 }]]));
         for (const e of this.pred.events.splice(0)) {
           if (e.k === 'shot') {
             // Tell the server exactly where we fired (it re-checks and lag-compensates).
@@ -241,12 +243,31 @@ export class OnlineSession implements Session {
     });
     g.tags = s.tags.map(([id, team, x, y, z]) => ({ id, team: team as 0 | 1, victim: '', killer: '', x, y, z, t: g.time }));
     g.helis = s.helis.map(([id, team, x, y, z, angle]) => ({ id, owner: '', team: team as 0 | 1, until: 0, angle, x, y, z, hp: 1, target: '', burst: 0, nextShot: 0, cooldown: 0 }));
-    g.grenades = s.nades.map(([id, x, y, z]) => ({ id, owner: '', team: 0, x, y, z, vx: 0, vy: 0, vz: 0, fuse: 1, kind: 'frag' }));
+    g.grenades = s.nades.map(([id, x, y, z, kind, rest]) => {
+      const was = g.grenades.find((n) => n.id === id);
+      // Velocity from the last snapshot (knives fly point-first).
+      const vx = was ? (x - was.x) * 30 : 0;
+      const vy = was ? (y - was.y) * 30 : 0;
+      const vz = was ? (z - was.z) * 30 : 0;
+      return { id, owner: '', team: 0 as const, x, y, z, vx, vy, vz, fuse: 1, kind: NADE_KINDS[kind] ?? 'frag', rest: !!rest };
+    });
+    g.units = s.units.map(([id, kind, team, owner, x, y, z, yaw, pitch, hp, left]) => {
+      const k = UNIT_KINDS[kind!] ?? 'rcxd';
+      const was = g.units.find((u) => u.id === id);
+      return { id: id!, kind: k, owner: this.ids[owner!] ?? '', team: (team === 1 ? 1 : 0) as 0 | 1, x: x!, y: y!, z: z!, yaw: yaw!, pitch: pitch!, speed: was ? Math.hypot(x! - was.x, z! - was.z) * 30 : 0, hp: hp! * UNIT_HP[k], until: g.time + left!, nextShot: 0, target: '', path: [], repath: 0, angle: 0, stuckT: 0 };
+    });
+    g.smokes = s.smokes.map(([id, x, y, z, age, left]) => ({ id: id!, x: x!, y: y!, z: z!, t0: g.time - age!, until: g.time + left! }));
+    g.fires = s.fires.map(([id, x, y, z, r, left]) => ({ id: id!, x: x!, y: y!, z: z!, r: r!, until: g.time + left!, owner: '' }));
+    g.cuav = new Map(s.cuav.map(([k, left]) => [k, g.time + left]));
+    const mk = g.mode === 'ffa' ? this.meId : `t${this.me.team}`;
+    g.marks = new Map([[mk, new Map(s.marks.map(([idx, left]) => [this.ids[idx] ?? '', g.time + left]))]]);
     g.uav = new Map(s.uav.map(([k, left]) => [k, g.time + left]));
     s.barrels.forEach((alive, i) => {
       const b = g.barrels[i];
       if (b) b.alive = !!alive;
     });
+    // Piloting state first: reconciliation below depends on it.
+    this.me.ctrl = s.me[17] ?? 0;
     for (const row of s.s) {
       const [idx, x, y, z, yaw, pitch, vx, vy, vz, bits, cur, hp, respawnIn, adsT] = row as number[];
       const id = this.ids[idx!];
@@ -306,6 +327,9 @@ export class OnlineSession implements Session {
     if (reloadT! > 0 && me.reloadT <= 0) me.reloadT = reloadT!;
     void swapT;
     me.grenades = nades!;
+    me.tacticals = s.me[14] ?? me.tacticals;
+    me.blindT = Math.max(me.blindT, g.time + (s.me[15] ?? 0));
+    me.stunT = Math.max(me.stunT, g.time + (s.me[16] ?? 0));
     me.streak = streak!;
     me.kills = kills!;
     me.deaths = deaths!;
@@ -340,8 +364,16 @@ export class OnlineSession implements Session {
         w.ammo = w.def.mag;
         w.reserve = w.def.reserve;
       }
-      me.grenades = 2;
       me.reloadT = me.swapT = 0;
+      this.pending = [];
+      return;
+    }
+    // Piloting: the soldier stands still server-side; just take its position.
+    if (me.ctrl) {
+      me.m.x = x;
+      me.m.y = y;
+      me.m.z = z;
+      me.m.vx = me.m.vz = 0;
       this.pending = [];
       return;
     }

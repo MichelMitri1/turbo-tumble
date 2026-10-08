@@ -5,8 +5,9 @@ import type { Input } from '../sim/player';
 
 /** Zero Hour online protocol. */
 export const FP_ROOM = 'zerohour';
-export const FP_VERSION = 2;
-export const FP_MAX = 12;
+export const FP_VERSION = 3;
+/** Up to 9 a side. */
+export const FP_MAX = 18;
 
 export const FpMsg = {
   Input: 'fp:in', // client → server: FpInput[]
@@ -50,9 +51,9 @@ export interface FpBegin {
   time: number;
 }
 
-/** Compact per-tick input: [seq, mx, mz, yaw, pitch, bits, slot]. */
-export type FpInput = [number, number, number, number, number, number, number];
-export const INPUT_BITS = { jump: 1, sprint: 2, crouch: 4, ads: 8, fire: 16, reload: 32, grenade: 64, melee: 128, streak: 256 } as const;
+/** Compact per-tick input: [seq, mx, mz, yaw, pitch, bits, slot, streak]. */
+export type FpInput = [number, number, number, number, number, number, number, number];
+export const INPUT_BITS = { jump: 1, sprint: 2, crouch: 4, ads: 8, fire: 16, reload: 32, grenade: 64, melee: 128, tactical: 256 } as const;
 
 export interface FpFire {
   /** Pellet directions. */
@@ -72,8 +73,10 @@ export interface FpSnap {
   t: number;
   tick: number;
   s: number[][];
-  /** For the receiving player: [ack seq, ammo0, reserve0, ammo1, reserve1, reloadT, swapT, grenades, streak, kills, deaths, score, assists, slide] */
+  /** For the receiving player: [ack seq, ammo0, reserve0, ammo1, reserve1, reloadT, swapT, grenades, streak, kills, deaths, score, assists, slide, tacticals, blind left, stun left, piloted unit id] */
   me: number[];
+  /** Enemies marked for the receiving player's team: [soldier idx, seconds left]. */
+  marks: Array<[number, number]>;
   streaks: string[];
   score: [number, number];
   timeLeft: number;
@@ -82,7 +85,14 @@ export interface FpSnap {
   flags: Array<[number, number, number]>;
   tags: Array<[number, number, number, number, number]>;
   helis: Array<[number, number, number, number, number, number]>;
-  nades: Array<[number, number, number, number]>;
+  /** [id, x, y, z, kind index (NADE_KINDS), 1 = stuck / resting]. */
+  nades: Array<[number, number, number, number, number, number]>;
+  /** Killstreak units: [id, kind index (UNIT_KINDS), team, owner idx, x, y, z, yaw, pitch, hp fraction, seconds left]. */
+  units: number[][];
+  /** Smoke clouds [id, x, y, z, age, left] and fire pools [id, x, y, z, r, left]. */
+  smokes: number[][];
+  fires: number[][];
+  cuav: Array<[string, number]>;
   uav: Array<[string, number]>;
   barrels: number[];
   /** Scoreboard (sent every second): [idx, kills, deaths, assists, score, ping ms]. */
@@ -101,8 +111,8 @@ export type { GameEvent };
 
 export function packInput(i: Input): FpInput {
   const b = INPUT_BITS;
-  const bits = (i.jump ? b.jump : 0) | (i.sprint ? b.sprint : 0) | (i.crouch ? b.crouch : 0) | (i.ads ? b.ads : 0) | (i.fire ? b.fire : 0) | (i.reload ? b.reload : 0) | (i.grenade ? b.grenade : 0) | (i.melee ? b.melee : 0) | (i.streak ? b.streak : 0);
-  return [i.seq, +i.mx.toFixed(3), +i.mz.toFixed(3), +i.yaw.toFixed(4), +i.pitch.toFixed(4), bits, i.slot];
+  const bits = (i.jump ? b.jump : 0) | (i.sprint ? b.sprint : 0) | (i.crouch ? b.crouch : 0) | (i.ads ? b.ads : 0) | (i.fire ? b.fire : 0) | (i.reload ? b.reload : 0) | (i.grenade ? b.grenade : 0) | (i.melee ? b.melee : 0) | (i.tactical ? b.tactical : 0);
+  return [i.seq, +i.mx.toFixed(3), +i.mz.toFixed(3), +i.yaw.toFixed(4), +i.pitch.toFixed(4), bits, i.slot, i.streak];
 }
 export function unpackInput(a: FpInput): Input {
   const b = INPUT_BITS;
@@ -122,7 +132,8 @@ export function unpackInput(a: FpInput): Input {
     reload: !!(bits & b.reload),
     grenade: !!(bits & b.grenade),
     melee: !!(bits & b.melee),
-    streak: !!(bits & b.streak),
+    tactical: !!(bits & b.tactical),
+    streak: [0, 1, 2, 3].includes(n(a[7])) ? n(a[7]) : -1,
     slot: n(a[6]) === 0 || n(a[6]) === 1 ? n(a[6]) : -1,
   };
 }
