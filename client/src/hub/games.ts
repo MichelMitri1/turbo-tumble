@@ -75,9 +75,9 @@ export const GAMES: GameEntry[] = [
   {
     id: 'zero-hour',
     title: 'Zero Hour',
-    tagline: 'Fast multiplayer FPS: 18 guns, camos, killstreaks, TDM / Domination / FFA / Kill Confirmed on 3 maps.',
+    tagline: 'Fast multiplayer FPS: 18 guns, classes, 9 killstreaks, TDM / Domination / FFA / Kill Confirmed on 10 maps, 4-player splitscreen.',
     href: '/zero-hour/',
-    tags: ['FPS', 'vs Bots', 'Online · LAN', 'up to 12'],
+    tags: ['FPS', 'vs Bots', 'Online · LAN', '9 v 9'],
     art: { image: '/assets/hub/zero-hour.webp', emoji: '🎯', from: '#3a4a2a', to: '#c4f24a' },
   },
   {
@@ -87,5 +87,13 @@ export const GAMES: GameEntry[] = [
     href: '/jackaroo/',
     tags: ['Board', 'Teams 2v2', 'vs Bots', 'Online · LAN'],
     art: { image: '/assets/hub/jackaroo.webp', emoji: '🔵', from: '#8a4a1f', to: '#0d5c63' },
+  },
+  {
+    id: 'matchday',
+    title: 'Matchday 27',
+    tagline: 'Eleven-a-side football: rated squads, FC-style passing and shooting, broadcast camera, crowd and commentary.',
+    href: '/matchday/',
+    tags: ['Football', 'vs CPU', 'Online · LAN', 'up to 4 v 4'],
+    art: { image: '/assets/hub/matchday.webp', emoji: '⚽', from: '#0b6b2e', to: '#0a1f44' },
   },
 ];

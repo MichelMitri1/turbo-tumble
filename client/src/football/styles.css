@@ -1,0 +1,796 @@
+:root {
+  --bg: #06121f;
+  --panel: rgba(8, 20, 38, 0.86);
+  --line: rgba(255, 255, 255, 0.12);
+  --acc: #19e07a;
+  --acc2: #00b4ff;
+  --txt: #eef4ff;
+  --dim: #9fb0c8;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  font-size: 18px;
+  user-select: none;
+}
+#game {
+  position: fixed;
+  inset: 0;
+}
+.fb-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.fb-ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.fb-ui > * {
+  pointer-events: auto;
+}
+button,
+.btn,
+select,
+input {
+  font: inherit;
+}
+button,
+.btn {
+  display: inline-block;
+  cursor: pointer;
+  color: var(--txt);
+  background: linear-gradient(180deg, #1c3556, #11233d);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 22px;
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: transform 0.08s, background 0.15s, box-shadow 0.15s;
+}
+button:hover,
+.btn:hover,
+button.focus,
+.btn.focus {
+  background: linear-gradient(180deg, #24507e, #173458);
+  box-shadow: 0 0 0 2px var(--acc2);
+  transform: translateY(-1px);
+}
+button.go {
+  background: linear-gradient(180deg, #1fe08a, #0b9c55);
+  color: #032112;
+}
+button.ghost,
+.btn.ghost {
+  background: transparent;
+}
+select,
+input[type='text'],
+input:not([type]) {
+  background: #0c1d33;
+  color: var(--txt);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.hint {
+  color: var(--dim);
+  font-size: 16px;
+}
+.center {
+  text-align: center;
+  justify-content: center;
+}
+
+/* ---------- screens */
+.fb-screen {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 28px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: radial-gradient(1200px 700px at 50% -10%, rgba(25, 224, 122, 0.22), transparent 60%), radial-gradient(900px 600px at 100% 100%, rgba(0, 180, 255, 0.18), transparent 60%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 80px, transparent 80px 160px), var(--bg);
+}
+.fb-screen h1 {
+  font-family: 'Russo One', sans-serif;
+  font-weight: 400;
+  margin: 4px 0;
+  font-size: 34px;
+  letter-spacing: 0.04em;
+}
+.fb-title {
+  margin-top: 8vh;
+  text-align: center;
+}
+.fb-title .logo {
+  font-family: 'Russo One', sans-serif;
+  font-size: clamp(54px, 10vw, 120px);
+  line-height: 0.9;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, #ffffff, #b8ffd9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 6px 24px rgba(25, 224, 122, 0.35));
+}
+.fb-title .logo span {
+  margin-left: 14px;
+  background: linear-gradient(180deg, #19e07a, #00b4ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.fb-title .sub {
+  color: var(--dim);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.fb-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, 90vw);
+  margin-top: 3vh;
+}
+.fb-menu > * {
+  text-align: center;
+}
+.fb-menu .big {
+  font-size: 26px;
+  padding: 16px;
+}
+.fb-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 8px;
+}
+.fb-bar label,
+.fb-row label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--dim);
+}
+.fb-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.fb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px 24px;
+  width: min(520px, 94vw);
+}
+.fb-form label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.fb-form input.code {
+  text-transform: uppercase;
+  width: 140px;
+}
+
+/* ---------- team select */
+.fb-teams {
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.fb-teams .vs,
+.lb-sides .vs {
+  align-self: center;
+  font-family: 'Russo One', sans-serif;
+  font-size: 34px;
+  color: var(--dim);
+}
+.cp {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px 16px 18px;
+  width: min(520px, 94vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.cp-side {
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  color: var(--acc);
+  font-size: 15px;
+}
+.cp-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.cp-head .arrow {
+  padding: 10px 14px;
+}
+.cp-name {
+  font-family: 'Russo One', sans-serif;
+  font-size: 28px;
+}
+.cp-meta {
+  color: var(--dim);
+}
+.cp-stars .off {
+  color: rgba(255, 255, 255, 0.18);
+}
+.cp-stars .half {
+  background: linear-gradient(90deg, #ffd23f 50%, rgba(255, 255, 255, 0.18) 50%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.cp-stars {
+  color: #ffd23f;
+  font-size: 22px;
+  letter-spacing: 3px;
+}
+.cp-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.cp-rt {
+  width: 220px;
+}
+.rt {
+  display: grid;
+  grid-template-columns: 40px 1fr 32px;
+  gap: 8px;
+  align-items: center;
+  font-weight: 700;
+}
+.rt em {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rt i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--acc2), var(--acc));
+}
+.cp-cards {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* FUT-style card */
+.fut {
+  width: 138px;
+  height: 196px;
+  border-radius: 14px 14px 40% 40% / 14px 14px 18% 18%;
+  padding: 8px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  color: #3a2a06;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45), inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+}
+.fut.gold {
+  background: linear-gradient(160deg, #fff1b0 0%, #e8c25a 35%, #c9982e 70%, #f3d77a 100%);
+}
+.fut.silver {
+  background: linear-gradient(160deg, #ffffff 0%, #cfd6dd 40%, #9fa8b2 75%, #e3e7eb 100%);
+  color: #26303a;
+}
+.fut.bronze {
+  background: linear-gradient(160deg, #f4c8a0 0%, #c98a56 40%, #9a5f35 75%, #d79f70 100%);
+  color: #3a1f0c;
+}
+.fut-top {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.fut-ovr {
+  font-family: 'Russo One', sans-serif;
+  font-size: 30px;
+}
+.fut-pos {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.fut-kit {
+  margin-left: 26px;
+  margin-top: 2px;
+}
+.fut-name {
+  font-weight: 800;
+  font-size: 17px;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fut-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.fut-stats b {
+  font-weight: 800;
+}
+
+/* ---------- controller select */
+.fb-ctl-head,
+.ctl-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  width: min(900px, 96vw);
+  gap: 10px;
+  align-items: center;
+  text-align: center;
+}
+.fb-ctl-head > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--dim);
+}
+.fb-ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctl-row {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  min-height: 56px;
+}
+.ctl-slot.mid {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ctl-slot .arrow {
+  padding: 6px 12px;
+}
+.tok {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--c);
+  color: #021;
+  font-weight: 800;
+  box-shadow: 0 0 14px var(--c);
+}
+.tok.idle {
+  background: #2a3a52;
+  color: var(--txt);
+  box-shadow: none;
+}
+
+.fb-ctrls {
+  border-collapse: collapse;
+  background: var(--panel);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.fb-ctrls td,
+.fb-ctrls th {
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.fb-ctrls th {
+  color: var(--acc);
+}
+
+/* ---------- lobby */
+.fb-lobby {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+.lb-code {
+  font-size: 22px;
+  color: var(--dim);
+}
+.lb-code b {
+  font-family: 'Russo One', sans-serif;
+  color: var(--txt);
+  letter-spacing: 0.2em;
+  font-size: 30px;
+  margin-left: 8px;
+}
+.lb-sides {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.lb-side {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.lb-side ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+.lb-side li {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+.lb-side small {
+  color: var(--dim);
+}
+
+.fb-loading {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  font-size: 22px;
+  color: var(--dim);
+}
+.fb-loading .ball {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #ccc 60%, #888);
+  animation: fbBounce 0.7s ease-in-out infinite alternate;
+}
+@keyframes fbBounce {
+  from {
+    transform: translateY(-18px) rotate(0deg);
+  }
+  to {
+    transform: translateY(12px) rotate(180deg);
+  }
+}
+
+/* ---------- HUD */
+.fb-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.fb-score {
+  position: absolute;
+  left: 22px;
+  top: 18px;
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  font-weight: 800;
+  font-size: 21px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fb-score > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  background: rgba(6, 14, 28, 0.88);
+}
+.fb-clock {
+  background: #f4f6fa !important;
+  color: #0a1528;
+  font-variant-numeric: tabular-nums;
+  min-width: 70px;
+  justify-content: center;
+}
+.fb-team i {
+  width: 5px;
+  height: 22px;
+  border-radius: 2px;
+}
+.fb-goals {
+  background: linear-gradient(180deg, #19e07a, #0b9c55) !important;
+  color: #032112;
+  font-family: 'Russo One', sans-serif;
+  min-width: 64px;
+  justify-content: center;
+}
+.fb-ticker {
+  position: absolute;
+  left: 22px;
+  top: 58px;
+  padding: 5px 12px;
+  background: rgba(6, 14, 28, 0.85);
+  border-left: 4px solid var(--acc);
+  font-weight: 700;
+  border-radius: 0 6px 6px 0;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: all 0.3s;
+}
+.fb-ticker.on {
+  opacity: 1;
+  transform: none;
+}
+.fb-ticker small {
+  color: var(--dim);
+  margin-left: 6px;
+}
+.card {
+  display: inline-block;
+  width: 12px;
+  height: 16px;
+  border-radius: 2px;
+  vertical-align: -2px;
+}
+.card.yellow {
+  background: #ffd400;
+}
+.card.red {
+  background: #e3122a;
+}
+.fb-radar {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: 252px;
+  height: 164px;
+  border-radius: 8px;
+  opacity: 0.92;
+}
+.fb-banner {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  transition: all 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+  text-align: center;
+}
+.fb-banner.on {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.fb-banner .g1 {
+  font-family: 'Russo One', sans-serif;
+  font-size: clamp(64px, 12vw, 150px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  background: linear-gradient(180deg, #fff, #9dffcf 60%, #19e07a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 8px 0 rgba(0, 0, 0, 0.35));
+}
+.fb-banner .g1.small {
+  font-size: clamp(40px, 7vw, 80px);
+}
+.fb-banner .g2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 30px;
+  padding: 4px 18px;
+  background: rgba(6, 14, 28, 0.85);
+  border-radius: 8px;
+}
+.fb-replay {
+  display: none;
+  position: absolute;
+  right: 26px;
+  top: 20px;
+  font-family: 'Russo One', sans-serif;
+  font-size: 26px;
+  padding: 4px 16px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #19e07a, #00b4ff);
+  color: #031220;
+  animation: fbBlink 1.2s infinite;
+}
+@keyframes fbBlink {
+  50% {
+    opacity: 0.6;
+  }
+}
+.fb-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  will-change: transform;
+}
+.fb-label .n {
+  font-weight: 800;
+  font-size: 16px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: rgba(6, 14, 28, 0.78);
+  border-bottom: 2px solid var(--c);
+  white-space: nowrap;
+}
+.fb-label .arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 9px solid var(--c);
+}
+.fb-label .pw {
+  width: 64px;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+.fb-label .pw i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #19e07a, #ffd23f 70%, #ff3b4a);
+}
+.fb-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.fb-overlay > * {
+  pointer-events: auto;
+}
+.fb-stats,
+.fb-pause {
+  background: rgba(6, 14, 28, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px 26px 22px;
+  width: min(640px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.fb-pause {
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fb-pause.wide {
+  width: auto;
+}
+.fb-stats h2,
+.fb-pause h2 {
+  margin: 0 0 10px;
+  text-align: center;
+  font-family: 'Russo One', sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+.st-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.st-name {
+  font-weight: 800;
+  font-size: 20px;
+  width: 150px;
+  text-align: center;
+}
+.st-score {
+  font-family: 'Russo One', sans-serif;
+  font-size: 38px;
+  padding: 0 14px;
+}
+.st-scorers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  color: var(--dim);
+  margin: 6px 0 12px;
+  font-size: 16px;
+}
+.st-scorers > div:last-child {
+  text-align: right;
+}
+.st-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 48px;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+}
+.st-row b:last-child {
+  text-align: right;
+}
+.st-row span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--dim);
+  font-size: 15px;
+  font-weight: 600;
+}
+.st-row em {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  gap: 2px;
+  margin-top: 3px;
+}
+.st-row em i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+@media (max-width: 700px) {
+  .fb-radar {
+    width: 180px;
+    height: 117px;
+  }
+  .cp-cards .fut:nth-child(3) {
+    display: none;
+  }
+}
