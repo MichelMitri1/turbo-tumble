@@ -80,4 +80,12 @@ export const GAMES: GameEntry[] = [
     tags: ['FPS', 'vs Bots', 'Online · LAN', 'up to 12'],
     art: { image: '/assets/hub/zero-hour.webp', emoji: '🎯', from: '#3a4a2a', to: '#c4f24a' },
   },
+  {
+    id: 'jackaroo',
+    title: 'Jackaroo',
+    tagline: 'The Gulf marble race (جاكارو): play cards, hop marbles round a 3D wooden board, capture rivals, bring your team home.',
+    href: '/jackaroo/',
+    tags: ['Board', 'Teams 2v2', 'vs Bots', 'Online · LAN'],
+    art: { image: '/assets/hub/jackaroo.webp', emoji: '🔵', from: '#8a4a1f', to: '#0d5c63' },
+  },
 ];

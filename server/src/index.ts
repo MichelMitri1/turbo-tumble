@@ -15,6 +15,7 @@ import { LastCardRoom } from './rooms/LastCardRoom';
 import { FourHundredRoom } from './rooms/FourHundredRoom';
 import { PoolRoom } from './rooms/PoolRoom';
 import { FpsRoom } from './rooms/FpsRoom';
+import { JackarooRoom } from './rooms/JackarooRoom';
 import { KK_ROOM } from '../../client/src/kittens/net/protocol';
 import { CF_ROOM } from '../../client/src/arena/net/protocol';
 import { RB_ROOM } from '../../client/src/rocket/net/protocol';
@@ -22,6 +23,7 @@ import { LC_ROOM } from '../../client/src/lastcard/net/protocol';
 import { FH_ROOM } from '../../client/src/arba3meyeh/net/protocol';
 import { PL_ROOM } from '../../client/src/pool/net/protocol';
 import { FP_ROOM } from '../../client/src/fps/net/protocol';
+import { JK_ROOM } from '../../client/src/jackaroo/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
 /**
@@ -47,6 +49,7 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.md': 'text/markdown; charset=utf-8',
+  '.webp': 'image/webp',
 };
 
 type Next = () => void;
@@ -107,6 +110,7 @@ server.define(LC_ROOM, LastCardRoom);
 server.define(FH_ROOM, FourHundredRoom);
 server.define(PL_ROOM, PoolRoom);
 server.define(FP_ROOM, FpsRoom);
+server.define(JK_ROOM, JackarooRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {
