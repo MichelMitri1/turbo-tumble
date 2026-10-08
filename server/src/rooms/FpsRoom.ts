@@ -1,8 +1,8 @@
 import { Room, ServerError, type Client } from '@colyseus/core';
-import { Game, TICK, type GameEvent, type SoldierSetup } from '../../../client/src/fps/sim/game';
+import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type SoldierSetup } from '../../../client/src/fps/sim/game';
 import { BotBrain } from '../../../client/src/fps/sim/bots';
 import { MAP } from '../../../client/src/fps/sim/maps';
-import { WEAPON, DEFAULT_CLASSES, PERKS, type Loadout } from '../../../client/src/fps/sim/weapons';
+import { DEFAULT_CLASSES, fixLoadout, type Loadout } from '../../../client/src/fps/sim/weapons';
 import type { Input } from '../../../client/src/fps/sim/player';
 import { FP_MAX, FP_VERSION, FpMsg, unpackInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from '../../../client/src/fps/net/protocol';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
@@ -19,28 +19,15 @@ interface Member {
   ping: number;
 }
 
-const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge'];
+const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk', 'Wolf', 'Viper', 'Echo', 'Bishop', 'Reyes', 'Kowalski', 'Novak', 'Ortiz', 'Sasha', 'Dmitri'];
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Soldier';
-const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'tag', 'over', 'reload', 'melee', 'grenadeThrow']);
+const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'tag', 'over', 'reload', 'melee', 'grenadeThrow', 'unitShot', 'unitDown', 'bite', 'flashed', 'stunned']);
 
 /** Sanitise a loadout from a client (unknown ids fall back to defaults). */
 function safeLoadout(l: Loadout | undefined): Loadout {
-  const d = DEFAULT_CLASSES[0]!;
-  if (!l || typeof l !== 'object') return structuredClone(d);
-  const perks = (Array.isArray(l.perks) ? l.perks : d.perks).map((p, i) => (p in PERKS && PERKS[p as keyof typeof PERKS].tier === i + 1 ? p : d.perks[i]!)) as Loadout['perks'];
-  const att = l.primaryAtt ?? d.primaryAtt;
-  return {
-    name: clean(l.name),
-    primary: WEAPON[l.primary]?.slot === 'primary' ? l.primary : d.primary,
-    secondary: WEAPON[l.secondary]?.slot === 'secondary' ? l.secondary : d.secondary,
-    primaryAtt: {
-      optic: ['iron', 'reddot', 'holo', 'acog'].includes(att.optic) ? att.optic : 'iron',
-      muzzle: att.muzzle === 'suppressor' ? 'suppressor' : 'none',
-      under: ['none', 'grip', 'laser'].includes(att.under) ? att.under : 'none',
-      ammo: att.ammo === 'extended' ? 'extended' : 'standard',
-    },
-    perks: perks.length === 3 ? perks : d.perks,
-  };
+  const lo = fixLoadout(l && typeof l === 'object' ? l : undefined);
+  lo.name = clean(lo.name);
+  return lo;
 }
 
 /**
@@ -71,7 +58,7 @@ export class FpsRoom extends Room {
       if (c.sessionId !== this.hostId || this.phase !== 'lobby') return;
       if (cfg.mode && ['tdm', 'ffa', 'dom', 'kc'].includes(cfg.mode)) this.config.mode = cfg.mode;
       if (cfg.map && MAP[cfg.map]) this.config.map = cfg.map;
-      if (typeof cfg.bots === 'number') this.config.bots = Math.max(0, Math.min(6, Math.round(cfg.bots)));
+      if (typeof cfg.bots === 'number') this.config.bots = Math.max(0, Math.min(9, Math.round(cfg.bots)));
       if (cfg.skill && ['recruit', 'regular', 'hardened', 'veteran'].includes(cfg.skill)) this.config.skill = cfg.skill;
       this.sendLobby();
     });
@@ -277,7 +264,11 @@ export class FpsRoom extends Room {
       flags: g.flags.map((f) => [f.owner, r(f.progress), f.capturing] as [number, number, number]),
       tags: g.tags.map((t) => [t.id, t.team, r(t.x), r(t.y), r(t.z)] as [number, number, number, number, number]),
       helis: g.helis.map((h) => [h.id, h.team, r(h.x), r(h.y), r(h.z), r(h.angle)] as [number, number, number, number, number, number]),
-      nades: g.grenades.map((n) => [n.id, r(n.x), r(n.y), r(n.z)] as [number, number, number, number]),
+      nades: g.grenades.map((n) => [n.id, r(n.x), r(n.y), r(n.z), NADE_KINDS.indexOf(n.kind), n.rest || n.stuck ? 1 : 0] as [number, number, number, number, number, number]),
+      units: g.units.map((u) => [u.id, UNIT_KINDS.indexOf(u.kind), u.team, this.ids.indexOf(u.owner), r(u.x), r(u.y), r(u.z), r(u.yaw, 1000), r(u.pitch, 1000), r(u.hp / UNIT_HP[u.kind]), r(u.until - g.time, 10)]),
+      smokes: g.smokes.map((m) => [m.id, r(m.x), r(m.y), r(m.z), r(g.time - m.t0, 10), r(m.until - g.time, 10)]),
+      fires: g.fires.map((f) => [f.id, r(f.x), r(f.y), r(f.z), r(f.r), r(f.until - g.time, 10)]),
+      cuav: [...g.cuav.entries()].filter(([, t]) => t > g.time).map(([k, t]) => [k, r(t - g.time, 10)] as [string, number]),
       uav: [...g.uav.entries()].filter(([, t]) => t > g.time).map(([k, t]) => [k, r(t - g.time, 10)] as [string, number]),
       barrels: g.barrels.map((b) => (b.alive ? 1 : 0)),
       board: sendBoard ? g.soldiers.map((s) => [this.ids.indexOf(s.id), s.kills, s.deaths, s.assists, s.score, this.members.get(s.id)?.ping ?? 0]) : undefined,
@@ -287,8 +278,9 @@ export class FpsRoom extends Room {
       if (!s) continue;
       const snap: FpSnap = {
         ...base,
-        me: [s.ackSeq, s.weapons[0].ammo, s.weapons[0].reserve, s.weapons[1].ammo, s.weapons[1].reserve, r(s.reloadT), r(s.swapT), s.grenades, s.streak, s.kills, s.deaths, s.score, s.assists, s.m.slide],
+        me: [s.ackSeq, s.weapons[0].ammo, s.weapons[0].reserve, s.weapons[1].ammo, s.weapons[1].reserve, r(s.reloadT), r(s.swapT), s.grenades, s.streak, s.kills, s.deaths, s.score, s.assists, s.m.slide, s.tacticals, r(Math.max(0, s.blindT - g.time), 10), r(Math.max(0, s.stunT - g.time), 10), s.ctrl],
         streaks: s.streaks,
+        marks: g.soldiers.filter((t) => t.alive && g.enemies(s, t) && g.marked(s, t)).map((t) => [this.ids.indexOf(t.id), 5] as [number, number]),
       };
       client.send(FpMsg.Snap, snap);
     }

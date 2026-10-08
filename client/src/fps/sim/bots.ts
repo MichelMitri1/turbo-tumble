@@ -75,8 +75,14 @@ export class BotBrain {
     const w = g.weapon(s);
     b.think -= dt;
     b.nadeCd -= dt;
+    // Flashed: can't see a thing; stunned: everything is slow.
+    const blind = g.time < s.blindT;
+    const stunned = g.time < s.stunT;
     // ---------------- perception (every ~0.12 s)
-    if (b.think <= 0) {
+    if (b.think <= 0 && blind) {
+      b.think = 0.12;
+      b.target = '';
+    } else if (b.think <= 0) {
       b.think = 0.12;
       let best: Soldier | null = null;
       let bestD = Infinity;
@@ -90,7 +96,7 @@ export class BotBrain {
         const ang = Math.abs(wrap(Math.atan2(-dx, -dz) - b.yaw));
         const loud = g.time - e.lastFireT < 0.5 && !e.suppressed && d < 40;
         if (ang > K.fov / 2 + (d < 6 ? 1 : 0) && !loud && b.target !== e.id) continue;
-        if (!g.level.visible(eye[0], eye[1], eye[2], e.m.x, e.m.y + eyeHeight(e.m) - 0.3, e.m.z)) continue;
+        if (!g.sees(eye[0], eye[1], eye[2], e.m.x, e.m.y + eyeHeight(e.m) - 0.3, e.m.z)) continue;
         const score = d - (e.id === b.target ? 8 : 0);
         if (score < bestD) {
           bestD = score;
@@ -136,8 +142,9 @@ export class BotBrain {
         b.ex += (Math.random() - 0.5) * K.error * 0.6;
         b.ey += (Math.random() - 0.5) * K.error * 0.3;
       }
-      b.yaw = turn(b.yaw, wantYaw, K.turn * dt);
-      b.pitch += Math.max(-K.turn * dt, Math.min(K.turn * dt, wantPitch - b.pitch));
+      const tr = K.turn * dt * (stunned ? 0.3 : 1);
+      b.yaw = turn(b.yaw, wantYaw, tr);
+      b.pitch += Math.max(-tr, Math.min(tr, wantPitch - b.pitch));
       const err = Math.abs(wrap(b.yaw - wantYaw + b.ex)) + Math.abs(b.pitch - wantPitch + b.ey);
       const spread = g.spread(s);
       const tol = Math.max(0.03, Math.atan2(0.45, dist)) + spread * 0.5;
@@ -172,19 +179,26 @@ export class BotBrain {
       // Reload between fights.
       if (w.ammo < w.def.mag * 0.4 && w.reserve > 0) inp.reload = true;
       if (s.cur === 1 && s.weapons[0].ammo + s.weapons[0].reserve > 0) inp.slot = 0;
-      // Grenade at the last place we saw someone.
-      if (b.lastSeen && g.time - b.lastSeen.t < 3 && b.nadeCd <= 0 && s.grenades > 0 && Math.random() < K.nade) {
+      // Lethal or tactical at the last place we saw someone (smoke: when hurt, to cover a retreat).
+      const tacOk = s.tacticals > 0 && (s.loadout.tactical !== 'smoke' || s.hp < 60);
+      if (b.lastSeen && g.time - b.lastSeen.t < 3 && b.nadeCd <= 0 && (s.grenades > 0 || tacOk) && Math.random() < K.nade) {
         const d = Math.hypot(b.lastSeen.x - s.m.x, b.lastSeen.z - s.m.z);
-        if (d > 8 && d < 28) {
+        if (d > (s.loadout.lethal === 'tknife' ? 4 : 8) && d < (s.loadout.lethal === 'tknife' ? 18 : 28)) {
           b.yaw = Math.atan2(-(b.lastSeen.x - s.m.x), -(b.lastSeen.z - s.m.z));
-          b.pitch = 0.15 + d * 0.012;
-          inp.grenade = true;
-          b.nadeCd = 12 + Math.random() * 10;
+          const useTac = tacOk && (s.grenades === 0 || Math.random() < 0.4);
+          b.pitch = useTac || s.loadout.lethal !== 'tknife' ? 0.15 + d * 0.012 : 0.02 + d * 0.004;
+          if (useTac) inp.tactical = true;
+          else inp.grenade = true;
+          b.nadeCd = 10 + Math.random() * 10;
         }
       }
     }
     if (s.cookStart >= 0) inp.grenade = g.time - s.cookStart < 0.8;
-    if (s.streaks.length && Math.random() < dt) inp.streak = true;
+    if (s.streaks.length && Math.random() < dt) inp.streak = 3;
+    if (blind) {
+      inp.fire = false;
+      inp.ads = false;
+    }
     // ---------------- navigation
     if (!moveGoal) moveGoal = this.objective(s, b);
     if (moveGoal) {

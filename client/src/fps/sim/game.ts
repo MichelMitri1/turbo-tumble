@@ -1,7 +1,8 @@
 import { Level, raySphere, rayAabb } from './level';
 import { MAP, type MapDef, type SpawnPoint } from './maps';
 import { NO_INPUT, P, eyeHeight, height, newMove, stepMove, type Input, type MoveState } from './player';
-import { WEAPON, STREAKS, applyAttachments, damageAt, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './weapons';
+import { WEAPON, STREAKS, LETHALS, TACTICALS, applyAttachments, damageAt, fixLoadout, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './weapons';
+import { NavGrid } from './nav';
 
 export type Mode = 'tdm' | 'ffa' | 'dom' | 'kc';
 export const MODES: Record<Mode, { name: string; short: string; desc: string }> = {
@@ -51,8 +52,15 @@ export interface Soldier {
   /** Sprint-out: time before you can fire after sprinting. */
   sprintOut: number;
   meleeT: number;
+  /** Lethal / tactical equipment left this life. */
   grenades: number;
+  tacticals: number;
   cookStart: number;
+  /** Flashed until / stunned until (game time). */
+  blindT: number;
+  stunT: number;
+  /** Id of the killstreak unit this soldier is piloting (0 = none). */
+  ctrl: number;
   lastDamageT: number;
   spawnT: number;
   kills: number;
@@ -96,9 +104,44 @@ export interface Grenade {
   vy: number;
   vz: number;
   fuse: number;
-  /** Airstrike bombs and barrels reuse the explosion code. */
-  kind: 'frag';
+  kind: NadeKind;
+  /** Semtex stuck to a soldier (their id) or a wall (rest). */
+  stuck?: string;
+  rest?: boolean;
 }
+
+export type NadeKind = 'frag' | 'semtex' | 'molotov' | 'tknife' | 'flash' | 'stun' | 'smoke';
+export const NADE_KINDS: NadeKind[] = ['frag', 'semtex', 'molotov', 'tknife', 'flash', 'stun', 'smoke'];
+
+/** Killstreak hardware on the ground / in the air. */
+export type UnitKind = 'rcxd' | 'drone' | 'sentry' | 'dog' | 'gunner';
+export const UNIT_KINDS: UnitKind[] = ['rcxd', 'drone', 'sentry', 'dog', 'gunner'];
+export interface Unit {
+  id: number;
+  kind: UnitKind;
+  owner: string;
+  team: 0 | 1;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  speed: number;
+  hp: number;
+  until: number;
+  nextShot: number;
+  /** Dogs: current target and path. */
+  target: string;
+  path: number[];
+  repath: number;
+  /** Gunship orbit angle. */
+  angle: number;
+  /** Seconds stuck (RC-XD autopilot). */
+  stuckT: number;
+}
+export const UNIT_HP: Record<UnitKind, number> = { rcxd: 40, drone: 60, sentry: 350, dog: 70, gunner: 2200 };
+const UNIT_R: Record<UnitKind, [number, number]> = { rcxd: [0.5, 0.25], drone: [0.6, 0], sentry: [0.7, 0.8], dog: [0.55, 0.5], gunner: [4, 0] };
+export const UNIT_NAMES: Record<UnitKind, string> = { rcxd: 'RC-XD', drone: 'Recon Drone', sentry: 'Sentry Gun', dog: 'Attack Dog', gunner: 'Chopper Gunner' };
 
 export interface Heli {
   id: number;
@@ -138,7 +181,7 @@ export interface Tag {
   t: number;
 }
 
-export type Medal = 'headshot' | 'doublekill' | 'triplekill' | 'longshot' | 'revenge' | 'payback' | 'firstblood' | 'bloodthirsty' | 'merciless' | 'knife' | 'grenade' | 'buzzkill' | 'collateral';
+export type Medal = 'headshot' | 'doublekill' | 'triplekill' | 'longshot' | 'revenge' | 'payback' | 'firstblood' | 'bloodthirsty' | 'merciless' | 'knife' | 'grenade' | 'buzzkill' | 'collateral' | 'stuck' | 'tknife' | 'destroyer';
 
 export type GameEvent =
   | { k: 'shot'; by: string; w: string; fx: number; fy: number; fz: number; hits: Array<[number, number, number, number]>; sup: boolean }
@@ -150,8 +193,13 @@ export type GameEvent =
   | { k: 'reload'; who: string }
   | { k: 'empty'; who: string }
   | { k: 'melee'; who: string; hit: boolean }
-  | { k: 'grenadeThrow'; who: string; id: number }
-  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' }
+  | { k: 'grenadeThrow'; who: string; id: number; kind: NadeKind }
+  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd' | 'flash' | 'stun' | 'smoke' | 'molotov' }
+  | { k: 'unitShot'; id: number; x: number; y: number; z: number; tx: number; ty: number; tz: number }
+  | { k: 'unitDown'; id: number; kind: UnitKind; by: string }
+  | { k: 'bite'; id: number; x: number; z: number }
+  | { k: 'flashed'; who: string; amount: number }
+  | { k: 'stunned'; who: string; amount: number }
   | { k: 'streakEarned'; who: string; streak: Streak }
   | { k: 'streakUsed'; who: string; team: 0 | 1; streak: Streak; x?: number; z?: number; dx?: number; dz?: number }
   | { k: 'heliShot'; id: number; x: number; y: number; z: number; tx: number; ty: number; tz: number }
@@ -206,6 +254,14 @@ export class Game {
   /** Team (or player, in FFA) UAV expiry times. */
   uav = new Map<string, number>();
   airstrikes: Array<{ t: number; owner: string; team: 0 | 1; x: number; z: number; dx: number; dz: number; n: number }> = [];
+  units: Unit[] = [];
+  smokes: Array<{ id: number; x: number; y: number; z: number; t0: number; until: number }> = [];
+  fires: Array<{ id: number; x: number; y: number; z: number; r: number; until: number; owner: string }> = [];
+  /** Counter-UAV expiry per team key (jams everyone else's minimap). */
+  cuav = new Map<string, number>();
+  /** Recon-drone marks: team key → soldier id → expiry. */
+  marks = new Map<string, Map<string, number>>();
+  private nav: NavGrid | null = null;
   barrels: Array<{ x: number; y: number; z: number; hp: number; fuse: number; alive: boolean; box: number }> = [];
   winner: -1 | 0 | 1 = -1;
   firstBlood = false;
@@ -236,7 +292,8 @@ export class Game {
     for (const s of setups) this.add(s);
   }
 
-  add(s: SoldierSetup): Soldier {
+  add(setup: SoldierSetup): Soldier {
+    const s = { ...setup, loadout: fixLoadout(setup.loadout) };
     const mk = (id: string, att: Attachments): WeaponState => {
       const def = applyAttachments(WEAPON[id] ?? WEAPON.m13!, att);
       return { def, att, ammo: def.mag, reserve: def.reserve };
@@ -262,8 +319,12 @@ export class Game {
       swapT: 0,
       sprintOut: 0,
       meleeT: 0,
-      grenades: 2,
+      grenades: LETHALS[s.loadout.lethal].count,
+      tacticals: TACTICALS[s.loadout.tactical].count,
       cookStart: -1,
+      blindT: 0,
+      stunT: 0,
+      ctrl: 0,
       lastDamageT: -99,
       spawnT: 0,
       kills: 0,
@@ -355,13 +416,14 @@ export class Game {
       const back = k > 6 ? 1.2 : 0;
       x = best.x + rx * side + Math.sin(best.yaw) * back;
       z = best.z + rz * side + Math.cos(best.yaw) * back;
-      if (this.level.blocked(x - P.radius, best.y + 0.1, z - P.radius, x + P.radius, best.y + P.height, z + P.radius)) {
+      const [hx, hz] = this.map.half;
+      if (Math.abs(x) > hx - 0.6 || Math.abs(z) > hz - 0.6 || this.level.blocked(x - P.radius, best.y + 0.1, z - P.radius, x + P.radius, best.y + P.height, z + P.radius)) {
         x = best.x;
         z = best.z;
       }
     }
     if (s.nextLoadout) {
-      s.loadout = s.nextLoadout;
+      s.loadout = fixLoadout(s.nextLoadout);
       s.nextLoadout = undefined;
       s.weapons = [this.makeWeapon(s.loadout.primary, s.loadout.primaryAtt), this.makeWeapon(s.loadout.secondary, { optic: 'iron', muzzle: 'none', under: 'none', ammo: 'standard' })];
       s.suppressed = s.loadout.primaryAtt.muzzle === 'suppressor';
@@ -372,8 +434,11 @@ export class Game {
     s.cur = 0;
     s.adsT = 0;
     s.reloadT = s.swapT = s.meleeT = 0;
-    s.grenades = 2;
+    s.grenades = LETHALS[s.loadout.lethal].count;
+    s.tacticals = TACTICALS[s.loadout.tactical].count;
     s.cookStart = -1;
+    s.blindT = s.stunT = 0;
+    s.ctrl = 0;
     s.streak = 0;
     s.earned.clear();
     s.damagers.clear();
@@ -408,7 +473,7 @@ export class Game {
         if (s.queue.length > 6) s.queue.splice(0, s.queue.length - 3);
         s.ackSeq = inp.seq;
       }
-      if (!inp) inp = { ...s.lastInput, fire: false, jump: false, melee: false, grenade: false, streak: false, reload: false, slot: -1, seq: s.lastInput.seq };
+      if (!inp) inp = { ...s.lastInput, fire: false, jump: false, melee: false, grenade: false, tactical: false, streak: -1, reload: false, slot: -1, seq: s.lastInput.seq };
       if (!s.alive) {
         s.respawnIn -= dt;
         if (s.respawnIn <= 0) this.spawn(s);
@@ -422,10 +487,26 @@ export class Game {
     this.tickGrenades(dt);
     this.tickBarrels(dt);
     this.tickStreaks(dt);
+    this.tickUnits(dt);
+    this.tickAreas(dt);
     this.tickMode(dt);
   }
 
   private tickSoldier(s: Soldier, inp: Input, dt: number): void {
+    // Piloting a killstreak: the input drives the unit, the soldier stands still.
+    if (s.ctrl) {
+      const u = this.units.find((x) => x.id === s.ctrl);
+      if (!u || u.owner !== s.id) s.ctrl = 0;
+      else {
+        (u as Unit & { inp?: Input }).inp = inp;
+        stepMove(this.level, s.m, { ...NO_INPUT, yaw: s.m.yaw, pitch: s.m.pitch }, dt, 1, false, 0);
+        s.adsT = 0;
+        s.cookStart = -1;
+        // Knife key bails out of a drone / gunship early.
+        if (inp.melee && !s.lastInput.melee && u.kind !== 'rcxd') this.removeUnit(u, '');
+        return;
+      }
+    }
     const w = this.weapon(s);
     const frozen = this.phase === 'warmup';
     // Weapon swap.
@@ -458,7 +539,8 @@ export class Game {
     // Movement.
     const lw = this.has(s, 'lightweight') ? 1.07 : 1;
     const canSprint = !inp.ads && s.adsT < 0.3 && !(inp.fire && w.ammo > 0 && s.reloadT <= 0);
-    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * lw, canSprint, s.adsT);
+    const stun = this.time < s.stunT ? 0.5 : 1;
+    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * lw * stun, canSprint && stun === 1, s.adsT);
     else {
       s.m.yaw = inp.yaw;
       s.m.pitch = inp.pitch;
@@ -471,22 +553,42 @@ export class Game {
     if (frozen) return;
     // Melee.
     if (inp.melee && !s.lastInput.melee && s.meleeT <= 0) this.melee(s);
-    // Grenade: hold to cook, release to throw.
-    if (inp.grenade && s.grenades > 0 && s.cookStart < 0 && s.swapT <= 0) s.cookStart = this.time;
-    if (s.cookStart >= 0) {
-      const held = this.time - s.cookStart;
-      if (held >= 3.2) {
-        // Cooked too long: it goes off in your hand.
-        s.cookStart = -1;
-        s.grenades--;
-        this.explode(s.m.x, s.m.y + 1, s.m.z, 6.5, 160, s.id, 'frag', 'grenade');
-      } else if (!inp.grenade) {
-        this.throwGrenade(s, Math.max(0.3, 3.2 - held));
-        s.cookStart = -1;
+    // Lethal: a frag is held to cook and thrown on release; everything else goes on the press.
+    const lethal = s.loadout.lethal;
+    if (lethal === 'frag') {
+      if (inp.grenade && s.grenades > 0 && s.cookStart < 0 && s.swapT <= 0) s.cookStart = this.time;
+      if (s.cookStart >= 0) {
+        const held = this.time - s.cookStart;
+        if (held >= 3.2) {
+          // Cooked too long: it goes off in your hand.
+          s.cookStart = -1;
+          s.grenades--;
+          this.explode(s.m.x, s.m.y + 1, s.m.z, 6.5, 160, s.id, 'frag', 'grenade');
+        } else if (!inp.grenade) {
+          this.throwGrenade(s, 'frag', Math.max(0.3, 3.2 - held));
+          s.grenades--;
+          s.cookStart = -1;
+        }
+      }
+    } else if (inp.grenade && !s.lastInput.grenade && s.grenades > 0 && s.swapT <= 0) {
+      this.throwGrenade(s, lethal, lethal === 'semtex' ? 2 : 99);
+      s.grenades--;
+    }
+    // Tactical.
+    if (inp.tactical && !s.lastInput.tactical && s.tacticals > 0 && s.swapT <= 0 && s.cookStart < 0) {
+      const t = s.loadout.tactical;
+      this.throwGrenade(s, t, t === 'smoke' ? 1.6 : 1.4);
+      s.tacticals--;
+    }
+    // Killstreaks: a slot (0–2) or the next ready one (3).
+    if (inp.streak >= 0 && s.lastInput.streak < 0 && s.streaks.length) {
+      const want = inp.streak === 3 ? s.streaks[0]! : s.loadout.streaks[inp.streak];
+      if (want && s.streaks.includes(want) && !(STREAKS[want].pilot && s.ctrl)) {
+        s.streaks.splice(s.streaks.indexOf(want), 1);
+        this.useStreak(s, want);
+        if (s.ctrl) return;
       }
     }
-    // Killstreaks.
-    if (inp.streak && !s.lastInput.streak && s.streaks.length) this.useStreak(s, s.streaks.shift()!);
     // Shooting.
     if (!inp.fire) {
       s.triggerHeld = false;
@@ -507,7 +609,7 @@ export class Game {
   }
 
   canFire(s: Soldier): boolean {
-    return s.alive && this.phase === 'play' && s.reloadT <= 0 && s.swapT <= 0 && s.meleeT <= 0 && s.sprintOut <= 0 && !s.m.sprinting && s.cookStart < 0;
+    return s.alive && !s.ctrl && this.phase === 'play' && s.reloadT <= 0 && s.swapT <= 0 && s.meleeT <= 0 && s.sprintOut <= 0 && !s.m.sprinting && s.cookStart < 0;
   }
 
   /** Spread cone (half-angle, radians) right now. */
@@ -660,6 +762,16 @@ export class Game {
         return { x: o[0] + d[0] * th, y: o[1] + d[1] * th, z: o[2] + d[2] * th, target: null, dmg: 0, head: false };
       }
     }
+    // Killstreak hardware.
+    for (const u of this.units) {
+      if (u.owner === s.id || (this.mode !== 'ffa' && u.team === s.team)) continue;
+      const [rad, dy] = UNIT_R[u.kind];
+      const tu = raySphere(o[0], o[1], o[2], d[0], d[1], d[2], u.x, u.y + dy, u.z, rad);
+      if (tu >= 0 && tu < solid.t && (!best || tu < best.t)) {
+        this.hurtUnit(u, damageAt(w, tu), s);
+        return { x: o[0] + d[0] * tu, y: o[1] + d[1] * tu, z: o[2] + d[2] * tu, target: null, dmg: 0, head: false };
+      }
+    }
     // Barrels.
     for (const b of this.barrels) {
       if (!b.alive || b.fuse >= 0) continue;
@@ -701,6 +813,12 @@ export class Game {
     t.respawnIn = RESPAWN;
     t.killedBy = by?.id ?? '';
     t.cookStart = -1;
+    // Dying ends any piloted streak (an RC-XD / drone / gunship without a pilot is lost).
+    if (t.ctrl) {
+      const u = this.units.find((x) => x.id === t.ctrl);
+      if (u) this.removeUnit(u, '');
+      t.ctrl = 0;
+    }
     const victimStreak = t.streak;
     t.streak = 0;
     const assist: string[] = [];
@@ -732,7 +850,8 @@ export class Game {
       const dist = Math.hypot(t.m.x - by.m.x, t.m.z - by.m.z);
       if (dist > 35 && weapon !== 'knife') this.medal(by, 'longshot', 50);
       if (weapon === 'knife') this.medal(by, 'knife', 50);
-      if (weapon === 'grenade') this.medal(by, 'grenade', 50);
+      if (weapon === 'grenade' || weapon === 'semtex') this.medal(by, 'grenade', 50);
+      if (weapon === 'tknife') this.medal(by, 'tknife', 75);
       if (victimStreak >= 3) this.medal(by, 'buzzkill', 50);
       if (by.killedBy === t.id) this.medal(by, 'payback', 50);
       const recent = (by as Soldier & { recentKills?: number[] }).recentKills ?? [];
@@ -745,7 +864,7 @@ export class Game {
       if (by.streak === 10) this.medal(by, 'merciless', 150);
       // Killstreaks (per life, Hardline makes them cheaper).
       const off = this.has(by, 'hardline') ? 1 : 0;
-      for (const st of ['uav', 'airstrike', 'heli'] as Streak[]) {
+      for (const st of by.loadout.streaks) {
         if (by.streak >= STREAKS[st].kills - off && !by.earned.has(st)) {
           by.earned.add(st);
           by.streaks.push(st);
@@ -806,27 +925,61 @@ export class Game {
     this.events.push({ k: 'melee', who: s.id, hit });
   }
 
-  private throwGrenade(s: Soldier, fuse: number): void {
-    s.grenades--;
-    const d = Game.dir(s.m.yaw, s.m.pitch + 0.18);
+  private throwGrenade(s: Soldier, kind: NadeKind, fuse: number): void {
+    const knife = kind === 'tknife';
+    const d = Game.dir(s.m.yaw, s.m.pitch + (knife ? 0.02 : 0.18));
+    const v = knife ? 32 : kind === 'molotov' ? 15 : 17;
     const e = this.eye(s);
-    const g: Grenade = { id: nextId++, owner: s.id, team: s.team, x: e[0] + d[0] * 0.5, y: e[1] - 0.1, z: e[2] + d[2] * 0.5, vx: d[0] * 17 + s.m.vx * 0.5, vy: d[1] * 17 + 2, vz: d[2] * 17 + s.m.vz * 0.5, fuse, kind: 'frag' };
+    const g: Grenade = { id: nextId++, owner: s.id, team: s.team, x: e[0] + d[0] * 0.5, y: e[1] - 0.1, z: e[2] + d[2] * 0.5, vx: d[0] * v + s.m.vx * 0.5, vy: d[1] * v + (knife ? 0.5 : 2), vz: d[2] * v + s.m.vz * 0.5, fuse, kind };
     this.grenades.push(g);
-    this.events.push({ k: 'grenadeThrow', who: s.id, id: g.id });
+    this.events.push({ k: 'grenadeThrow', who: s.id, id: g.id, kind });
   }
 
   private tickGrenades(dt: number): void {
     for (let i = this.grenades.length - 1; i >= 0; i--) {
       const g = this.grenades[i]!;
       g.fuse -= dt;
-      g.vy -= 16 * dt;
+      // Semtex on someone: rides along.
+      if (g.stuck) {
+        const t = this.soldier(g.stuck);
+        if (t && t.alive) {
+          g.x = t.m.x;
+          g.y = t.m.y + 1.2;
+          g.z = t.m.z;
+        } else g.stuck = undefined;
+      }
+      if (g.rest || g.stuck) {
+        if (g.fuse <= 0) {
+          this.grenades.splice(i, 1);
+          this.detonate(g);
+        }
+        continue;
+      }
+      g.vy -= (g.kind === 'tknife' ? 9 : 16) * dt;
+      // Knives and semtex check bodies along the way.
+      if (g.kind === 'tknife' || g.kind === 'semtex') {
+        const t = this.soldiers.find((o) => o.alive && o.id !== g.owner && (this.mode === 'ffa' || o.team !== g.team) && Math.hypot(o.m.x - g.x, o.m.z - g.z) < 0.45 && g.y > o.m.y && g.y < o.m.y + height(o.m) + 0.1);
+        if (t) {
+          if (g.kind === 'tknife') {
+            this.grenades.splice(i, 1);
+            this.damage(t, 200, this.soldier(g.owner) ?? null, 'tknife', g.y > t.m.y + height(t.m) - 0.3, g.x, g.z);
+            continue;
+          }
+          g.stuck = t.id;
+          const by = this.soldier(g.owner);
+          if (by) this.medal(by, 'stuck', 50);
+          continue;
+        }
+      }
       const r = 0.07;
+      let hit = false;
       for (const ax of ['x', 'y', 'z'] as const) {
         const v = ax === 'x' ? g.vx : ax === 'y' ? g.vy : g.vz;
         const old = g[ax];
         g[ax] += v * dt;
         const hitGround = ax === 'y' && g.y < r;
         if (hitGround || this.level.blocked(g.x - r, g.y - r, g.z - r, g.x + r, g.y + r, g.z + r)) {
+          hit = true;
           g[ax] = hitGround ? r : old;
           if (ax === 'x') g.vx *= -0.35;
           if (ax === 'z') g.vz *= -0.35;
@@ -837,15 +990,90 @@ export class Game {
           }
         }
       }
-      if (g.fuse <= 0) {
+      // Semtex sticks, a molotov shatters, a knife drops dead.
+      if (hit && g.kind === 'semtex') g.rest = true;
+      if (hit && (g.kind === 'molotov' || g.kind === 'tknife')) g.fuse = 0;
+      if (g.fuse <= 0 || g.y < -5) {
         this.grenades.splice(i, 1);
-        this.explode(g.x, g.y, g.z, 6.5, 160, g.owner, 'frag', 'grenade');
+        if (g.kind !== 'tknife') this.detonate(g);
       }
     }
   }
 
+  private detonate(g: Grenade): void {
+    const by = this.soldier(g.owner) ?? null;
+    switch (g.kind) {
+      case 'frag':
+        return this.explode(g.x, g.y, g.z, 6.5, 160, g.owner, 'frag', 'grenade');
+      case 'semtex':
+        return this.explode(g.x, g.y, g.z, 5.5, 170, g.owner, 'semtex', 'semtex');
+      case 'molotov': {
+        const y = this.level.floorAt(g.x, g.z, g.y + 0.3);
+        this.fires.push({ id: nextId++, x: g.x, y, z: g.z, r: 3.4, until: this.time + 7, owner: g.owner });
+        this.events.push({ k: 'explosion', x: g.x, y: y + 0.2, z: g.z, r: 3.4, kind: 'molotov' });
+        return;
+      }
+      case 'smoke':
+        this.smokes.push({ id: nextId++, x: g.x, y: Math.max(g.y, this.level.floorAt(g.x, g.z, g.y + 0.3)) + 1.6, z: g.z, t0: this.time, until: this.time + 15 });
+        this.events.push({ k: 'explosion', x: g.x, y: g.y, z: g.z, r: 1, kind: 'smoke' });
+        return;
+      case 'flash':
+      case 'stun': {
+        this.events.push({ k: 'explosion', x: g.x, y: g.y, z: g.z, r: g.kind === 'flash' ? 2 : 1.5, kind: g.kind });
+        const range = g.kind === 'flash' ? 20 : 10;
+        for (const t of this.soldiers) {
+          if (!t.alive || (by && t.id !== by.id && !this.enemies(by, t))) continue;
+          const e = this.eye(t);
+          const dx = g.x - e[0];
+          const dy = g.y + 0.2 - e[1];
+          const dz = g.z - e[2];
+          const d = Math.hypot(dx, dy, dz);
+          if (d > range || !this.sees(g.x, g.y + 0.2, g.z, e[0], e[1], e[2])) continue;
+          const look = Game.dir(t.m.yaw, t.m.pitch);
+          const facing = (look[0] * dx + look[1] * dy + look[2] * dz) / (d || 1);
+          const self = by && t.id === by.id ? 0.5 : 1;
+          if (g.kind === 'flash') {
+            const amount = Math.min(1, (1 - d / range) * 1.4 * (0.3 + 0.7 * Math.max(0, facing)) * self);
+            if (amount < 0.08) continue;
+            t.blindT = Math.max(t.blindT, this.time + amount * 4.5);
+            this.events.push({ k: 'flashed', who: t.id, amount });
+          } else {
+            const amount = Math.min(1, (1 - d / range) * 1.5 * self);
+            t.stunT = Math.max(t.stunT, this.time + 1 + amount * 3.5);
+            this.events.push({ k: 'stunned', who: t.id, amount });
+          }
+          if (by && t.id !== by.id) by.score += 10;
+        }
+        return;
+      }
+    }
+  }
+
+  /** Line of sight that smoke also blocks (bots, turrets, gunships, spawn checks use this). */
+  sees(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+    for (const sm of this.smokes) {
+      const r = this.smokeRadius(sm);
+      if (r < 1) continue;
+      // Distance from the cloud centre to the segment.
+      const dx = bx - ax;
+      const dy = by - ay;
+      const dz = bz - az;
+      const l2 = dx * dx + dy * dy + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((sm.x - ax) * dx + (sm.y - ay) * dy + (sm.z - az) * dz) / l2));
+      if (Math.hypot(ax + dx * t - sm.x, (ay + dy * t - sm.y) * 1.4, az + dz * t - sm.z) < r * 0.85) return false;
+    }
+    return this.level.visible(ax, ay, az, bx, by, bz);
+  }
+
+  /** Smoke clouds bloom over ~1.5 s and thin out in their last 2 s. */
+  smokeRadius(sm: { t0: number; until: number }): number {
+    const age = this.time - sm.t0;
+    const left = sm.until - this.time;
+    return 6 * Math.min(1, age / 1.5) * Math.min(1, Math.max(0, left / 2));
+  }
+
   /** Radial damage with line of sight. */
-  explode(x: number, y: number, z: number, radius: number, max: number, owner: string, kind: 'frag' | 'barrel' | 'airstrike', weapon: string): void {
+  explode(x: number, y: number, z: number, radius: number, max: number, owner: string, kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd', weapon: string): void {
     this.events.push({ k: 'explosion', x, y, z, r: radius, kind });
     const by = this.soldier(owner) ?? null;
     let kills = 0;
@@ -858,6 +1086,12 @@ export class Game {
       if (!this.level.visible(x, y + 0.2, z, t.m.x, cy, t.m.z)) continue;
       const dmg = d < radius * 0.35 ? max : max * (1 - (d - radius * 0.35) / (radius * 0.65)) * 0.7 + 10;
       if (this.damage(t, t.id === owner ? dmg * 0.6 : dmg, by, weapon, false, x, z)) kills++;
+    }
+    // Hardware caught in the blast.
+    for (const u of [...this.units]) {
+      if (by && u.owner !== by.id && this.mode !== 'ffa' && u.team === by.team) continue;
+      const d = Math.hypot(u.x - x, u.y - y, u.z - z);
+      if (d < radius) this.hurtUnit(u, max * (1 - d / radius) * 1.5, by);
     }
     // Chain-react barrels.
     for (const b of this.barrels) if (b.alive && b.fuse < 0 && Math.hypot(b.x - x, b.z - z) < radius * 0.8) b.fuse = 0.25 + this.rand() * 0.3;
@@ -914,10 +1148,366 @@ export class Game {
       const dz = Math.sin(a);
       this.airstrikes.push({ t: this.time + 2.5, owner: s.id, team: s.team, x: tx - dx * 9, z: tz - dz * 9, dx, dz, n: 7 });
       this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st, x: tx, z: tz, dx, dz });
-    } else {
+    } else if (st === 'heli') {
       const r = Math.min(this.map.half[0], this.map.half[1]) * 0.55;
       this.helis.push({ id: nextId++, owner: s.id, team: s.team, until: this.time + 40, angle: this.rand() * 6.28, x: r, y: 20, z: 0, hp: 1400, target: '', burst: 0, nextShot: this.time + 3, cooldown: 0 });
       this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st });
+    } else if (st === 'cuav') {
+      const key = this.mode === 'ffa' ? s.id : `t${s.team}`;
+      this.cuav.set(key, Math.max(this.cuav.get(key) ?? this.time, this.time) + 25);
+      this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st });
+    } else {
+      const f = Game.dir(s.m.yaw, 0);
+      const mk = (kind: UnitKind, x: number, y: number, z: number, life: number): Unit => {
+        const u: Unit = { id: nextId++, kind, owner: s.id, team: s.team, x, y, z, yaw: s.m.yaw, pitch: kind === 'drone' || kind === 'gunner' ? -0.6 : 0, speed: 0, hp: UNIT_HP[kind], until: this.time + life, nextShot: this.time + 0.8, target: '', path: [], repath: 0, angle: this.rand() * Math.PI * 2, stuckT: 0 };
+        this.units.push(u);
+        return u;
+      };
+      if (st === 'rcxd') {
+        const x = s.m.x + f[0] * 1.2;
+        const z = s.m.z + f[2] * 1.2;
+        const u = mk('rcxd', this.level.blocked(x - 0.3, s.m.y + 0.1, z - 0.3, x + 0.3, s.m.y + 0.5, z + 0.3) ? s.m.x : x, s.m.y, this.level.blocked(x - 0.3, s.m.y + 0.1, z - 0.3, x + 0.3, s.m.y + 0.5, z + 0.3) ? s.m.z : z, 22);
+        if (!s.bot) s.ctrl = u.id;
+      } else if (st === 'drone') {
+        const u = mk('drone', s.m.x, Math.max(s.m.y + 12, 14), s.m.z, 30);
+        if (!s.bot) s.ctrl = u.id;
+      } else if (st === 'gunner') {
+        const u = mk('gunner', 0, 30, 0, 32);
+        if (!s.bot) s.ctrl = u.id;
+      } else if (st === 'sentry') {
+        let x = s.m.x + f[0] * 1.4;
+        let z = s.m.z + f[2] * 1.4;
+        if (this.level.blocked(x - 0.4, s.m.y + 0.1, z - 0.4, x + 0.4, s.m.y + 1.2, z + 0.4)) {
+          x = s.m.x;
+          z = s.m.z;
+        }
+        mk('sentry', x, s.m.y, z, 60);
+      } else if (st === 'dogs') {
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2;
+          const x = s.m.x + Math.cos(a) * 0.9;
+          const z = s.m.z + Math.sin(a) * 0.9;
+          const ok = !this.level.blocked(x - 0.3, s.m.y + 0.1, z - 0.3, x + 0.3, s.m.y + 0.8, z + 0.3);
+          mk('dog', ok ? x : s.m.x, s.m.y, ok ? z : s.m.z, 45);
+        }
+      }
+      this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st, x: s.m.x, z: s.m.z });
+    }
+  }
+
+  // ---------------------------------------------------------------- killstreak hardware
+
+  private hurtUnit(u: Unit, dmg: number, by: Soldier | null): void {
+    u.hp -= dmg;
+    if (u.hp > 0) return;
+    if (u.kind === 'rcxd') {
+      // Shot-up RC-XDs still go off.
+      this.removeUnit(u, by?.id ?? '');
+      this.explode(u.x, u.y + 0.3, u.z, 5, 180, u.owner, 'rcxd', 'rcxd');
+      return;
+    }
+    this.removeUnit(u, by?.id ?? '');
+    if (by && by.id !== u.owner) {
+      const pts = u.kind === 'gunner' ? 200 : u.kind === 'dog' ? 50 : 100;
+      by.score += pts;
+      this.events.push({ k: 'score', who: by.id, pts, why: `${UNIT_NAMES[u.kind]} destroyed` });
+      this.medal(by, 'destroyer', 0);
+    }
+  }
+
+  private removeUnit(u: Unit, by: string): void {
+    const i = this.units.indexOf(u);
+    if (i < 0) return;
+    this.units.splice(i, 1);
+    const owner = this.soldier(u.owner);
+    if (owner && owner.ctrl === u.id) owner.ctrl = 0;
+    this.events.push({ k: 'unitDown', id: u.id, kind: u.kind, by });
+  }
+
+  private navGrid(): NavGrid {
+    return (this.nav ??= new NavGrid(this.level, this.map.half[0], this.map.half[1]));
+  }
+
+  private tickUnits(dt: number): void {
+    const [hx, hz] = this.map.half;
+    for (const u of [...this.units]) {
+      if (!this.units.includes(u)) continue;
+      const owner = this.soldier(u.owner);
+      if (this.time > u.until || !owner) {
+        if (u.kind === 'rcxd') {
+          this.removeUnit(u, '');
+          this.explode(u.x, u.y + 0.3, u.z, 5, 180, u.owner, 'rcxd', 'rcxd');
+        } else this.removeUnit(u, '');
+        continue;
+      }
+      const piloted = owner.ctrl === u.id && !owner.bot;
+      const inp = piloted ? (u as Unit & { inp?: Input }).inp : undefined;
+      const enemies = this.soldiers.filter((t) => t.alive && t.id !== u.owner && (this.mode === 'ffa' || t.team !== u.team));
+      const nearest = (list: Soldier[], maxD: number, los: (t: Soldier) => boolean) => {
+        let best: Soldier | null = null;
+        let bd = maxD;
+        for (const t of list) {
+          const d = Math.hypot(t.m.x - u.x, t.m.z - u.z);
+          if (d < bd && los(t)) {
+            bd = d;
+            best = t;
+          }
+        }
+        return best;
+      };
+      switch (u.kind) {
+        case 'rcxd': {
+          let throttle = 0;
+          if (inp) {
+            u.yaw = inp.yaw;
+            throttle = inp.mz;
+            if (inp.fire) {
+              this.removeUnit(u, '');
+              this.explode(u.x, u.y + 0.3, u.z, 5, 180, u.owner, 'rcxd', 'rcxd');
+              continue;
+            }
+          } else {
+            // Autopilot: straight at the nearest enemy, boom when close or stuck.
+            const t = nearest(enemies, 60, () => true);
+            if (t) {
+              u.yaw = Math.atan2(-(t.m.x - u.x), -(t.m.z - u.z));
+              throttle = 1;
+              if (Math.hypot(t.m.x - u.x, t.m.z - u.z) < 2.5 || u.stuckT > 1) {
+                this.removeUnit(u, '');
+                this.explode(u.x, u.y + 0.3, u.z, 5, 180, u.owner, 'rcxd', 'rcxd');
+                continue;
+              }
+            }
+          }
+          u.speed += (throttle * 11 - u.speed) * Math.min(1, dt * 3);
+          const nx = u.x - Math.sin(u.yaw) * u.speed * dt;
+          const nz = u.z - Math.cos(u.yaw) * u.speed * dt;
+          const r = 0.3;
+          const free = (y: number) => !this.level.blocked(nx - r, y + 0.05, nz - r, nx + r, y + 0.45, nz + r) && Math.abs(nx) < hx - 0.3 && Math.abs(nz) < hz - 0.3;
+          let moved = false;
+          for (const step of [0, 0.32]) {
+            if (free(u.y + step)) {
+              u.x = nx;
+              u.z = nz;
+              u.y += step;
+              moved = true;
+              break;
+            }
+          }
+          if (!moved) {
+            u.speed *= -0.2;
+            u.stuckT += dt;
+          } else u.stuckT = Math.max(0, u.stuckT - dt);
+          u.y = this.level.floorAt(u.x, u.z, u.y + 0.05, 0.25);
+          break;
+        }
+        case 'drone': {
+          if (inp) {
+            u.yaw = inp.yaw;
+            u.pitch = Math.max(-1.45, Math.min(0.2, inp.pitch));
+            const sp = 11;
+            const fx = -Math.sin(u.yaw);
+            const fz = -Math.cos(u.yaw);
+            u.x += (fx * inp.mz + -fz * inp.mx) * sp * dt;
+            u.z += (fz * inp.mz + fx * inp.mx) * sp * dt;
+            if (inp.fire && this.time >= u.nextShot) {
+              u.nextShot = this.time + 0.35;
+              // Mark everyone near the crosshair.
+              const d = Game.dir(u.yaw, u.pitch);
+              for (const t of enemies) {
+                const tx = t.m.x - u.x;
+                const ty = t.m.y + 1 - u.y;
+                const tz = t.m.z - u.z;
+                const dist = Math.hypot(tx, ty, tz);
+                if ((tx * d[0] + ty * d[1] + tz * d[2]) / dist > Math.cos(0.12 + 2 / dist) && dist < 80) this.mark(u.team, u.owner, t.id, 10);
+              }
+            }
+          } else {
+            // Autopilot: drift over the enemy, marking what it can see.
+            const t = nearest(enemies, 200, () => true);
+            if (t) {
+              const dx = t.m.x - u.x;
+              const dz = t.m.z - u.z;
+              const d = Math.hypot(dx, dz) || 1;
+              u.x += (dx / d) * Math.min(d, 8 * dt);
+              u.z += (dz / d) * Math.min(d, 8 * dt);
+            }
+            if (this.time >= u.nextShot) {
+              u.nextShot = this.time + 1;
+              for (const e of enemies) if (Math.hypot(e.m.x - u.x, e.m.z - u.z) < 22 && this.sees(u.x, u.y, u.z, e.m.x, e.m.y + 1, e.m.z)) this.mark(u.team, u.owner, e.id, 6);
+            }
+          }
+          u.x = Math.max(-hx, Math.min(hx, u.x));
+          u.z = Math.max(-hz, Math.min(hz, u.z));
+          break;
+        }
+        case 'sentry': {
+          const t = nearest(enemies, 38, (e) => this.sees(u.x, u.y + 1, u.z, e.m.x, e.m.y + 1.2, e.m.z));
+          if (!t) {
+            u.yaw += dt * 0.6;
+            break;
+          }
+          const want = Math.atan2(-(t.m.x - u.x), -(t.m.z - u.z));
+          let dy = want - u.yaw;
+          while (dy > Math.PI) dy -= Math.PI * 2;
+          while (dy < -Math.PI) dy += Math.PI * 2;
+          u.yaw += Math.sign(dy) * Math.min(Math.abs(dy), dt * 3.5);
+          if (Math.abs(dy) > 0.15 || this.time < u.nextShot) break;
+          u.nextShot = this.time + 0.12;
+          const dist = Math.hypot(t.m.x - u.x, t.m.z - u.z);
+          const miss = this.rand() > 0.75 - dist * 0.01;
+          const tx = t.m.x + (miss ? (this.rand() - 0.5) * 2 : 0);
+          const tz = t.m.z + (miss ? (this.rand() - 0.5) * 2 : 0);
+          this.events.push({ k: 'unitShot', id: u.id, x: u.x - Math.sin(u.yaw) * 0.6, y: u.y + 1.05, z: u.z - Math.cos(u.yaw) * 0.6, tx, ty: t.m.y + 1.1, tz });
+          if (!miss) this.damage(t, 16, owner, 'sentry', false, u.x, u.z);
+          break;
+        }
+        case 'dog': {
+          u.repath -= dt;
+          let t = this.soldier(u.target);
+          if (!t || !t.alive || u.repath <= 0) {
+            t = nearest(enemies, 999, () => true) ?? undefined;
+            u.target = t?.id ?? '';
+          }
+          if (!t) break;
+          const d = Math.hypot(t.m.x - u.x, t.m.z - u.z);
+          if (d < 1.7 && Math.abs(t.m.y - u.y) < 1.2) {
+            if (this.time >= u.nextShot) {
+              u.nextShot = this.time + 1.1;
+              this.events.push({ k: 'bite', id: u.id, x: u.x, z: u.z });
+              this.damage(t, 120, owner, 'dog', false, u.x, u.z);
+            }
+            u.yaw = Math.atan2(-(t.m.x - u.x), -(t.m.z - u.z));
+            u.speed = 0;
+            break;
+          }
+          const nav = this.navGrid();
+          if (u.repath <= 0 || !u.path.length) {
+            u.repath = 0.8;
+            u.path = nav.path(nav.nearest(u.x, u.y, u.z), nav.nearest(t.m.x, t.m.y, t.m.z), 3000);
+          }
+          // Run along the path (straight at the target when it's in the open).
+          let gx = t.m.x;
+          let gy = t.m.y;
+          let gz = t.m.z;
+          if (!(d < 8 && this.level.visible(u.x, u.y + 0.5, u.z, t.m.x, t.m.y + 0.5, t.m.z))) {
+            while (u.path.length > 1) {
+              const n = nav.nodes[u.path[0]!]!;
+              if (Math.hypot(n.x - u.x, n.z - u.z) > 0.7) break;
+              u.path.shift();
+            }
+            const n = nav.nodes[u.path[0] ?? -1];
+            if (n) {
+              gx = n.x;
+              gy = n.y;
+              gz = n.z;
+            }
+          }
+          const dx = gx - u.x;
+          const dz = gz - u.z;
+          const l = Math.hypot(dx, dz) || 1;
+          u.speed = 8.5;
+          const stepL = Math.min(l, u.speed * dt);
+          u.x += (dx / l) * stepL;
+          u.z += (dz / l) * stepL;
+          u.y += (gy - u.y) * Math.min(1, dt * 6);
+          u.yaw = Math.atan2(-dx, -dz);
+          break;
+        }
+        case 'gunner': {
+          const r = Math.min(hx, hz) * 0.45;
+          u.angle += dt * 0.13;
+          u.x = Math.cos(u.angle) * r;
+          u.z = Math.sin(u.angle) * r;
+          u.y = 30;
+          let fire = false;
+          if (inp) {
+            u.yaw = inp.yaw;
+            u.pitch = Math.max(-1.5, Math.min(0.1, inp.pitch));
+            fire = inp.fire;
+          } else {
+            const t = nearest(enemies, 300, (e) => !this.has(e, 'ghost') && this.sees(u.x, u.y - 2, u.z, e.m.x, e.m.y + 1.2, e.m.z));
+            if (t) {
+              u.yaw = Math.atan2(-(t.m.x - u.x), -(t.m.z - u.z));
+              u.pitch = Math.atan2(t.m.y + 1 - u.y, Math.hypot(t.m.x - u.x, t.m.z - u.z));
+              fire = this.rand() < 0.6;
+            }
+          }
+          if (!fire || this.time < u.nextShot) break;
+          u.nextShot = this.time + 0.075;
+          const base = Game.dir(u.yaw, u.pitch);
+          const d = this.cone(base, 0.012);
+          const ox = u.x;
+          const oy = u.y - 2.2;
+          const oz = u.z;
+          const hitL = this.level.raycast(ox, oy, oz, d[0], d[1], d[2], 220, true);
+          let tEnd = hitL.t;
+          let victim: Soldier | null = null;
+          for (const t of enemies) {
+            const tt = raySphere(ox, oy, oz, d[0], d[1], d[2], t.m.x, t.m.y + 1, t.m.z, 0.7);
+            if (tt >= 0 && tt < tEnd) {
+              tEnd = tt;
+              victim = t;
+            }
+          }
+          const ex = ox + d[0] * tEnd;
+          const ey = oy + d[1] * tEnd;
+          const ez = oz + d[2] * tEnd;
+          this.events.push({ k: 'unitShot', id: u.id, x: ox, y: oy, z: oz, tx: ex, ty: ey, tz: ez });
+          if (victim) this.damage(victim, 45, owner, 'gunner', false, ox, oz);
+          // Heavy rounds splash a little.
+          else for (const t of enemies) if (Math.hypot(t.m.x - ex, t.m.y + 1 - ey, t.m.z - ez) < 1.6) this.damage(t, 18, owner, 'gunner', false, ox, oz);
+          break;
+        }
+      }
+    }
+  }
+
+  /** Mark an enemy for a team (recon drone). */
+  private mark(team: 0 | 1, owner: string, id: string, secs: number): void {
+    const key = this.mode === 'ffa' ? owner : `t${team}`;
+    let m = this.marks.get(key);
+    if (!m) this.marks.set(key, (m = new Map()));
+    const was = (m.get(id) ?? 0) > this.time;
+    m.set(id, this.time + secs);
+    if (!was) {
+      const by = this.soldier(owner);
+      if (by) {
+        by.score += 10;
+        this.events.push({ k: 'score', who: owner, pts: 10, why: 'Enemy marked' });
+      }
+    }
+  }
+
+  /** Is `t` marked for `viewer`'s team? */
+  marked(viewer: Soldier, t: Soldier): boolean {
+    const key = this.mode === 'ffa' ? viewer.id : `t${viewer.team}`;
+    return (this.marks.get(key)?.get(t.id) ?? 0) > this.time;
+  }
+
+  /** Is `viewer`'s minimap jammed by an enemy counter-UAV? */
+  jammed(viewer: Soldier): boolean {
+    const mine = this.mode === 'ffa' ? viewer.id : `t${viewer.team}`;
+    for (const [k, t] of this.cuav) if (k !== mine && t > this.time) return true;
+    return false;
+  }
+
+  /** Smoke clouds and fire pools. */
+  private tickAreas(dt: number): void {
+    this.smokes = this.smokes.filter((sm) => sm.until > this.time);
+    for (let i = this.fires.length - 1; i >= 0; i--) {
+      const f = this.fires[i]!;
+      if (f.until < this.time) {
+        this.fires.splice(i, 1);
+        continue;
+      }
+      const by = this.soldier(f.owner) ?? null;
+      for (const t of this.soldiers) {
+        if (!t.alive || (by && t.id !== by.id && !this.enemies(by, t))) continue;
+        if (Math.hypot(t.m.x - f.x, t.m.z - f.z) > f.r || Math.abs(t.m.y - f.y) > 1.2) continue;
+        this.damage(t, (t.id === f.owner ? 20 : 48) * dt, by, 'molotov', false, f.x, f.z);
+      }
+      for (const u of [...this.units]) if (u.kind === 'dog' && Math.hypot(u.x - f.x, u.z - f.z) < f.r) this.hurtUnit(u, 40 * dt, by);
     }
   }
 
@@ -946,7 +1536,7 @@ export class Game {
       h.y = 20 + Math.sin(this.time * 0.7) * 1.5;
       if (this.time < h.nextShot) continue;
       const owner = this.soldier(h.owner);
-      const targets = this.soldiers.filter((t) => t.alive && t.id !== h.owner && (this.mode === 'ffa' || t.team !== h.team) && !this.has(t, 'ghost') && this.level.visible(h.x, h.y - 2, h.z, t.m.x, t.m.y + 1.2, t.m.z));
+      const targets = this.soldiers.filter((t) => t.alive && t.id !== h.owner && (this.mode === 'ffa' || t.team !== h.team) && !this.has(t, 'ghost') && this.sees(h.x, h.y - 2, h.z, t.m.x, t.m.y + 1.2, t.m.z));
       if (!targets.length) {
         h.nextShot = this.time + 0.5;
         continue;

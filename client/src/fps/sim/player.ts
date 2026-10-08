@@ -16,13 +16,16 @@ export interface Input {
   reload: boolean;
   /** Weapon slot wanted (0 primary, 1 secondary, -1 no change). */
   slot: number;
+  /** Lethal: hold to cook (frag), release to throw. */
   grenade: boolean;
+  /** Tactical: throw on press. */
+  tactical: boolean;
   melee: boolean;
-  /** Activate a ready killstreak. */
-  streak: boolean;
+  /** Killstreak to call in: −1 none, 0–2 that slot, 3 the next ready one. */
+  streak: number;
 }
 
-export const NO_INPUT: Input = { seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, sprint: false, crouch: false, ads: false, fire: false, reload: false, slot: -1, grenade: false, melee: false, streak: false };
+export const NO_INPUT: Input = { seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, sprint: false, crouch: false, ads: false, fire: false, reload: false, slot: -1, grenade: false, tactical: false, melee: false, streak: -1 };
 
 export const P = {
   radius: 0.34,

@@ -1,14 +1,14 @@
 import './styles.css';
 import { Game, MODES, type Mode, type SoldierSetup } from './sim/game';
 import { MAPS } from './sim/maps';
-import { DEFAULT_CLASSES, NO_ATTACHMENTS as NO_ATT, PERKS, PRIMARIES, SECONDARIES, STREAKS, WEAPON, WEAPONS, applyAttachments, damageAt, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './sim/weapons';
+import { DEFAULT_CLASSES, LETHALS, NO_ATTACHMENTS as NO_ATT, PERKS, PRIMARIES, SECONDARIES, STREAKS, STREAK_LIST, TACTICALS, WEAPON, WEAPONS, applyAttachments, damageAt, fixLoadout, type Attachments, type Lethal, type Loadout, type Perk, type Streak, type Tactical, type WeaponDef } from './sim/weapons';
 import type { BotSkill } from './sim/bots';
 import { preload } from './render/assets';
 import { CAMOS, progress } from './render/camo';
 import { GunStage, cachedThumb, mapThumb, renderThumb, setThumbGate, type ItemThumb, type ThumbSpec } from './render/preview';
 import { icon } from './icons';
 import { Match, LocalSession, type Session } from './match';
-import { FpsInput, DEFAULT_INPUT, type InputSettings } from './input';
+import { FpsInput, DEFAULT_INPUT, connectedPads, type InputSettings, type InputSource } from './input';
 import { FpsAudio } from './audio';
 import { scoreboard } from './hud';
 import { OnlineSession, FpsNet } from './net/online';
@@ -32,13 +32,19 @@ interface Profile {
   bots: number;
   skill: BotSkill;
   xp: number;
+  /** Splitscreen: 1–4 local players, on the same team or against each other, and the class each extra player uses. */
+  split: number;
+  splitTeams: 'together' | 'versus';
+  splitClasses: number[];
 }
 const KEY = 'zh:profile';
 const profile: Profile = (() => {
-  const d: Profile = { name: `Soldier${Math.floor(100 + Math.random() * 900)}`, classes: structuredClone(DEFAULT_CLASSES), cls: 0, camos: {}, input: { ...DEFAULT_INPUT }, fov: 90, volume: 0.7, announcer: true, quality: 'high', map: 'culdesac', mode: 'tdm', bots: 5, skill: 'regular', xp: 0 };
+  const d: Profile = { name: `Soldier${Math.floor(100 + Math.random() * 900)}`, classes: structuredClone(DEFAULT_CLASSES), cls: 0, camos: {}, input: { ...DEFAULT_INPUT }, fov: 90, volume: 0.7, announcer: true, quality: 'high', map: 'culdesac', mode: 'tdm', bots: 5, skill: 'regular', xp: 0, split: 1, splitTeams: 'together', splitClasses: [1, 2, 3] };
   try {
     const p = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Profile>;
-    return { ...d, ...p, input: { ...d.input, ...(p.input ?? {}) } };
+    // Old saves: fill in equipment / streak choices they didn't have.
+    const classes = (Array.isArray(p.classes) && p.classes.length ? p.classes : d.classes).map((c, i) => fixLoadout(c, DEFAULT_CLASSES[i] ?? DEFAULT_CLASSES[0]));
+    return { ...d, ...p, classes, input: { ...d.input, ...(p.input ?? {}) } };
   } catch {
     return d;
   }
@@ -85,7 +91,12 @@ app.innerHTML = `
     <div class="zh-field"><span>MODE</span><div class="zh-seg modes" id="q-mode">${(Object.keys(MODES) as Mode[]).map((m) => `<button data-v="${m}">${icon(m, 'zh-ico')}${MODES[m].name.toUpperCase()}</button>`).join('')}</div><p class="zh-sub" id="q-mode-desc"></p></div>
     <div class="zh-maps" id="q-maps">${MAPS.map((m) => `<button class="zh-map" data-v="${m.id}">${mimg(m.id)}<b>${m.name.toUpperCase()}</b><small>${esc(m.desc)}</small><i>${m.size.toUpperCase()}</i></button>`).join('')}</div>
     <div class="zh-row">
-      <div class="zh-field"><span>BOTS PER TEAM</span><div class="zh-seg" id="q-bots">${[1, 2, 3, 4, 5, 6].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
+      <div class="zh-field"><span>PLAYERS (SPLITSCREEN)</span><div class="zh-seg" id="q-split">${[1, 2, 3, 4].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
+      <div class="zh-field" id="q-teams-f"><span>SPLITSCREEN TEAMS</span><div class="zh-seg" id="q-teams"><button data-v="together">TOGETHER</button><button data-v="versus">VERSUS</button></div></div>
+    </div>
+    <div class="zh-split-setup" id="q-split-setup"></div>
+    <div class="zh-row">
+      <div class="zh-field"><span>BOTS PER TEAM</span><div class="zh-seg" id="q-bots">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
       <div class="zh-field"><span>DIFFICULTY</span><div class="zh-seg" id="q-skill"><button data-v="recruit">RECRUIT</button><button data-v="regular">REGULAR</button><button data-v="hardened">HARDENED</button><button data-v="veteran">VETERAN</button></div></div>
     </div>
     <div class="zh-actions"><button class="zh-btn ghost" data-back>BACK</button><button class="zh-btn primary" id="q-start">START MATCH</button></div>
@@ -133,8 +144,8 @@ app.innerHTML = `
         <table class="zh-binds"><tr><th></th><th>KEYBOARD</th><th>PS4</th></tr>
           <tr><td>Move / Look</td><td>WASD / Mouse</td><td>L / R sticks</td></tr><tr><td>Fire / Aim</td><td>LMB / RMB</td><td>R2 / L2</td></tr>
           <tr><td>Sprint</td><td>Shift</td><td>L3</td></tr><tr><td>Jump</td><td>Space</td><td>✕</td></tr><tr><td>Crouch / Slide</td><td>C / Ctrl</td><td>○</td></tr>
-          <tr><td>Reload</td><td>R</td><td>□</td></tr><tr><td>Swap weapon</td><td>1 / 2 / Wheel</td><td>△</td></tr><tr><td>Frag (hold to cook)</td><td>G</td><td>R1</td></tr>
-          <tr><td>Melee</td><td>V / E</td><td>R3</td></tr><tr><td>Killstreak</td><td>4</td><td>D-pad →</td></tr><tr><td>Scoreboard</td><td>Tab</td><td>Touchpad</td></tr></table>
+          <tr><td>Reload</td><td>R</td><td>□</td></tr><tr><td>Swap weapon</td><td>1 / 2 / Wheel</td><td>△</td></tr><tr><td>Lethal (hold: cook frag)</td><td>G</td><td>R1</td></tr><tr><td>Tactical</td><td>Q</td><td>L1</td></tr>
+          <tr><td>Melee</td><td>V / E</td><td>R3</td></tr><tr><td>Killstreaks 1 / 2 / 3</td><td>4 / 5 / 6</td><td>D-pad ← ↑ ↓ (→ next)</td></tr><tr><td>Scoreboard</td><td>Tab</td><td>Touchpad</td></tr></table>
       </div>
     </div>
     <div class="zh-actions"><button class="zh-btn ghost" data-back>DONE</button></div>
@@ -156,7 +167,7 @@ app.innerHTML = `
       <div id="o-host">
         <div class="zh-field"><span>MODE</span><div class="zh-seg modes" id="o-mode">${(Object.keys(MODES) as Mode[]).map((m) => `<button data-v="${m}" title="${MODES[m].desc}">${icon(m, 'zh-ico')}${MODES[m].short}</button>`).join('')}</div></div>
         <div class="zh-field"><span>MAP</span><div class="zh-seg maps" id="o-map">${MAPS.map((m) => `<button data-v="${m.id}">${mimg(m.id)}<span>${m.name.toUpperCase()}</span></button>`).join('')}</div></div>
-        <div class="zh-field"><span>BOTS PER TEAM (FILL)</span><div class="zh-seg" id="o-bots">${[0, 1, 2, 3, 4, 5, 6].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
+        <div class="zh-field"><span>BOTS PER TEAM (FILL)</span><div class="zh-seg" id="o-bots">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
         <div class="zh-field"><span>BOT DIFFICULTY</span><div class="zh-seg" id="o-skill"><button data-v="recruit">RECRUIT</button><button data-v="regular">REGULAR</button><button data-v="hardened">HARDENED</button><button data-v="veteran">VETERAN</button></div></div>
       </div>
       <p class="zh-sub" id="o-wait"></p>
@@ -251,6 +262,48 @@ seg('#q-mode', profile.mode, (v) => ((profile.mode = v as Mode), save(), modeDes
 modeDesc();
 seg('#q-bots', String(profile.bots), (v) => ((profile.bots = Number(v)), save()));
 seg('#q-skill', profile.skill, (v) => ((profile.skill = v as BotSkill), save()));
+// Splitscreen: who plays with what, and each extra player's class.
+seg('#q-split', String(profile.split), (v) => ((profile.split = Number(v)), save(), renderSplit()));
+seg('#q-teams', profile.splitTeams, (v) => ((profile.splitTeams = v as Profile['splitTeams']), save()));
+/** Devices for N local players: if there's a pad for everyone, player 1 gets one too (and keeps the keyboard). */
+function splitSources(n: number): InputSource[] {
+  const pads = connectedPads().length;
+  if (n === 1) return [{ kb: true, pad: 0 }];
+  const p1Pad = pads >= n;
+  return Array.from({ length: n }, (_, i) => (i === 0 ? { kb: true, pad: p1Pad ? 0 : null } : { kb: false, pad: p1Pad ? i : i - 1 }));
+}
+function renderSplit(): void {
+  const n = profile.split;
+  $('#q-teams-f').classList.toggle('hidden', n < 2);
+  const box = $('#q-split-setup');
+  if (n < 2) {
+    box.innerHTML = '';
+    return;
+  }
+  const pads = connectedPads();
+  const src = splitSources(n);
+  box.innerHTML = Array.from({ length: n }, (_, i) => {
+    const s = src[i]!;
+    const pad = s.pad !== null ? pads[s.pad] : undefined;
+    const dev = s.kb ? (pad ? 'Keyboard &amp; mouse / Controller 1' : 'Keyboard &amp; mouse') : pad ? `Controller ${s.pad! + 1}` : '<em>Connect a controller</em>';
+    const cls = i === 0 ? profile.cls : (profile.splitClasses[i - 1] ?? 0);
+    return `<div class="zh-split-p ${!s.kb && !pad ? 'missing' : ''}"><b>P${i + 1}</b><span>${i === 0 ? esc(profile.name) : `Player ${i + 1}`}</span><small>${dev}</small><div class="zh-seg small" data-p="${i}">${profile.classes.map((c, k) => `<button data-v="${k}" class="${k === cls ? 'on' : ''}">${esc(c.name.toUpperCase())}</button>`).join('')}</div></div>`;
+  }).join('');
+}
+$('#q-split-setup').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-v]');
+  const row = b?.closest<HTMLElement>('[data-p]');
+  if (!b || !row) return;
+  const i = Number(row.dataset.p);
+  if (i === 0) profile.cls = Number(b.dataset.v);
+  else profile.splitClasses[i - 1] = Number(b.dataset.v);
+  save();
+  audio.ui();
+  renderSplit();
+});
+addEventListener('gamepadconnected', () => renderSplit());
+addEventListener('gamepaddisconnected', () => renderSplit());
+renderSplit();
 const mapsEl = $('#q-maps');
 const syncMaps = () => mapsEl.querySelectorAll<HTMLElement>('.zh-map').forEach((b) => b.classList.toggle('on', b.dataset.v === profile.map));
 mapsEl.addEventListener('click', (e) => {
@@ -409,12 +462,15 @@ function renderClasses(): void {
     <div class="zh-field"><span>SECONDARY WEAPON</span><div class="zh-cards guns">${SECONDARIES.map((w) => gun('secondary', w, c.secondary === w.id)).join('')}</div></div>
     <h4 class="zh-sec">PERKS</h4>
     ${perkTier(1)}${perkTier(2)}${perkTier(3)}
-    <h4 class="zh-sec">EQUIPMENT &amp; SCORESTREAKS</h4>
-    <div class="zh-cards perks">
-      <div class="zh-card static"><span class="zh-card__img">${iimg('grenade')}</span><b>FRAG GRENADE ×2</b><small>Lethal · hold to cook</small></div>
-      <div class="zh-card static"><span class="zh-card__img">${iimg('knife')}</span><b>COMBAT KNIFE</b><small>Melee · one hit</small></div>
-      ${(Object.keys(STREAKS) as Streak[]).map((k) => `<div class="zh-card static"><span class="zh-card__img">${icon(k, 'zh-ico')}</span><b>${STREAKS[k].name.toUpperCase()} · ${STREAKS[k].kills - (hardline ? 1 : 0)}</b><small>${STREAKS[k].desc}</small></div>`).join('')}
-    </div>`;
+    <h4 class="zh-sec">EQUIPMENT</h4>
+    <div class="zh-field"><span>LETHAL</span><div class="zh-cards perks">${(Object.keys(LETHALS) as Lethal[]).map((k) => card(`data-lethal="1" data-v="${k}"`, c.lethal === k, k === 'frag' ? iimg('grenade') : k === 'tknife' ? iimg('knife') : icon(k, 'zh-ico'), `${LETHALS[k].name.toUpperCase()} ×${LETHALS[k].count}`, LETHALS[k].desc)).join('')}</div></div>
+    <div class="zh-field"><span>TACTICAL</span><div class="zh-cards perks">${(Object.keys(TACTICALS) as Tactical[]).map((k) => card(`data-tactical="1" data-v="${k}"`, c.tactical === k, icon(k, 'zh-ico'), `${TACTICALS[k].name.toUpperCase()} ×${TACTICALS[k].count}`, TACTICALS[k].desc)).join('')}</div></div>
+    <h4 class="zh-sec">SCORESTREAKS <small>${c.streaks.length}/3 · kills in a row${hardline ? ' (Hardline −1)' : ''}</small></h4>
+    <div class="zh-cards perks streaks">${STREAK_LIST.map((k) => {
+      const i = c.streaks.indexOf(k);
+      return card(`data-streak="1" data-v="${k}"`, i >= 0, icon(k, 'zh-ico'), `${STREAKS[k].name.toUpperCase()} · ${STREAKS[k].kills - (hardline ? 1 : 0)}`, `${STREAKS[k].desc}${STREAKS[k].pilot ? ' <em>You pilot it.</em>' : ''}`, i >= 0 ? `<i class="zh-card__badge">${i + 1}</i>` : '');
+    }).join('')}</div>
+    <p class="zh-sub">Knife: V / R3 · Lethal: G / R1 · Tactical: Q / L1 · Streaks: 4 · 5 · 6 (D-pad ← ↑ ↓, or → for the next ready one)</p>`;
   thumbs();
   updateStage();
 }
@@ -453,6 +509,21 @@ $('#c-edit').addEventListener('click', (e) => {
   const slot = b.dataset.slot;
   const att = b.dataset.att as keyof Attachments | undefined;
   const perk = b.dataset.perk;
+  if (b.dataset.lethal) c.lethal = b.dataset.v as Lethal;
+  if (b.dataset.tactical) c.tactical = b.dataset.v as Tactical;
+  if (b.dataset.streak) {
+    const k = b.dataset.v as Streak;
+    const list = [...c.streaks] as Streak[];
+    if (list.includes(k)) {
+      if (list.length > 1) list.splice(list.indexOf(k), 1);
+    } else if (list.length < 3) list.push(k);
+    else {
+      // Full: swap out the one closest in cost.
+      const near = list.reduce((a, x) => (Math.abs(STREAKS[x].kills - STREAKS[k].kills) < Math.abs(STREAKS[a].kills - STREAKS[k].kills) ? x : a));
+      list[list.indexOf(near)] = k;
+    }
+    c.streaks = list.sort((a, x) => STREAKS[a].kills - STREAKS[x].kills) as Loadout['streaks'];
+  }
   if (slot === 'primary') c.primary = b.dataset.v!;
   if (slot === 'secondary') c.secondary = b.dataset.v!;
   if (att) (c.primaryAtt as unknown as Record<string, string>)[att] = b.dataset.v!;
@@ -466,7 +537,7 @@ $('#c-edit').addEventListener('click', (e) => {
   renderClasses();
   $('#c-edit').scrollTop = scroll;
   // Keep controller focus on the same option.
-  const sel = slot ? `[data-slot="${slot}"][data-v="${b.dataset.v}"]` : att ? `[data-att="${att}"][data-v="${b.dataset.v}"]` : `[data-perk="${perk}"][data-v="${b.dataset.v}"]`;
+  const sel = slot ? `[data-slot="${slot}"][data-v="${b.dataset.v}"]` : att ? `[data-att="${att}"][data-v="${b.dataset.v}"]` : perk !== undefined ? `[data-perk="${perk}"][data-v="${b.dataset.v}"]` : `[data-v="${b.dataset.v}"]`;
   $('#c-edit').querySelector<HTMLElement>(sel)?.focus({ preventScroll: true });
 });
 
@@ -596,7 +667,21 @@ const bar = (f: number) => ($('#l-bar').style.width = `${(f * 100).toFixed(1)}%`
  * Everything a match needs happens behind the loading bar: models, the session
  * (sim, nav), then the map, shaders and first shadowed frame (Match.load).
  */
-async function runMatch(props: string[], make: () => Session, say: string): Promise<void> {
+/** Extra players' input readers (made once: each one listens to the window). */
+const extraInputs: FpsInput[] = [];
+function inputFor(i: number, src: InputSource): FpsInput {
+  if (i === 0) {
+    input.source = src;
+    return input;
+  }
+  let inp = extraInputs[i - 1];
+  if (!inp) extraInputs[i - 1] = inp = new FpsInput($('#view'), src);
+  inp.source = src;
+  inp.settings = profile.input;
+  return inp;
+}
+
+async function runMatch(props: string[], make: () => Session, say: string, localIds?: string[]): Promise<void> {
   if (loading) return;
   loading = true;
   match?.dispose();
@@ -606,7 +691,9 @@ async function runMatch(props: string[], make: () => Session, say: string): Prom
   try {
     await preload(props, (f) => bar(f * 0.4));
     const session = make();
-    const m = new Match($('#view'), session, input, audio, { fov: profile.fov, quality: profile.quality });
+    const ids = localIds ?? [session.meId];
+    const srcs = splitSources(ids.length);
+    const m = new Match($('#view'), session, ids.map((id, i) => ({ id, input: inputFor(i, srcs[i]!) })), audio, { fov: profile.fov, quality: profile.quality });
     m.onPause = pause;
     m.onOver = (g) => showEnd(g);
     await m.load((f) => bar(0.4 + f * 0.55));
@@ -628,23 +715,39 @@ async function runMatch(props: string[], make: () => Session, say: string): Prom
   audio.say(say);
 }
 
-const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk'];
+const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk', 'Wolf', 'Viper', 'Echo', 'Bishop', 'Reyes', 'Kowalski', 'Novak', 'Ortiz', 'Sasha', 'Dmitri', 'Okafor', 'Lindqvist'];
 
 async function startLocal(): Promise<void> {
   lastLocal = startLocal;
   const map = MAPS.find((m) => m.id === profile.map) ?? MAPS[0]!;
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-  const setups: SoldierSetup[] = [{ id: 'me', name: profile.name, team: 0, bot: false, loadout: loadout(), camos: profile.camos }];
+  const n = Math.max(1, Math.min(4, profile.split));
+  const ffa = profile.mode === 'ffa';
+  // Local players: together on one team, or alternating teams (versus).
+  const setups: SoldierSetup[] = Array.from({ length: n }, (_, i) => ({
+    id: i === 0 ? 'me' : `p${i + 1}`,
+    name: i === 0 ? profile.name : `Player ${i + 1}`,
+    team: (profile.splitTeams === 'versus' ? i % 2 : 0) as 0 | 1,
+    bot: false,
+    loadout: i === 0 ? loadout() : (profile.classes[profile.splitClasses[i - 1] ?? 0] ?? loadout()),
+    camos: profile.camos,
+  }));
   const per = profile.bots;
-  for (let i = 0; i < per * 2 + (profile.mode === 'ffa' ? 0 : -1); i++) {
+  const camoPool = ['none', 'woodland', 'desert', 'urban', 'digital', 'tiger', 'gold'];
+  let bi = 0;
+  const addBot = (team: 0 | 1) => {
     const cls = DEFAULT_CLASSES[Math.floor(Math.random() * DEFAULT_CLASSES.length)]!;
-    const camoPool = ['none', 'woodland', 'desert', 'urban', 'digital', 'tiger', 'gold'];
-    setups.push({ id: `bot${i}`, name: names.pop() ?? `Bot${i}`, team: i % 2 === 0 ? 1 : 0, bot: true, loadout: cls, camos: { [cls.primary]: camoPool[Math.floor(Math.random() * camoPool.length)]! } });
-  }
+    setups.push({ id: `bot${bi}`, name: names.pop() ?? `Bot${bi}`, team, bot: true, loadout: cls, camos: { [cls.primary]: camoPool[Math.floor(Math.random() * camoPool.length)]! } });
+    bi++;
+  };
+  // Teams fill up to `per` each (FFA: `per` × 2 players in total).
+  if (ffa) while (setups.length < Math.max(2, per * 2)) addBot(0);
+  else for (const t of [0, 1] as const) while (setups.filter((s) => s.team === t).length < per) addBot(t);
   await runMatch(
     map.props.map((p) => p.model),
-    () => new LocalSession(new Game(map.id, { mode: profile.mode }, setups), profile.skill),
+    () => new LocalSession(new Game(map.id, { mode: profile.mode }, setups), profile.skill, setups.filter((s) => !s.bot).map((s) => s.id)),
     `${MODES[profile.mode].name}. ${map.name}. Good luck.`,
+    setups.filter((s) => !s.bot).map((s) => s.id),
   );
 }
 

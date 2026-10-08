@@ -52,6 +52,8 @@ export interface MapDef {
   boxes: Box[];
   /** Drawn, never collides (floors, roofs, trim, wheels…). */
   decor: Box[];
+  /** Cylinders (tanks, silos, pipes): drawn round; their collision is a box added to `boxes`. */
+  cyls?: Cyl[];
   props: PropPlacement[];
   spawns: [SpawnPoint[], SpawnPoint[]];
   ffa: SpawnPoint[];
@@ -59,6 +61,18 @@ export interface MapDef {
   theme: MapTheme;
   backdrop: Backdrop;
   size: 'small' | 'medium' | 'large';
+}
+
+export interface Cyl {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+  /** Length along the axis. */
+  h: number;
+  axis: 'y' | 'x' | 'z';
+  mat: Material;
+  tint?: string;
 }
 
 /** Opening in a wall: [from, to, bottom, top] (along the wall, heights from the wall's base). */
@@ -87,6 +101,7 @@ export class Builder {
   boxes: Box[] = [];
   decor: Box[] = [];
   props: PropPlacement[] = [];
+  cyls: Cyl[] = [];
   private style: Style = {};
 
   /** Boxes made inside `fn` get this tint / flags. */
@@ -330,6 +345,20 @@ export class Builder {
     return this;
   }
 
+  /** A cylinder (axis y: standing at y; axis x / z: centred at y). Collides as a box hugging it. */
+  cyl(x: number, y: number, z: number, r: number, h: number, axis: Cyl['axis'], mat: Material, tint?: string, collide = true): this {
+    this.cyls.push({ x, y, z, r, h, axis, mat, tint });
+    if (!collide) return this;
+    const k = r * 0.86;
+    const prev = this.style;
+    this.style = {};
+    if (axis === 'y') this.box(x - k, y, z - k, x + k, y + h, z + k, mat, false, true);
+    else if (axis === 'x') this.box(x - h / 2, y - k, z - k, x + h / 2, y + k, z + k, mat, false, true);
+    else this.box(x - k, y - k, z - h / 2, x + k, y + k, z + h / 2, mat, false, true);
+    this.style = prev;
+    return this;
+  }
+
   /** A (wrecked) car model. */
   car(x: number, z: number, rot: number, tint: string): this {
     return this.prop('prop-debris-brokencar', x, z, rot, 1, { tint });
@@ -469,4 +498,90 @@ export function garage(b: Builder, xd: number, dir: 1 | -1, z0: number, z1: numb
   b.floor(lo, z0, hi, z1, 'concrete');
   if (car) b.car((lo + hi) / 2 - dir * 0.6, (z0 + z1) / 2, 1, car);
   b.shelf(dir > 0 ? hi - 0.8 : lo + 0.2, z0 + 0.4, dir > 0 ? hi - 0.2 : lo + 0.8, z0 + 2.4, 1.8, 'metal', '#5a6a7a');
+}
+
+// ---------------------------------------------------------------- generic buildings
+
+/**
+ * An enterable building: doors where you ask, windows along every wall, an optional
+ * second floor with a staircase, and a flat (parapet) or pitched roof.
+ * `doors`: [side, position along that wall]. n = wall at z0, s = z1, w = x0, e = x1.
+ */
+export function building(
+  b: Builder,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  o: { mat: Material; tint?: string; doors: Array<[Side, number]>; floors?: 1 | 2; h?: number; y?: number; win?: number; roof?: 'flat' | 'pitched'; roofTint?: string; floor?: [Material, string?]; inner?: boolean },
+): void {
+  const h = o.h ?? 3.2;
+  const y = o.y ?? 0;
+  const t = 0.3;
+  const floors = o.floors ?? 1;
+  const winStep = o.win ?? 3.4;
+  const slab = 0.25;
+  const up = y + h + slab;
+  // Stairs (2 floors): along the north wall, rising east, if the building is long enough; else along the west wall.
+  const run = (h + slab) * 1.75;
+  const alongX = x1 - x0 >= run + 2.5;
+  const st: [number, number, number, number] = alongX ? [x0 + 0.4, z0 + 0.35, x0 + 0.4 + run, z0 + 1.65] : [x0 + 0.35, z0 + 0.4, x0 + 1.65, z0 + 0.4 + run];
+  const ops = (side: Side, a0: number, a1: number, ground: boolean): Op[] => {
+    const doors = ground ? o.doors.filter((d) => d[0] === side).map((d) => d[1]) : [];
+    const out: Op[] = doors.map((c) => D(c, 1.4, 2.3));
+    // Windows: evenly spaced, clear of corners, doors and (upstairs) the stair landing.
+    for (let c = a0 + 1.6; c <= a1 - 1.6; c += winStep) {
+      if (doors.some((d) => Math.abs(d - c) < 1.6)) continue;
+      out.push(W(c, 1.3, 1.05, 2.2));
+    }
+    return out;
+  };
+  b.with({ tint: o.tint }, () => {
+    for (let f = 0; f < floors; f++) {
+      const fy = f === 0 ? y : up;
+      const fh = f === 0 ? h : h - 0.2;
+      const g = f === 0;
+      b.wallX(x0, x1, z0, fh, t, o.mat, ops('n', x0, x1, g), fy);
+      b.wallX(x0, x1, z1, fh, t, o.mat, ops('s', x0, x1, g), fy);
+      b.wallZ(z0, z1, x0, fh, t, o.mat, ops('w', z0, z1, g), fy);
+      b.wallZ(z0, z1, x1, fh, t, o.mat, ops('e', z0, z1, g), fy);
+    }
+  });
+  const [fm, ft] = o.floor ?? ['concrete', '#b8b0a4'];
+  b.floor(x0, z0, x1, z1, fm, ft, y);
+  // Interior wall (optional) with a doorway, splitting the long side.
+  if (o.inner) {
+    b.with({ thin: true, tint: '#d8d0c0' }, () => {
+      if (x1 - x0 >= z1 - z0) b.wallZ(z0, z1, (x0 + x1) / 2 + (alongX ? 1.5 : 0), h, 0.18, 'wallpaper', [D((z0 + z1) / 2 + 0.8)], y);
+      else b.wallX(x0, x1, (z0 + z1) / 2, h, 0.18, 'wallpaper', [D((x0 + x1) / 2 + 0.8)], y);
+    });
+  }
+  if (floors === 2) {
+    b.slab(x0, z0, x1, z1, y + h, slab, 'wood', [[st[0] - 0.05, st[1] - 0.05, st[2] + 0.05, st[3] + 0.05]]);
+    b.stairs(st[0], st[1], st[2], st[3], alongX ? 'x+' : 'z+', h + slab, 'wood', y);
+    if (alongX) b.rail(st[0], st[3] + 0.05, st[2] - 1.2, st[3] + 0.2, up);
+    else b.rail(st[2] + 0.05, st[1], st[2] + 0.2, st[3] - 1.2, up);
+    b.floor(x0, z0, x1, z1, 'darkwood', '#b89878', up);
+  }
+  const top = floors === 2 ? up + h - 0.2 : y + h;
+  b.with({ roof: true, tint: o.roof === 'pitched' ? o.roofTint ?? '#5a4038' : '#9a948a' }, () => b.box(x0 - 0.3, top, z0 - 0.3, x1 + 0.3, top + 0.2, z1 + 0.3, o.roof === 'pitched' ? 'shingle' : 'concrete'));
+  if (o.roof === 'pitched') b.roofTop(x0 - 0.4, z0 - 0.4, x1 + 0.4, z1 + 0.4, top + 0.2, x1 - x0 >= z1 - z0, o.roofTint ?? '#5a4038', 4, 0.45);
+  else {
+    // Parapet.
+    b.deco(x0 - 0.3, top + 0.2, z0 - 0.3, x1 + 0.3, top + 0.7, z0, o.mat, o.tint);
+    b.deco(x0 - 0.3, top + 0.2, z1, x1 + 0.3, top + 0.7, z1 + 0.3, o.mat, o.tint);
+    b.deco(x0 - 0.3, top + 0.2, z0, x0, top + 0.7, z1, o.mat, o.tint);
+    b.deco(x1, top + 0.2, z0, x1 + 0.3, top + 0.7, z1, o.mat, o.tint);
+  }
+}
+
+/** Build one half with `half`, then add it again rotated 180° about the origin (fair, point-symmetric maps). */
+export function pointMirror(b: Builder, half: (w: Builder) => void, recolor: Record<string, string> = {}): void {
+  const w = new Builder();
+  half(w);
+  const flip = (x: Box): Box => ({ ...x, x0: -x.x1, x1: -x.x0, z0: -x.z1, z1: -x.z0, tint: x.tint && recolor[x.tint] ? recolor[x.tint] : x.tint });
+  for (const x of w.boxes) b.boxes.push(x, flip(x));
+  for (const x of w.decor) b.decor.push(x, flip(x));
+  for (const p of w.props) b.props.push(p, { ...p, x: -p.x, z: -p.z, rot: (p.rot + 2) % 4 });
+  for (const c of w.cyls) b.cyls.push(c, { ...c, x: -c.x, z: -c.z, tint: c.tint && recolor[c.tint] ? recolor[c.tint] : c.tint });
 }
