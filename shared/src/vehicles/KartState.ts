@@ -53,6 +53,10 @@ export interface KartState {
   slipstreamCharge: number;
   slipstreamTimer: number;
   slipstreamCooldown: number;
+  /** Horizontal speed when the kart last left the ground by itself (0 after a hop) — lip tricks. */
+  lipSpeed: number;
+  /** Seconds left being lowered back onto the road by the pickup carrier after a fall. */
+  liftTimer: number;
 
   // --- Status effects (seconds remaining)
   spinTimer: number;
@@ -62,6 +66,12 @@ export interface KartState {
   shrinkTimer: number;
   rocketTimer: number;
   inkTimer: number;
+  /** Phantom: see-through, items pass through you. */
+  ghostTimer: number;
+  /** Giant Gummy: huge, flattens karts, shrugs off most items. */
+  megaTimer: number;
+  /** Sky Feather: high hop that items fly under. */
+  featherTimer: number;
   /** 0..10 — each coin adds a little top speed. */
   coins: number;
 }
@@ -81,6 +91,8 @@ export interface KartEvents {
   driftStageUp: number;
   /** Mini-turbo stage fired this tick (0 if none). */
   miniTurbo: number;
+  /** A trick was started this tick. */
+  tricked: boolean;
   /** Hit received this tick. */
   hit: HitKind | null;
 }
@@ -116,6 +128,8 @@ export function createKartState(): KartState {
     slipstreamCharge: 0,
     slipstreamTimer: 0,
     slipstreamCooldown: 0,
+    lipSpeed: 0,
+    liftTimer: 0,
     spinTimer: 0,
     tumbleTimer: 0,
     squishTimer: 0,
@@ -123,12 +137,15 @@ export function createKartState(): KartState {
     shrinkTimer: 0,
     rocketTimer: 0,
     inkTimer: 0,
+    ghostTimer: 0,
+    megaTimer: 0,
+    featherTimer: 0,
     coins: 0,
   };
 }
 
 export function createKartEvents(): KartEvents {
-  return { landed: 0, wallHit: 0, hopped: false, jumped: false, respawned: false, driftStarted: false, driftStageUp: 0, miniTurbo: 0, hit: null };
+  return { landed: 0, wallHit: 0, hopped: false, jumped: false, respawned: false, driftStarted: false, driftStageUp: 0, miniTurbo: 0, tricked: false, hit: null };
 }
 
 /** True while the kart has no control (spinning out or tumbling). Squished karts still drive, slowly. */
@@ -138,7 +155,7 @@ export function isStunned(s: KartState): boolean {
 
 /** True while hits are ignored. */
 export function isInvulnerable(s: KartState): boolean {
-  return s.invincibleTimer > 0 || s.rocketTimer > 0 || s.respawnTimer > 0;
+  return s.invincibleTimer > 0 || s.rocketTimer > 0 || s.respawnTimer > 0 || s.megaTimer > 0;
 }
 
 const xAxis = new Vector3();

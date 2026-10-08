@@ -1,4 +1,4 @@
-import { Builder, D, FACE, W, garage, house, sp, type MapDef } from '../mapkit';
+import { Builder, D, FACE, W, garage, house, faceCentre, sp, type MapDef } from '../mapkit';
 
 /** Suburban street: two family houses face off; a ranch house and a corner store close the ends. */
 export function culdesac(): MapDef {
@@ -96,10 +96,10 @@ export function culdesac(): MapDef {
     decor: b.decor,
     props: b.props,
     spawns: [
-      [sp(-41, -4, FACE.px), sp(-41, 2, FACE.px), sp(-35, -12, FACE.px), sp(-41, 8, FACE.px), sp(-34, 18, FACE.px), sp(-41, -21, FACE.px)],
-      [sp(41, -4, FACE.nx), sp(41, 2, FACE.nx), sp(35, -12, FACE.nx), sp(41, 8, FACE.nx), sp(34, 18, FACE.nx), sp(41, -21, FACE.nx)],
+      faceCentre([sp(-41, -4, FACE.px), sp(-41, 2, FACE.px), sp(-35, -12, FACE.px), sp(-41, 8, FACE.px), sp(-34, 18, FACE.px), sp(-41, -21, FACE.px)], HX, HZ),
+      faceCentre([sp(41, -4, FACE.nx), sp(41, 2, FACE.nx), sp(35, -12, FACE.nx), sp(41, 8, FACE.nx), sp(34, 18, FACE.nx), sp(41, -21, FACE.nx)], HX, HZ),
     ],
-    ffa: [sp(-40, -30, 0.8), sp(40, 30, -2.4), sp(-40, 30, 2.4), sp(40, -30, -0.8), sp(2, -26, FACE.pz), sp(0, 26, FACE.nz), sp(-21, -5, FACE.px), sp(21, 2, FACE.nx), sp(-23.5, 13.6, FACE.px), sp(23.5, 13.6, FACE.nx)],
+    ffa: faceCentre([sp(-40, -30, 0.8), sp(40, 30, -2.4), sp(-40, 30, 2.4), sp(40, -30, -0.8), sp(2, -26, FACE.pz), sp(0, 26, FACE.nz), sp(-21, -5, FACE.px), sp(21, 2, FACE.nx), sp(-23.5, 13.6, FACE.px), sp(23.5, 13.6, FACE.nx)], HX, HZ),
     flags: [
       { x: -12, z: 0, y: 0 },
       { x: 0, z: 3, y: 0 },

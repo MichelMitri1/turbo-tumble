@@ -12,6 +12,8 @@ import type { MoverDefinition, MoverKind, SegmentKind, StreamDefinition, TrackCo
  *   { s: 90, up: 8 }               climbing 8 m along it (negative = descend)
  *   { s: 60, kind: 'void', w: 7 }  open-edged road over the void, half-width 7
  *   { s: 130, jump: { gap: 18 } }  ramp, then an 18 m hole you must clear
+ *   { s: 80, jump: { type: 'kicker' } }  small centre kicker (trick hop); 'bump' = full-width
+ *                                  trick bump, 'big' = tall ramp with a boost run-up
  *   { s: 120, stream: { lateral: -3, width: 6, strength: 7, style: 'water' } }
  *   { s: 80, boost: true, hazards: 3, mark: 'cutIn' }
  *   { s: 120, movers: 'stomper' }  moving obstacles ({ kind, n, period } for control)
@@ -34,8 +36,17 @@ export interface SegFeatures {
   lake?: { r: number; offset?: number };
 }
 
+/** Ramp shapes: length (m), lip height, launch speed, share of the road width, boost pad run-up. */
+export type JumpType = 'ramp' | 'big' | 'kicker' | 'bump';
+export const JUMP_SHAPES: Record<JumpType, { length: number; rise: number; launch: number; width: number; boost: boolean; at: number }> = {
+  ramp: { length: 20, rise: 3.4, launch: 16, width: 1, boost: true, at: 45 },
+  big: { length: 24, rise: 4.4, launch: 18.5, width: 1, boost: true, at: 50 },
+  kicker: { length: 9, rise: 1.5, launch: 11, width: 0.55, boost: false, at: 28 },
+  bump: { length: 14, rise: 2.1, launch: 13, width: 1, boost: false, at: 30 },
+};
+
 export type Seg =
-  | (SegFeatures & { s: number; flex?: boolean; jump?: { gap?: number; at?: number } })
+  | (SegFeatures & { s: number; flex?: boolean; jump?: { gap?: number; at?: number; type?: JumpType } })
   | (SegFeatures & { L: number; r: number })
   | (SegFeatures & { R: number; r: number });
 
@@ -243,11 +254,16 @@ export function compileCourse(segs: Seg[], startY = 2, name = 'course'): Compile
         }
         if (seg.movers) placeMovers(def, seg.movers, d0, len, seg.w ?? widthAt(si), si);
         if ('jump' in seg && seg.jump) {
-          const ramp = d0 + (seg.jump.at ?? 45);
-          // Full road width: a kart anywhere on the road takes the ramp.
-          def.jumps.push({ distance: ramp, length: 20, width: (seg.w ?? def.path.defaultHalfWidth) * 2 - 0.4, rise: 3.4, launchSpeed: 16 });
-          def.boostPads.push({ distance: ramp - 14, lateral: 0, length: 9, width: Math.min(9, (seg.w ?? def.path.defaultHalfWidth) * 2 - 3) });
-          if (seg.jump.gap) def.gaps!.push({ distance: ramp + 22, length: seg.jump.gap });
+          const shape = JUMP_SHAPES[seg.jump.type ?? 'ramp'];
+          // Gap jumps take as much run-up as the straight allows (≥ 40 m to land) so a
+          // pack coming out of the previous corner has time to line up.
+          const runUp = seg.jump.gap ? Math.max(shape.at, Math.min(shape.at + 30, len - shape.length - seg.jump.gap - 42)) : shape.at;
+          const ramp = d0 + (seg.jump.at ?? runUp);
+          const hw = seg.w ?? widthAt(si);
+          // Ramps span the road (a kart anywhere takes them); kickers sit in the middle.
+          def.jumps.push({ distance: ramp, length: shape.length, width: shape.width === 1 ? hw * 2 - 0.4 : Math.round(hw * 2 * shape.width), rise: shape.rise, launchSpeed: shape.launch });
+          if (shape.boost) def.boostPads.push({ distance: ramp - 14, lateral: 0, length: 9, width: Math.min(9, hw * 2 - 3) });
+          if (seg.jump.gap) def.gaps!.push({ distance: ramp + shape.length + 2, length: seg.jump.gap });
         }
       });
       for (const sc of def.shortcuts as Array<TrackDefinition['shortcuts'][number] & { fromMark?: string; toMark?: string }>) {

@@ -3,6 +3,7 @@ import type { World, PlayerInfo, Stats } from './sim/world';
 import type { RocketRenderer } from './render/scene';
 import { QUICK_CHAT } from './input';
 import { TEAM_COLORS } from './render/colors';
+import { toThree } from './render/arenaMesh';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -23,6 +24,7 @@ export class Hud {
   private chatItems: Array<{ el: HTMLElement; t: number }> = [];
   private readonly pt = { x: 0, y: 0 };
   private readonly v = new THREE.Vector3();
+  private ballCamShown: boolean | null = null;
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
@@ -42,6 +44,9 @@ export class Hud {
         <b id="h-boost-n">33</b><small>BOOST</small>
       </div>
       <div class="rk-speed" id="h-speed"></div>
+      <div class="rk-camicon" id="h-cam"><i></i><span>BALL CAM</span></div>
+      <div class="rk-ballind hidden" id="h-ball"><i></i><b id="h-ball-d"></b></div>
+      <div class="rk-edge" id="h-edge"></div>
       <div class="rk-labels" id="h-labels"></div>
       <div class="rk-board hidden" id="h-board"></div>
       <div class="rk-hint" id="h-hint"></div>`;
@@ -53,6 +58,21 @@ export class Hud {
     if (!on) {
       for (const l of this.labels.values()) l.remove();
       this.labels.clear();
+    }
+  }
+
+  /** Replays: only the scoreboard stays up. */
+  replay(on: boolean): void {
+    this.el.classList.toggle('replay', on);
+    if (on) this.el.classList.remove('hidden');
+  }
+
+  /** Boost pad picked up: the gauge flashes; a big pad also lights the screen edges. */
+  pad(big: boolean): void {
+    for (const [el, cls] of [[this.$('#h-boost'), 'flash'], ...(big ? [[this.$('#h-edge'), 'on']] : [])] as Array<[HTMLElement, string]>) {
+      el.classList.remove(cls);
+      void el.offsetWidth;
+      el.classList.add(cls);
     }
   }
 
@@ -83,11 +103,15 @@ export class Hud {
     while (this.chatItems.length > 6) this.chatItems.shift()!.el.remove();
   }
 
+  private ballIndicator(world: World, me: World['cars'][number] | undefined, r: RocketRenderer): void {
+    placeIndicator(this.$('#h-ball'), this.$('#h-ball-d'), world, me, r);
+  }
+
   hint(text: string): void {
     this.$('#h-hint').textContent = text;
   }
 
-  update(dt: number, world: World, myId: number, r: RocketRenderer, opts: { scoreboard: boolean; chatGroup: number; device: 'pad' | 'kb' }): void {
+  update(dt: number, world: World, myId: number, r: RocketRenderer, opts: { scoreboard: boolean; chatGroup: number; device: 'pad' | 'kb'; ballCam: boolean }): void {
     const L = this.last;
     if (world.score[0] !== L.s0) this.$('#h-s0').textContent = String((L.s0 = world.score[0]));
     if (world.score[1] !== L.s1) this.$('#h-s1').textContent = String((L.s1 = world.score[1]));
@@ -113,6 +137,13 @@ export class Hud {
       }
       this.$('#h-speed').textContent = me.supersonic ? 'SUPERSONIC' : '';
     }
+    if (opts.ballCam !== this.ballCamShown) {
+      this.ballCamShown = opts.ballCam;
+      const cam = this.$('#h-cam');
+      cam.classList.toggle('on', opts.ballCam);
+      cam.querySelector('span')!.textContent = opts.ballCam ? 'BALL CAM' : 'CAR CAM';
+    }
+    this.ballIndicator(world, me, r);
     if (this.bigTimer > 0) {
       this.bigTimer -= dt;
       if (this.bigTimer <= 0) this.$('#h-big').classList.add('hidden');
@@ -176,6 +207,36 @@ export class Hud {
   }
 }
 
+const ndc = new THREE.Vector3();
+const camSpace = new THREE.Vector3();
+
+/** When the ball is off screen, an arrow on the screen edge points at it (with the distance). */
+function placeIndicator(el: HTMLElement, dist: HTMLElement, world: World, me: World['cars'][number] | undefined, r: RocketRenderer): void {
+  const cam = r.cam.camera;
+  const b = r.ballPos;
+  if (!me || me.demolished || world.phase === 'goal') return void el.classList.add('hidden');
+  toThree(b.x, b.y, b.z, camSpace).applyMatrix4(cam.matrixWorldInverse);
+  const front = camSpace.z < 0;
+  toThree(b.x, b.y, b.z, ndc).project(cam);
+  const on = front && Math.abs(ndc.x) < 0.96 && Math.abs(ndc.y) < 0.94;
+  if (on) return void el.classList.add('hidden');
+  // Screen direction to the ball (mirrored when it's behind the camera).
+  let dx = front ? ndc.x : camSpace.x;
+  let dy = front ? ndc.y : camSpace.y;
+  if (!front && Math.hypot(dx, dy) < 1e-3) dy = -1;
+  const W = cam.aspect;
+  dx *= W;
+  const k = 1 / Math.max(Math.abs(dx) / (W * 0.9), Math.abs(dy) / 0.82);
+  const x = (dx * k) / W;
+  const y = dy * k;
+  const w = innerWidth;
+  const h = innerHeight;
+  el.classList.remove('hidden');
+  el.style.transform = `translate(${(x * 0.5 + 0.5) * w}px, ${(-y * 0.5 + 0.5) * h}px) translate(-50%, -50%)`;
+  (el.firstElementChild as HTMLElement).style.transform = `rotate(${Math.atan2(-dy, dx)}rad)`;
+  dist.textContent = `${Math.round(me.pos.distanceTo(b) / 100)} m`;
+}
+
 export function scoreboardHtml(world: World, myId: number | null, stats?: Map<number, Stats>): string {
   const st = stats ?? world.stats;
   const team = (t: 0 | 1) => {
@@ -183,10 +244,10 @@ export function scoreboardHtml(world: World, myId: number | null, stats?: Map<nu
       .filter((p) => p.team === t)
       .map((p) => [p, st.get(p.id) ?? { score: 0, goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, touches: 0 }] as [PlayerInfo, Stats])
       .sort((a, b) => b[1].score - a[1].score)
-      .map(([p, s]) => `<tr class="${p.id === myId ? 'me' : ''}"><td>${esc(p.name)}${p.bot ? ' <i>BOT</i>' : ''}</td><td>${s.score}</td><td>${s.goals}</td><td>${s.assists}</td><td>${s.saves}</td><td>${s.shots}</td></tr>`)
+      .map(([p, s]) => `<tr class="${p.id === myId ? 'me' : ''}"><td>${esc(p.name)}${p.bot ? ' <i>BOT</i>' : ''}</td><td>${s.score}</td><td>${s.goals}</td><td>${s.assists}</td><td>${s.saves}</td><td>${s.shots}</td><td>${s.demos}</td><td>${s.touches}</td></tr>`)
       .join('');
     return `<div class="rk-board-team t${t}"><div class="rk-board-head"><b>${TEAM_COLORS[t].name}</b><span>${world.score[t]}</span></div>
-      <table><thead><tr><th></th><th>SCORE</th><th>GOALS</th><th>ASSISTS</th><th>SAVES</th><th>SHOTS</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table><thead><tr><th></th><th>SCORE</th><th>GOALS</th><th>ASSISTS</th><th>SAVES</th><th>SHOTS</th><th>DEMOS</th><th>TOUCHES</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   };
   return team(0) + team(1);
 }

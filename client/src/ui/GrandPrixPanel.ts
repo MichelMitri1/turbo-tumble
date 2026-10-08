@@ -10,7 +10,7 @@ export interface GpRow {
   me: boolean;
 }
 
-/** Between-race Grand Prix standings and the final podium. */
+/** Between-race Grand Prix standings, and the standings overlay on the 3D podium. */
 export class GrandPrixPanel {
   readonly root: HTMLElement;
   private readonly panel: HTMLElement;
@@ -22,22 +22,10 @@ export class GrandPrixPanel {
     parent.appendChild(this.root);
   }
 
+  /** `podium`: the 3D trophy ceremony is showing — the panel moves aside to frame it. */
   show(title: string, subtitle: string, rows: readonly GpRow[], hint: string, podium = false): void {
+    this.root.classList.toggle('is-side', podium);
     const children: HTMLElement[] = [el('h2', 'tt-gp__title tt-display', title), el('div', 'tt-gp__sub', subtitle)];
-    if (podium) {
-      const top = rows.slice(0, 3);
-      const order = [1, 0, 2].filter((i) => top[i]);
-      children.push(
-        el(
-          'div',
-          'tt-podium',
-          order.map((i) => {
-            const r = top[i]!;
-            return el('div', `tt-podium__step p${i + 1}`, [el('div', 'tt-podium__trophy', i === 0 ? '🏆' : i === 1 ? '🥈' : '🥉'), el('div', '', r.name), el('div', '', `${r.points} pts`)]);
-          }),
-        ),
-      );
-    }
     rows.forEach((r, i) => {
       const dot = el('span', 'tt-gp__dot');
       dot.style.background = r.color;

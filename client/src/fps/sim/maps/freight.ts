@@ -1,10 +1,10 @@
-import { Builder, CONTAINER_H, CONTAINER_COLORS as C, D, FACE, W, sp, type MapDef } from '../mapkit';
+import { Builder, CONTAINER_H, CONTAINER_COLORS as C, CONTAINER_S, D, FACE, W, faceCentre, sp, type MapDef } from '../mapkit';
 
 /** Container yard: two warehouses (the spawns), stacked container lanes, a climbable stack in the middle. */
 export function freight(): MapDef {
   const b = new Builder();
   const H = 32;
-  b.bounds(H, H);
+  b.bounds(H, H, 14, 'metal');
 
   // Team warehouses: enclosed sheds with three big bay doors facing the yard.
   for (const side of [-1, 1] as const) {
@@ -70,6 +70,8 @@ export function freight(): MapDef {
     b.prop('prop-trashcontainer', -27 * s, 24 * s, 1, 1.15, { tint: '#3d6b35' });
     b.prop('prop-streetlight', -20.5 * s, -12 * s, s > 0 ? 1 : 3, 1.4, { collide: false });
   });
+  // Container corners close the yard off.
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as Array<[number, number]>) b.prop('prop-container-small', x * (H + 1.3), z * (H + 1.3), 0, CONTAINER_S, { collide: false, tint: '#5c5f63' });
   return {
     id: 'freight',
     name: 'Freight',
@@ -79,10 +81,10 @@ export function freight(): MapDef {
     decor: b.decor,
     props: b.props,
     spawns: [
-      [sp(-28, -6, FACE.px), sp(-28, -2, FACE.px), sp(-28, 2, FACE.px), sp(-28, 6, FACE.px), sp(-25.5, -7.5, FACE.px), sp(-25.5, 7.5, FACE.px)],
-      [sp(28, -6, FACE.nx), sp(28, -2, FACE.nx), sp(28, 2, FACE.nx), sp(28, 6, FACE.nx), sp(25.5, -7.5, FACE.nx), sp(25.5, 7.5, FACE.nx)],
+      faceCentre([sp(-28, -6, FACE.px), sp(-28, -2, FACE.px), sp(-28, 2, FACE.px), sp(-28, 6, FACE.px), sp(-25.5, -7.5, FACE.px), sp(-25.5, 7.5, FACE.px)], H, H),
+      faceCentre([sp(28, -6, FACE.nx), sp(28, -2, FACE.nx), sp(28, 2, FACE.nx), sp(28, 6, FACE.nx), sp(25.5, -7.5, FACE.nx), sp(25.5, 7.5, FACE.nx)], H, H),
     ],
-    ffa: [sp(-28, -5, FACE.px), sp(28, 5, FACE.nx), sp(-29, -29, 0.8), sp(29, 29, -2.4), sp(-29, 29, 2.4), sp(29, -29, -0.8), sp(0, -30, FACE.pz), sp(0, 30, FACE.nz), sp(-10, -30, FACE.pz), sp(10, 30, FACE.nz)],
+    ffa: faceCentre([sp(-28, -5, FACE.px), sp(28, 5, FACE.nx), sp(-29, -29, 0.8), sp(29, 29, -2.4), sp(-29, 29, 2.4), sp(29, -29, -0.8), sp(0, -30, FACE.pz), sp(0, 30, FACE.nz), sp(-10, -30, FACE.pz), sp(10, 30, FACE.nz)], H, H),
     flags: [
       { x: -15.5, z: 0, y: 0 },
       { x: 0, z: 0, y: 0 },

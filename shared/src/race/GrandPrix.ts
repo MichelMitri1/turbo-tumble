@@ -20,6 +20,8 @@ export interface GrandPrixEntry {
 export class GrandPrixState {
   raceIndex = 0;
   private readonly table = new Map<string, GrandPrixEntry>();
+  /** The table as it stood when the current race started (restarts roll back to it). */
+  private saved: GrandPrixEntry[] = [];
 
   constructor(
     readonly cup: Cup,
@@ -49,6 +51,16 @@ export class GrandPrixState {
       e.lastPosition = i + 1;
       e.points += e.lastAwarded;
     });
+  }
+
+  /** Call when a race (re)starts: remembers the points so a restart can undo that race. */
+  beginRace(): void {
+    this.saved = [...this.table.values()].map((e) => ({ ...e }));
+  }
+
+  /** Undo any points awarded since beginRace (restarting the current track). */
+  rollback(): void {
+    for (const e of this.saved) this.table.set(e.id, { ...e });
   }
 
   nextRace(): void {

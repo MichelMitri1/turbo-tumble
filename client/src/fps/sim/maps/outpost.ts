@@ -1,4 +1,4 @@
-import { Builder, CONTAINER_L, CONTAINER_S, D, FACE, W, house, sp, type MapDef } from '../mapkit';
+import { Builder, CONTAINER_L, CONTAINER_S, D, FACE, W, house, faceCentre, sp, type MapDef } from '../mapkit';
 import type { Material } from '../level';
 
 /** Desert town: a two-storey compound in the middle, walled spawn courtyards, houses on the corners. */
@@ -144,10 +144,10 @@ export function outpost(): MapDef {
     decor: b.decor,
     props: b.props,
     spawns: [
-      [sp(-45, -3, FACE.px), sp(-45, 3, FACE.px), sp(-45, -11, FACE.px), sp(-45, 11, FACE.px), sp(-50.5, 0, FACE.px), sp(-50.5, -8.5, FACE.px), sp(-50.5, 8.5, FACE.px)],
-      [sp(45, 3, FACE.nx), sp(45, -3, FACE.nx), sp(45, 11, FACE.nx), sp(45, -11, FACE.nx), sp(50.5, 0, FACE.nx), sp(50.5, 8.5, FACE.nx), sp(50.5, -8.5, FACE.nx)],
+      faceCentre([sp(-45, -3, FACE.px), sp(-45, 3, FACE.px), sp(-45, -11, FACE.px), sp(-45, 11, FACE.px), sp(-50.5, 0, FACE.px), sp(-50.5, -8.5, FACE.px), sp(-50.5, 8.5, FACE.px)], H, H),
+      faceCentre([sp(45, 3, FACE.nx), sp(45, -3, FACE.nx), sp(45, 11, FACE.nx), sp(45, -11, FACE.nx), sp(50.5, 0, FACE.nx), sp(50.5, 8.5, FACE.nx), sp(50.5, -8.5, FACE.nx)], H, H),
     ],
-    ffa: [sp(-50, -50, 0.8), sp(50, 50, -2.4), sp(-50, 50, 2.4), sp(50, -50, -0.8), sp(0, -50, FACE.pz), sp(0, 50, FACE.nz), sp(-50.5, 0, FACE.px), sp(50.5, 0, FACE.nx), sp(-23.5, -37, FACE.px), sp(23.5, 37, FACE.nx), sp(-33, 23.5, 1), sp(33, -23.5, -2)],
+    ffa: faceCentre([sp(-50, -50, 0.8), sp(50, 50, -2.4), sp(-50, 50, 2.4), sp(50, -50, -0.8), sp(0, -50, FACE.pz), sp(0, 50, FACE.nz), sp(-50.5, 0, FACE.px), sp(50.5, 0, FACE.nx), sp(-23.5, -37, FACE.px), sp(23.5, 37, FACE.nx), sp(-33, 23.5, 1), sp(33, -23.5, -2)], H, H),
     flags: [
       { x: -28, z: 8, y: 0 },
       { x: 0, z: 10, y: 0 },

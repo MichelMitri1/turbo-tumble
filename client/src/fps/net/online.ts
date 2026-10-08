@@ -1,6 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
-import { Game, TICK, type GameEvent, type Soldier } from '../sim/game';
+import { Game, TICK, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
 import { stepMove, type Input } from '../sim/player';
 import type { Loadout } from '../sim/weapons';
 import type { Session } from '../match';
@@ -66,7 +66,8 @@ export class FpsNet {
       clearInterval(this.pingTimer);
       this.onClosed?.(reason || (code >= 4000 ? `Disconnected (${code})` : undefined));
     });
-    this.pingTimer = window.setInterval(() => this.room?.send(FpMsg.Ping, { t: performance.now() }), 1500);
+    // Our measured RTT rides along so the server can show everyone's ping on the scoreboard.
+    this.pingTimer = window.setInterval(() => this.room?.send(FpMsg.Ping, { t: performance.now(), rtt: Math.round(this.rtt) }), 1500);
   }
 
   input(batch: FpInput[]): void {
@@ -118,8 +119,10 @@ export class OnlineSession implements Session {
   private acc = 0;
   private pending: Array<{ seq: number; inp: Input }> = [];
   private batch: FpInput[] = [];
-  private snaps: FpSnap[] = [];
+  /** Snapshots and event batches, in arrival order (a mid-match join renumbers the roster between them). */
+  private inbox: Array<{ snap: FpSnap } | { events: GameEvent[] }> = [];
   private serverEvents: GameEvent[] = [];
+  private overSeen = false;
   private buffers = new Map<string, Sample[]>();
   private lastSnapAt = 0;
   private lastSnapT = 0;
@@ -144,8 +147,8 @@ export class OnlineSession implements Session {
       this.game.soldiers[i] = this.me;
     }
     this.delay = begin.lan ? 0.05 : 0.1;
-    net.onSnap = (s) => this.snaps.push(s);
-    net.onEvents = (e) => this.serverEvents.push(...e);
+    net.onSnap = (snap) => this.inbox.push({ snap });
+    net.onEvents = (events) => this.inbox.push({ events });
   }
 
   /** Server time we render other players at. */
@@ -155,7 +158,14 @@ export class OnlineSession implements Session {
 
   update(dt: number, input: () => Input): GameEvent[] {
     const out: GameEvent[] = [];
-    for (const s of this.snaps.splice(0)) this.applySnap(s);
+    for (const m of this.inbox.splice(0)) {
+      if ('snap' in m) this.applySnap(m.snap);
+      else
+        for (const e of m.events) {
+          if (e.k === 'joined') this.joined(e.who, e.removed);
+          else this.serverEvents.push(e);
+        }
+    }
     this.game.time = this.renderTime() + this.delay;
     this.acc = Math.min(this.acc + dt, 0.2);
     while (this.acc >= TICK) {
@@ -190,7 +200,13 @@ export class OnlineSession implements Session {
       this.batch = [];
     }
     this.alpha = this.acc / TICK;
+    // The mirror's own events (spawns of joiners…) aren't used, except a fallback 'over' (below).
+    for (const e of this.game.events.splice(0)) if (e.k === 'over' && !this.overSeen && !this.serverEvents.some((x) => x.k === 'over')) this.serverEvents.push(e);
     for (const e of this.serverEvents.splice(0)) {
+      if (e.k === 'over') {
+        if (this.overSeen) continue;
+        this.overSeen = true;
+      }
       if (e.k === 'shot') {
         if (e.by === this.meId) continue;
         const s = this.game.soldier(e.by);
@@ -209,7 +225,11 @@ export class OnlineSession implements Session {
     g.score[0] = s.score[0];
     g.score[1] = s.score[1];
     g.timeLeft = s.timeLeft;
-    if (s.phase === 'over' && g.phase !== 'over') g.events.push({ k: 'over', winner: s.score[0] === s.score[1] ? -1 : s.score[0] > s.score[1] ? 0 : 1, top: '' });
+    // Normally the server's own 'over' event arrives with the result; this is the fallback if it was missed.
+    if (s.phase === 'over' && g.phase !== 'over') {
+      const top = [...g.soldiers].sort((a, b) => (g.mode === 'ffa' ? b.kills - a.kills : b.score - a.score))[0]?.id ?? '';
+      g.events.push({ k: 'over', winner: g.mode === 'ffa' ? -1 : s.score[0] === s.score[1] ? -1 : s.score[0] > s.score[1] ? 0 : 1, top });
+    }
     g.phase = s.phase;
     g.warmup = s.warmup;
     s.flags.forEach(([owner, progress, capturing], i) => {
@@ -262,9 +282,11 @@ export class OnlineSession implements Session {
       sol.m.pitch = pitch!;
     }
     if (s.board) {
-      for (const [idx, kills, deaths, assists, score] of s.board) {
+      for (const [idx, kills, deaths, assists, score, ping] of s.board) {
         const sol = g.soldier(this.ids[idx!] ?? '');
-        if (!sol || sol === this.me) continue;
+        if (!sol) continue;
+        sol.ping = ping ?? 0;
+        if (sol === this.me) continue;
         sol.kills = kills!;
         sol.deaths = deaths!;
         sol.assists = assists!;
@@ -369,6 +391,20 @@ export class OnlineSession implements Session {
       return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, yaw: a.yaw + dy * k, pitch: a.pitch + (b.pitch - a.pitch) * k, vx: s.m.vx, vz: s.m.vz };
     }
     return { x: s.m.x, y: s.m.y, z: s.m.z, yaw: s.m.yaw, pitch: s.m.pitch, vx: s.m.vx, vz: s.m.vz };
+  }
+
+  /** Someone joined mid-match: mirror the server's roster change (same order, so snapshot indices still line up). */
+  private joined(who: SoldierSetup, removed: string): void {
+    const g = this.game;
+    if (removed && removed !== this.meId) g.remove(removed);
+    if (!g.soldier(who.id)) g.add({ ...who });
+    this.ids = g.soldiers.map((s) => s.id);
+    g.events.length = 0;
+  }
+
+  /** My ping is measured here; everyone else's comes from the server's scoreboard. */
+  ping(s: Soldier): number {
+    return s === this.me ? this.net.rtt : (s.ping ?? 0);
   }
 
   /** Class change applies on the next spawn (server side too). */

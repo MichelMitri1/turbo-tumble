@@ -59,6 +59,7 @@ if (cycle) {
 
 const used = new Map<string, number>();
 const hits = new Map<string, number>();
+const rolled = new Map<string, number>();
 const tally = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
 let boxes = 0;
 let coins = 0;
@@ -78,6 +79,7 @@ for (; tick < maxTicks; tick++) {
   race.step(inputs, FIXED_DT);
   for (const e of race.events) {
     if (e.type === 'itemUse') tally(used, e.item);
+    if (e.type === 'itemReady') tally(rolled, e.item);
     if (e.type === 'hit') tally(hits, `${e.source}:${e.kind}`);
     if (e.type === 'itemBox') boxes++;
     if (e.type === 'coin') coins++;
@@ -107,6 +109,7 @@ for (const r of race.standings()) {
 }
 console.log(`item boxes ${boxes}, coins ${coins}, pads ${pads}, bumps ${bumps}, blocks ${blocked}, explosions ${explosions}, mini-turbos ${miniTurbos}, respawns ${respawns}, NaN ${nan}`);
 console.log('items used:', [...used.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(' '));
+console.log('items rolled:', [...rolled.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(' '));
 console.log('hits:', [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${v}`).join(' '));
 const missing = ALL_ITEMS.filter((i) => !used.has(i) && !['puck3', 'seeker3', 'goo3'].includes(i));
 if (cycle) console.log('items never used:', missing.length ? missing.join(', ') : 'none');

@@ -78,6 +78,16 @@ export class RacePresenter {
             this.player(e.racer)?.camera.addTrauma(0.15);
           }
           if (e.item === 'prism') this.fx.burst(k.state.position.clone().setY(k.state.position.y + 1), '#ff4fd8', 30, 7);
+          if (e.item === 'giant') {
+            this.fx.burst(k.state.position.clone().setY(k.state.position.y + 1.5), '#ff4f8a', 36, 8);
+            this.fx.ring(k.state.position, 5, '#ffe14d', 0.5);
+            this.player(e.racer)?.camera.addTrauma(0.25);
+          }
+          if (e.item === 'phantom') this.fx.poof(k.state.position.clone().setY(k.state.position.y + 1), '#d9d0ff');
+          if (e.item === 'feather') {
+            this.fx.ring(k.state.position, 3.5, '#ffffff', 0.4);
+            this.fx.burst(k.state.position.clone().setY(k.state.position.y + 0.4), '#fff3c0', 16, 5);
+          }
           if (e.item === 'jetRocket') this.fx.explosion(k.state.position, 3);
           break;
         }
@@ -87,6 +97,14 @@ export class RacePresenter {
           k.view.gesture('ouch');
           const p = this.player(e.racer);
           if (p) p.camera.addTrauma(e.kind === 'tumble' ? 0.6 : 0.35);
+          break;
+        }
+        case 'steal': {
+          const name = ITEMS[e.item].name;
+          this.player(e.racer)?.hud.banner(`SWIPED ${name.toUpperCase()}!`, 'cyan');
+          this.player(e.from)?.hud.banner('ITEM STOLEN!', 'pink');
+          const victim = this.karts[e.from];
+          if (victim) this.fx.poof(victim.state.position.clone().setY(victim.state.position.y + 1.5), '#d9d0ff');
           break;
         }
         case 'blocked':

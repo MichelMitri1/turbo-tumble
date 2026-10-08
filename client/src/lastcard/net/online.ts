@@ -74,6 +74,9 @@ export class LastCardNet {
   start(): void {
     this.room?.send(LcMsg.Start);
   }
+  rematch(): void {
+    this.room?.send(LcMsg.Rematch);
+  }
   async leave(): Promise<void> {
     const r = this.room;
     this.room = null;
@@ -88,8 +91,10 @@ export class OnlineLink implements GameLink {
   onUpdate: GameLink['onUpdate'] = null;
   onError: GameLink['onError'] = null;
 
+  private readonly handler = (s: LcState) => this.receive(s);
+
   constructor(private readonly net: LastCardNet) {
-    net.onState = (s) => this.receive(s);
+    net.onState = this.handler;
     queueMicrotask(() => {
       for (const s of net.backlog.splice(0)) this.receive(s);
     });
@@ -101,7 +106,7 @@ export class OnlineLink implements GameLink {
 
   private receive(s: LcState): void {
     this.view = s.view;
-    this.onUpdate?.(s.view, s.events as GameEvent[]);
+    this.onUpdate?.(s.view, s.events as GameEvent[], s.views ?? []);
   }
 
   send(a: Action): void {
@@ -109,8 +114,10 @@ export class OnlineLink implements GameLink {
   }
   tick(): void {}
   hold(): void {}
+  readonly holdLeft = 0;
   dispose(): void {
     this.onUpdate = null;
-    if (this.net.onState) this.net.onState = null;
+    // Only detach our own handler (a rematch link may already have replaced it).
+    if (this.net.onState === this.handler) this.net.onState = null;
   }
 }

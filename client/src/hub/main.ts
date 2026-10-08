@@ -9,6 +9,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, children
   return node;
 }
 
+/** Gameplay screenshot (falls back to the emoji if it fails to load). */
+function art(game: GameEntry): HTMLElement {
+  const emoji = el('span', 'hub-card__emoji', [game.art.emoji]);
+  if (!game.art.image) return emoji;
+  const img = el('img', 'hub-card__shot');
+  img.src = game.art.image;
+  img.alt = `${game.title} gameplay`;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.addEventListener('error', () => img.replaceWith(emoji));
+  return img;
+}
+
 function card(game: GameEntry): HTMLElement {
   const playable = !!game.href;
   const root = playable ? el('a', 'hub-card') : el('div', 'hub-card is-locked');
@@ -17,7 +30,7 @@ function card(game: GameEntry): HTMLElement {
   root.style.setProperty('--from', game.art.from);
   root.style.setProperty('--to', game.art.to);
   root.append(
-    el('div', 'hub-card__art', [el('span', 'hub-card__emoji', [game.art.emoji]), playable ? '' : el('span', 'hub-card__badge', ['SOON'])]),
+    el('div', 'hub-card__art', [art(game), playable ? '' : el('span', 'hub-card__badge', ['SOON'])]),
     el('div', 'hub-card__body', [
       el('h2', 'hub-card__title hub-display', [game.title]),
       el('p', 'hub-card__tagline', [game.tagline]),
@@ -41,7 +54,7 @@ document.getElementById('hub')!.append(
     el('p', 'hub-sub', ['Pick a game']),
   ]),
   el('main', '', [grid]),
-  el('footer', 'hub-footer', ['← → choose · Enter play · F fullscreen']),
+  el('footer', 'hub-footer', [`← → choose · Enter play · ${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘F' : 'Ctrl+F'} fullscreen`]),
 );
 
 // Arrow keys / gamepad-style navigation between playable cards.

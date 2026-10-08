@@ -1,6 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
-import type { CarBody } from '../sim/constants';
+import type { CarId } from '../sim/constants';
 import { RB_ROOM, RB_VERSION, RbMsg, type RbBegin, type RbChat, type RbConfig, type RbInput, type RbJoin, type RbLobby, type Stats, type WorldEvent } from './protocol';
 
 /** Boostball room connection: lobby, match start, snapshots, events. */
@@ -37,15 +37,15 @@ export class RocketNet {
     }
   }
 
-  async create(name: string, body: CarBody['id']): Promise<void> {
+  async create(name: string, body: CarId): Promise<void> {
     const o: RbJoin = { version: RB_VERSION, name, body, visibility: 'private' };
     this.attach(await this.sdk.create(RB_ROOM, o));
   }
-  async quick(name: string, body: CarBody['id']): Promise<void> {
+  async quick(name: string, body: CarId): Promise<void> {
     const o: RbJoin = { version: RB_VERSION, name, body, visibility: 'public' };
     this.attach(await this.sdk.joinOrCreate(RB_ROOM, o));
   }
-  async join(code: string, name: string, body: CarBody['id']): Promise<void> {
+  async join(code: string, name: string, body: CarId): Promise<void> {
     const o: RbJoin = { version: RB_VERSION, name, body };
     this.attach(await this.sdk.joinById(code.toUpperCase(), o));
   }
@@ -89,7 +89,7 @@ export class RocketNet {
   team(team: 0 | 1): void {
     this.room?.send(RbMsg.Team, { team });
   }
-  body(body: CarBody['id']): void {
+  body(body: CarId): void {
     this.room?.send(RbMsg.Body, { body });
   }
   chat(g: number, i: number): void {

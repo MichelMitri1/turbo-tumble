@@ -1,5 +1,6 @@
 import type { Difficulty } from '@shared/ai/AIDifficulty';
 import type { RacerSetup } from '@shared/race/RaceSimulation';
+import type { SpeedClass } from '@shared/race/SpeedClass';
 import { MAX_RACERS } from '@shared/constants/simulation';
 import { cpuField, humanSetup } from '@shared/roster/Roster';
 import type { DeviceAssignment } from '../input/InputManager';
@@ -25,6 +26,10 @@ export interface SessionConfig {
   players: PlayerSetup[];
   /** 2-player split orientation. */
   split: TwoPlayerSplit;
+  /** Engine class (50/100/150/200cc), default 150. */
+  speedClass?: SpeedClass;
+  /** Mirror mode: the whole course is seen (and steered) flipped left↔right. */
+  mirror?: boolean;
 }
 
 /** Mode-specific rules applied on top of the menu choices. */
@@ -33,7 +38,7 @@ export function normalizeSession(cfg: SessionConfig): SessionConfig {
     case 'timetrial':
       return { ...cfg, items: false, racerCount: cfg.players.length };
     case 'attract':
-      return { ...cfg, players: [], laps: 99, items: true, racerCount: 8 };
+      return { ...cfg, players: [], laps: 99, items: true, racerCount: 8, speedClass: 150, mirror: false };
     default:
       return cfg;
   }

@@ -5,6 +5,32 @@ import { gantryBannerTexture } from '../../rendering/ProceduralTextures';
 import { TrackMaterials } from '../materials';
 import { sampleQuaternion } from '../frames';
 
+/** Pylon / band colours per world (default: Turbo Tumble navy and gold). */
+const GANTRY_COLORS: Record<string, [string, string]> = {
+  beach: ['#1aa6b8', '#fff2c8'],
+  tropical: ['#e8603a', '#ffe08a'],
+  farm: ['#a8402a', '#f6f0e0'],
+  autumn: ['#7a3a1e', '#f0a030'],
+  alpine: ['#3a5a3a', '#f2e8d0'],
+  river: ['#2a6a8a', '#f2e8d0'],
+  desert: ['#b8743a', '#f2dca0'],
+  mesa: ['#6a2a1e', '#e8a060'],
+  ruins: ['#6a6450', '#8ac85a'],
+  jungle: ['#3a5a2a', '#e8c048'],
+  mushroom: ['#5a2a7a', '#ff9ad8'],
+  marsh: ['#2a2a3a', '#9aff6a'],
+  snow: ['#2a5aa8', '#f4f8ff'],
+  glacier: ['#1a3a6a', '#8af0ff'],
+  factory: ['#3a3e48', '#f2c230'],
+  city: ['#1a1830', '#ff3fb4'],
+  volcano: ['#1e1818', '#ff6a1a'],
+  magma: ['#1a1212', '#ff4a10'],
+  sky: ['#f4f4fa', '#e8c048'],
+  starlight: ['#141448', '#8af0ff'],
+  comet: ['#0a2a2a', '#5affd8'],
+  prism: ['#2a1a4a', '#ff9af0'],
+};
+
 /**
  * Start/finish gantry spanning the track: twin pylons, a branded banner beam and a
  * row of start lights (exposed via userData for the countdown in Phase 2).
@@ -19,8 +45,9 @@ export function buildStartGantry(ctx: BuildContext, p: LandmarkPlacement): void 
 
   const span = frame.wallOffset + 0.9;
   const height = 10.5;
-  const navy = TrackMaterials.paint('#2a2172');
-  const yellow = TrackMaterials.paint('#ffd23f');
+  const [frameColor, bandColor] = GANTRY_COLORS[String(p.params?.style ?? '')] ?? ['#2a2172', '#ffd23f'];
+  const navy = TrackMaterials.paint(frameColor);
+  const yellow = TrackMaterials.paint(bandColor);
 
   for (const side of [-1, 1]) {
     const groundY = ctx.terrain.sample(

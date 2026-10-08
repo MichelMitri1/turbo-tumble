@@ -7,15 +7,48 @@ const cache = new Map<string, THREE.Texture>();
 function canvas(n = 512): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
   c.width = c.height = n;
-  return [c, c.getContext('2d')!];
+  return [c, c.getContext('2d', { willReadFrequently: true })!];
 }
 
+/** Grey speckle: `amount` random size×size dots blended at `alpha`, written straight into the pixels (fillRect per dot was ~250 ms a texture). */
 function noise(g: CanvasRenderingContext2D, n: number, amount: number, alpha: number, size = 1): void {
+  const img = g.getImageData(0, 0, n, n);
+  const d = img.data;
   for (let i = 0; i < amount; i++) {
     const v = Math.random() * 255;
-    g.fillStyle = `rgba(${v},${v},${v},${alpha})`;
-    g.fillRect(Math.random() * n, Math.random() * n, size, size);
+    const x0 = Math.floor(Math.random() * n);
+    const y0 = Math.floor(Math.random() * n);
+    for (let y = y0; y < Math.min(n, y0 + size); y++)
+      for (let x = x0; x < Math.min(n, x0 + size); x++) {
+        const k = (y * n + x) * 4;
+        d[k] = d[k]! + (v - d[k]!) * alpha;
+        d[k + 1] = d[k + 1]! + (v - d[k + 1]!) * alpha;
+        d[k + 2] = d[k + 2]! + (v - d[k + 2]!) * alpha;
+      }
   }
+  g.putImageData(img, 0, 0);
+}
+
+/** Grass blades: short vertical strokes of varied green, also written straight into the pixels. */
+function blades(g: CanvasRenderingContext2D, n: number, count: number): void {
+  const img = g.getImageData(0, 0, n, n);
+  const d = img.data;
+  for (let i = 0; i < count; i++) {
+    const v = 60 + Math.random() * 70;
+    const r = v * 0.7;
+    const gr = v + 20;
+    const b = v * 0.4;
+    const x = Math.floor(Math.random() * n);
+    const y0 = Math.floor(Math.random() * n);
+    const len = 3 + Math.floor(Math.random() * 3);
+    for (let y = y0; y < y0 + len; y++) {
+      const k = ((y % n) * n + x) * 4;
+      d[k] = (d[k]! + r) / 2;
+      d[k + 1] = (d[k + 1]! + gr) / 2;
+      d[k + 2] = (d[k + 2]! + b) / 2;
+    }
+  }
+  g.putImageData(img, 0, 0);
 }
 
 function blotches(g: CanvasRenderingContext2D, n: number, color: string, count: number, r0: number, r1: number): void {
@@ -148,11 +181,7 @@ export function texture(mat: Material): THREE.Texture {
       g.fillRect(0, 0, n, n);
       blotches(g, n, 'rgba(110,130,60,0.35)', 50, 20, 90);
       blotches(g, n, 'rgba(40,55,25,0.35)', 50, 20, 90);
-      for (let i = 0; i < 9000; i++) {
-        const v = 60 + Math.random() * 70;
-        g.fillStyle = `rgba(${v * 0.7},${v + 20},${v * 0.4},0.5)`;
-        g.fillRect(Math.random() * n, Math.random() * n, 1, 3 + Math.random() * 3);
-      }
+      blades(g, n, 9000);
       break;
     }
     case 'plaster': {
@@ -330,4 +359,9 @@ export function texture(mat: Material): THREE.Texture {
   t.anisotropy = 8;
   cache.set(mat, t);
   return t;
+}
+
+/** Every surface texture, built ahead (during the loading screen) so the first frame of a match doesn't pay for them. */
+export function prebuildTextures(mats: Iterable<Material>): void {
+  for (const m of mats) if (m !== 'invisible') texture(m);
 }

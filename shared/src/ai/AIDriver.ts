@@ -112,12 +112,18 @@ export class AIDriver {
     if (p.overtakes) lane += this.trafficAvoidance(ctx, me, loc.splineDistance, lane, speed);
     const box = this.boxLane(ctx, me, loc.splineDistance, lane);
     if (box !== null) lane = box;
+    else {
+      const coin = this.coinLane(ctx, me, loc.splineDistance, lane);
+      if (coin !== null) lane = coin;
+    }
     const sample = track.samples[ti]!;
     const cutLane = this.shortcutLane(ctx, me, loc.splineDistance);
     if (cutLane !== null) lane = cutLane;
     const jumpAhead = track.def.jumps.some((jump) => track.wrapDistance(track.startDistance + jump.distance + jump.length - loc.splineDistance + 8) < 85);
     if (jumpAhead) lane = 0;
-    const edgeRoom = sample.open ? 3.2 : cutLane !== null ? 1.2 : 2;
+    // Floating courses have their barriers right at the road edge: keep further in.
+    const floating = track.def.space === true;
+    const edgeRoom = (sample.open ? 3.2 : cutLane !== null ? 1.2 : 2 + Math.min(1.2, Math.abs(line.curvature[ti]!) * 40)) + (floating && cutLane === null ? 1.3 : 0);
     const lim = Math.max(0, sample.halfWidth - edgeRoom);
     // Obstacles: pick the clearest lane given where everything will be when we arrive.
     const plan = cutLane !== null || jumpAhead ? null : this.planLane(ctx, loc.splineDistance, loc.lateral, lane, speed, look, lim);
@@ -160,7 +166,9 @@ export class AIDriver {
     const outward = s.drifting ? -(loc.lateral - hereLat) * s.driftDir : 0;
     // Dodging an obstacle or lining up for a shortcut needs free steering: no drift.
     const busy = avoidingObstacle || cutLane !== null;
-    const wantDrift = allowDrift && !busy && p.driftSkill > 0.3 && Math.abs(k) > threshold && speed > 15;
+    // Never start a drift already at the road's edge (it would only carry us onto the grass).
+    const onRoad = Math.abs(loc.lateral) < track.samples[loc.index]!.halfWidth - 1.5;
+    const wantDrift = allowDrift && !busy && onRoad && p.driftSkill > 0.3 && Math.abs(k) > threshold && speed > 15;
     if (s.drifting && busy) {
       out.drift = false;
     } else if (s.drifting) {
@@ -189,10 +197,24 @@ export class AIDriver {
         out.brake = Math.abs(predicted) > here.halfWidth ? 0.8 : 0.3;
       }
     }
-    // Walls: correct a slide before it reaches the barrier.
-    if (!here.open && s.grounded && !s.drifting && cutLane === null && speed > 12 && Math.abs(angle) < 1.1) {
-      const predicted = loc.lateral + s.velocity.dot(here.flatRight) * 0.35;
-      if (Math.abs(predicted) > here.halfWidth + 0.5) out.steer = clamp(out.steer - Math.sign(predicted) * 0.5, -1, 1);
+    // A drift running off the road (cutting the apex onto the grass, or sliding wide):
+    // open up / tighten the arc, and bail out of the drift rather than leave the tarmac.
+    if (s.drifting && s.grounded && !here.open) {
+      const inside = (loc.lateral + s.velocity.dot(here.flatRight) * 0.5) * s.driftDir;
+      const edge = here.halfWidth - 1.2;
+      if (inside > edge - 1) out.steer = -s.driftDir;
+      else if (-inside > edge - 1) out.steer = s.driftDir;
+      if (Math.abs(inside) > edge + 0.6) out.drift = false;
+    }
+    // Road edges: correct a slide before it reaches the grass / barrier.
+    const walled = here.wallLeft || here.wallRight;
+    if ((!here.open || walled) && s.grounded && !s.drifting && cutLane === null && speed > 12 && Math.abs(angle) < 1.1) {
+      // Also keeps pure pursuit from cutting a tight apex onto the grass.
+      const predicted = loc.lateral + s.velocity.dot(here.flatRight) * 0.4;
+      const side = Math.sign(predicted);
+      const barrier = side > 0 ? here.wallRight : here.wallLeft;
+      const margin = floating && barrier ? 1.7 : 0.6;
+      if ((!here.open || barrier) && Math.abs(predicted) > here.halfWidth - margin) out.steer = clamp(out.steer - side * 0.5, -1, 1);
     }
     if (jumpAhead || s.jumpFlight) {
       out.drift = s.jumpFlight && s.airTime > 0.2 && !s.jumpTrick;
@@ -350,9 +372,11 @@ export class AIDriver {
     return true;
   }
 
-  /** Empty-handed skilled CPUs line up with the nearest live item box ahead. */
+  /** Skilled CPUs with a free item slot line up with the nearest live item box ahead. */
   private boxLane(ctx: AIContext, me: Racer, splineDistance: number, lane: number): number | null {
-    if (this.personality.itemSkill < 0.5 || me.slot.item || me.slot.roulette > 0 || !ctx.pickups) return null;
+    const slot = me.slot;
+    const full = (slot.item || slot.roulette > 0) && (slot.reserve || slot.reserveRoulette > 0);
+    if (this.personality.itemSkill < 0.5 || full || !ctx.pickups) return null;
     const track = ctx.track;
     let best: number | null = null;
     let bestCost = 3.2; // won't swerve further than this for a box
@@ -364,6 +388,25 @@ export class AIDriver {
       if (cost < bestCost) {
         bestCost = cost;
         best = b.lateral;
+      }
+    }
+    return best;
+  }
+
+  /** Coins add top speed: CPUs under the cap drift over to a coin close to their line. */
+  private coinLane(ctx: AIContext, me: Racer, splineDistance: number, lane: number): number | null {
+    if (me.state.coins >= 10 || this.personality.itemSkill < 0.4 || !ctx.pickups) return null;
+    const track = ctx.track;
+    let best: number | null = null;
+    let bestCost = 1.5 + this.personality.itemSkill * 1.3; // a small swerve, never a detour
+    for (const c of ctx.pickups.coins) {
+      if (c.respawn > 0) continue;
+      const ahead = track.wrapDistance(track.startDistance + c.distance - splineDistance);
+      if (ahead < 3 || ahead > 35) continue;
+      const cost = Math.abs(c.lateral - lane);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = c.lateral;
       }
     }
     return best;
@@ -465,6 +508,18 @@ export class AIDriver {
         return ahead || behind ? press() : false;
       case 'snapper':
         return slot.timer === 0 || (ahead !== null && ahead.gap < 10) ? press() : false;
+      case 'phantom': {
+        // Best when someone ahead has something worth taking, or to slip past a shot.
+        const loot = ctx.racers.some((o) => o.progress.position < me.progress.position && (o.slot.item !== null || o.slot.reserve !== null));
+        return loot || this.incoming(ctx, me, 30) || this.think < -8 ? press() : false;
+      }
+      case 'giant':
+        return (ahead !== null && ahead.gap < 25) || (straight && this.think < -2) ? press() : false;
+      case 'feather': {
+        // Hop over an incoming shot or a trap on our line; otherwise just enjoy the jump.
+        const trap = this.trapAvoidance(ctx, me, ctx.track.locate(me.state.position, me.state.trackIndex, 8).splineDistance, 0) !== 0;
+        return me.state.grounded && (this.incoming(ctx, me, 14) || trap || (straight && this.think < -10)) ? press() : false;
+      }
       case 'ember':
       case 'rang':
         this.think = 0.5;
@@ -475,11 +530,23 @@ export class AIDriver {
     }
   }
 
+  /** A projectile homing on us (or closing from behind) within `range` metres. */
+  private incoming(ctx: AIContext, me: Racer, range: number): boolean {
+    const p = me.state.position;
+    return ctx.items.entities.list.some((e) => {
+      if (e.dead || e.attach !== 'none' || e.owner === me.index) return false;
+      if (e.kind !== 'seeker' && e.kind !== 'puck' && e.kind !== 'fireball') return false;
+      const d = e.position.distanceTo(p);
+      if (d > range) return false;
+      return e.target === me.index || e.velocity.dot(this.tmp.copy(p).sub(e.position)) > 0;
+    });
+  }
+
   private rivalAhead(ctx: RaceContext, me: Racer): { gap: number; aligned: boolean } | null {
     const other = ctx.standings()[me.progress.position - 2];
     if (!other) return null;
     const gap = other.progress.total - me.progress.total;
-    const to = other.state.position.clone().sub(me.state.position).setY(0).normalize();
+    const to = this.tmp.copy(other.state.position).sub(me.state.position).setY(0).normalize();
     return { gap, aligned: to.dot(this.fwd) > 0.94 };
   }
 

@@ -15,6 +15,9 @@ export class PoolNet {
   onState: ((s: PlState) => void) | null = null;
   onAim: ((a: Aim) => void) | null = null;
   onError: ((msg: string) => void) | null = null;
+  /** The socket dropped; the SDK is retrying with the reconnection token (the server holds the seat 30 s). */
+  onDrop: (() => void) | null = null;
+  onReconnect: (() => void) | null = null;
   onClosed: ((reason?: string) => void) | null = null;
   backlog: PlState[] = [];
 
@@ -50,6 +53,12 @@ export class PoolNet {
 
   private attach(room: Room): void {
     this.room = room;
+    // Retry for about as long as the server keeps the seat (30 s): 0.2 + 0.4 + 0.8 + 1.6 + 3 s, then every 3 s.
+    room.reconnection.maxDelay = 3000;
+    room.reconnection.maxRetries = 13;
+    room.reconnection.minUptime = 1000;
+    room.onDrop(() => this.onDrop?.());
+    room.onReconnect(() => this.onReconnect?.());
     room.onMessage(PlMsg.Lobby, (l: PlLobby) => {
       this.lobby = l;
       this.onLobby?.(l);

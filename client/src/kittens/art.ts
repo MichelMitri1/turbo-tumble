@@ -266,6 +266,34 @@ const ART: Record<Exclude<CardType, 'cat'>, () => string> = {
   feral: () =>
     bg('#ffd0f8', '#ff4fd8', 'burst') +
     catHead({ fur: '#7be36b', fur2: '#ff4fd8', pattern: 'spots', eyes: 'swirl', mouth: 'grr', ears: 'spiky', innerEar: '#ffd23f' }),
+  imploding: () =>
+    bg('#22305a', '#5b3fd8', 'burst') +
+    // A black-hole vortex swallowing the cat (and its bomb).
+    `<g opacity="0.9"><ellipse cx="100" cy="104" rx="92" ry="34" fill="none" stroke="#3fd8ff" stroke-width="6" transform="rotate(-18 100 104)"/><ellipse cx="100" cy="104" rx="70" ry="24" fill="none" stroke="#ff4fd8" stroke-width="6" transform="rotate(-18 100 104)"/><ellipse cx="100" cy="104" rx="92" ry="34" fill="none" ${THIN} transform="rotate(-18 100 104)"/></g>` +
+    catHead({ fur: '#4a3a7a', fur2: '#2a1f4d', pattern: 'tabby', eyes: 'swirl', mouth: 'o', innerEar: '#3fd8ff', y: -14, scale: 0.8 }) +
+    `<circle cx="100" cy="168" r="20" fill="#0a0618" ${S}/><circle cx="100" cy="168" r="9" fill="#3fd8ff" opacity="0.5"/>` +
+    `<g transform="rotate(-35 150 160)">${bomb(152, 166, 16)}</g><path d="M30 150 Q60 160 80 166 M24 178 Q56 176 82 172" fill="none" stroke="#3fd8ff" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 9"/>`,
+  reverse: () =>
+    bg('#b8f5ea', '#2ab5a0', 'stripes') +
+    catHead({ fur: '#ffcf6a', fur2: '#d08a1a', pattern: 'tabby', eyes: 'wide', mouth: 'grin', y: -2, scale: 0.72 }) +
+    // Two arrows chasing each other round the cat.
+    `<path d="M36 70 A70 70 0 0 1 150 36" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/><path d="M36 70 A70 70 0 0 1 150 36" fill="none" ${THIN}/><path d="M138 18 L170 38 L136 54 Z" fill="#fff" ${THIN}/>` +
+    `<path d="M164 136 A70 70 0 0 1 50 170" fill="none" stroke="#fff" stroke-width="13" stroke-linecap="round"/><path d="M164 136 A70 70 0 0 1 50 170" fill="none" ${THIN}/><path d="M62 188 L30 168 L64 152 Z" fill="#fff" ${THIN}/>`,
+  bottom: () =>
+    bg('#f0d8b0', '#b07a4a', 'dots') +
+    catHead({ fur: '#8a95a8', fur2: '#5a6478', pattern: 'patch', eyes: 'sly', mouth: 'tongue', y: -30, scale: 0.78 }) +
+    // A tall pile with a card being slid out from underneath.
+    `<rect x="52" y="112" width="96" height="22" rx="5" fill="#2e2670" ${S}/><rect x="48" y="128" width="96" height="22" rx="5" fill="#3f3496" ${S}/><rect x="54" y="144" width="96" height="22" rx="5" fill="#2e2670" ${S}/>` +
+    `<rect x="96" y="164" width="96" height="24" rx="5" fill="#ffd23f" ${S}/><path d="M60 176 H86 M66 186 H90" stroke="#fff" stroke-width="5" stroke-linecap="round"/>` +
+    paw(176, 176, '#8a95a8', 0.9),
+  alter: () =>
+    bg('#d8c8ff', '#5b3fd8', 'rays') +
+    `<path d="M48 54 L100 -6 L152 54 Z" fill="#3f2fb0" ${S}/><path d="${star(100, 26, 9, 4)}" fill="#ffd23f"/>` +
+    catHead({ fur: '#ff9ec4', eyes: 'stars', mouth: 'smile', y: -10, scale: 0.8, blush: true }) +
+    // Three cards trading places, and a wand doing it.
+    `<rect x="22" y="146" width="36" height="48" rx="6" fill="#fff" ${S} transform="rotate(-10 40 170)"/><rect x="82" y="150" width="36" height="48" rx="6" fill="#ffd23f" ${S}/><rect x="142" y="146" width="36" height="48" rx="6" fill="#3fd8ff" ${S} transform="rotate(10 160 170)"/>` +
+    `<path d="M44 140 Q100 110 156 140" fill="none" stroke="#fff" stroke-width="5" stroke-dasharray="7 6"/><path d="M148 130 L160 142 L144 146" fill="none" ${THIN}/>` +
+    `<path d="M164 70 L186 112" ${S}/><path d="${star(162, 64, 12, 5)}" fill="#ffd23f" ${THIN}/>`,
 };
 
 const cache = new Map<string, string>();
@@ -275,7 +303,8 @@ export function cardArt(c: Pick<Card, 'type' | 'cat'>): string {
   let svg = cache.get(key);
   if (!svg) {
     const body = c.type === 'cat' ? CAT_ART[c.cat ?? 'pizza']() : ART[c.type as Exclude<CardType, 'cat'>]();
-    svg = `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
+    // (Sliced, so short art boxes — cards in hand — crop to the middle instead of letterboxing.)
+    svg = `<svg viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
     cache.set(key, svg);
   }
   return svg;

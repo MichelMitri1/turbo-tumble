@@ -23,8 +23,8 @@ for (let g = 0; g < games; g++) {
     if (err) { stats[`err:${err}`] = (stats[`err:${err}`] ?? 0) + 1; e.act(e.current.id, { t: 'shoot', shot: { dx: 1, dy: 0, power: 0.3, sx: 0, sy: 0 }, call: 0, cue: e.ballInHand ? { x: -0.8, y: 0.3 } : undefined }); }
     n++; shots++;
     for (const ev of e.events.splice(0) as GameEvent[]) {
-      if (ev.k === 'result') { if (ev.foul) stats[ev.foul] = (stats[ev.foul] ?? 0) + 1; potsPerShot += ev.pocketed.filter((x) => x).length; if (ev.keep) stats.keep = (stats.keep ?? 0) + 1; }
-      if (ev.k === 'over') stats[`over: ${ev.reason.replace(/^\w+ /, '')}`] = (stats[`over: ${ev.reason.replace(/^\w+ /, '')}`] ?? 0) + 1;
+      if (ev.k === 'result') { if (ev.foul) stats[`foul: ${ev.foul}`] = (stats[`foul: ${ev.foul}`] ?? 0) + 1; potsPerShot += ev.pocketed.filter((x) => x).length; if (ev.keep) stats.keep = (stats.keep ?? 0) + 1; }
+      if (ev.k === 'over') { const why = `over: ${ev.winner === e.current.id ? '' : 'loser '}${ev.reason.replace(new RegExp(`^(${A}|${B}) `), '')}`; stats[why] = (stats[why] ?? 0) + 1; }
     }
   }
   if (!e.isOver) stuck++; else wins[e.winner as 'a' | 'b']++;

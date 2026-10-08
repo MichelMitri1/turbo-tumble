@@ -20,6 +20,8 @@ export interface PropPlacement {
   tint?: string;
   /** Explosive (barrels). */
   explosive?: boolean;
+  /** Boundary dressing: drawn instanced, no shadows. */
+  edge?: boolean;
 }
 
 export interface SpawnPoint {
@@ -69,6 +71,9 @@ export const W = (c: number, w = 1.6, sill = 1, top = 2.2): Op => [c - w / 2, c 
 // Map yaws are written as "facing +x = π/2" (facing −z = 0, +z = π); the sim looks down −z at yaw 0 and turns left with +yaw.
 export const sp = (x: number, z: number, yaw: number, y = 0): SpawnPoint => ({ x, y, z, yaw: -yaw });
 export const FACE = { px: Math.PI / 2, nx: -Math.PI / 2, pz: Math.PI, nz: 0 };
+/** Spawns within 6 m of the boundary look at the middle of the map (never at the edge); the rest keep their written yaw. */
+export const faceCentre = (pts: SpawnPoint[], hx: number, hz: number): SpawnPoint[] =>
+  pts.map((p) => (Math.min(hx - Math.abs(p.x), hz - Math.abs(p.z)) > 6 || Math.hypot(p.x, p.z) < 8 ? p : { ...p, yaw: Math.atan2(p.x, p.z) }));
 
 export const CONTAINER_L: [number, number, number] = [2.8, 1.22, 1.15];
 export const CONTAINER_S: [number, number, number] = [2.7, 1.22, 1.15];
@@ -180,9 +185,9 @@ export class Builder {
   }
 
   /** Place a model; its collision box comes from the model bounds. */
-  prop(model: string, x: number, z: number, rot = 0, s: number | [number, number, number] = 1, opts: { collide?: boolean; y?: number; tint?: string; explosive?: boolean; shrink?: number; trunk?: [number, number] } = {}): this {
+  prop(model: string, x: number, z: number, rot = 0, s: number | [number, number, number] = 1, opts: { collide?: boolean; y?: number; tint?: string; explosive?: boolean; shrink?: number; trunk?: [number, number]; edge?: boolean } = {}): this {
     const [sx, sy, sz] = typeof s === 'number' ? [s, s, s] : s;
-    const p: PropPlacement = { model, x, y: opts.y ?? 0, z, rot: ((rot % 4) + 4) % 4, sx, sy, sz, collide: opts.collide ?? true, tint: opts.tint, explosive: opts.explosive };
+    const p: PropPlacement = { model, x, y: opts.y ?? 0, z, rot: ((rot % 4) + 4) % 4, sx, sy, sz, collide: opts.collide ?? true, tint: opts.tint, explosive: opts.explosive, edge: opts.edge };
     this.props.push(p);
     // Trees / towers: only the trunk or legs block.
     const trunk = opts.trunk ?? (/tree/.test(model) ? [0.5, 4] : /watertank-platform/.test(model) ? [1.6, 6] : null);
@@ -211,13 +216,29 @@ export class Builder {
     return this;
   }
 
-  /** Invisible map boundary. */
-  bounds(hx: number, hz: number, h = 14): this {
+  /** Map boundary: an invisible wall, with a low visible kerb along it so the edge reads. */
+  bounds(hx: number, hz: number, h = 14, kerb: Material = 'concrete'): this {
     const t = 1;
     this.box(-hx - t, 0, -hz - t, hx + t, h, -hz, 'invisible', false, true);
     this.box(-hx - t, 0, hz, hx + t, h, hz + t, 'invisible', false, true);
     this.box(-hx - t, 0, -hz, -hx, h, hz, 'invisible', false, true);
     this.box(hx, 0, -hz, hx + t, h, hz, 'invisible', false, true);
+    const k = 0.45;
+    const y = 0.7;
+    this.box(-hx - k, 0, -hz - k, hx + k, y, -hz, kerb);
+    this.box(-hx - k, 0, hz, hx + k, y, hz + k, kerb);
+    this.box(-hx - k, 0, -hz, -hx, y, hz, kerb);
+    this.box(hx, 0, -hz, hx + k, y, hz, kerb);
+    return this;
+  }
+
+  /** Decorative barrier props (no collision) just outside the boundary, every `step` metres along all four sides. */
+  edge(hx: number, hz: number, model: string, step: number, s: number | [number, number, number], opts: { out?: number; tint?: string; skip?: (x: number, z: number) => boolean } = {}): this {
+    const o = opts.out ?? 1.2;
+    for (let x = -hx + step / 2; x < hx; x += step)
+      for (const side of [-1, 1]) if (!opts.skip?.(x, side * (hz + o))) this.prop(model, x, side * (hz + o), 0, s, { collide: false, tint: opts.tint, edge: true });
+    for (let z = -hz + step / 2; z < hz; z += step)
+      for (const side of [-1, 1]) if (!opts.skip?.(side * (hx + o), z)) this.prop(model, side * (hx + o), z, 1, s, { collide: false, tint: opts.tint, edge: true });
     return this;
   }
 

@@ -130,9 +130,14 @@ export class ParticleSystem {
   spawn(p: ParticleSpawn): void {
     const i = this.cursor;
     this.cursor = (this.cursor + 1) % this.capacity;
-    this.pos.set([p.position.x, p.position.y, p.position.z], i * 3);
+    const k = i * 3;
+    this.pos[k] = p.position.x;
+    this.pos[k + 1] = p.position.y;
+    this.pos[k + 2] = p.position.z;
     const v = p.velocity;
-    this.vel.set(v ? [v.x, v.y, v.z] : [0, 0, 0], i * 3);
+    this.vel[k] = v ? v.x : 0;
+    this.vel[k + 1] = v ? v.y : 0;
+    this.vel[k + 2] = v ? v.z : 0;
     this.life[i] = p.life;
     this.maxLife[i] = p.life;
     this.size0[i] = p.size[0];

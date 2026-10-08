@@ -113,7 +113,7 @@ export function applyAttachments(w: WeaponDef, a: Attachments): WeaponDef {
     o.ads -= 0.03;
   }
   if (a.ammo === 'extended') {
-    o.mag = Math.round(o.mag * (o.mag <= 8 ? 1.5 : 1.5));
+    o.mag = Math.round(o.mag * 1.5);
     o.reload *= 1.1;
     o.reloadEmpty *= 1.1;
     o.ads += 0.02;

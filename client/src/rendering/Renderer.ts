@@ -22,6 +22,8 @@ export class Renderer {
   readonly gl: WebGLRenderer;
   private width = 1;
   private height = 1;
+  /** Mirror mode: the canvas is flipped by CSS, so viewports are laid out flipped to land back in place. */
+  private mirrored = false;
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -69,7 +71,7 @@ export class Renderer {
   render(scene: Scene, views: ViewRender[]): void {
     for (const v of views) {
       // WebGL viewports are bottom-left based; our rects are top-left based.
-      const x = Math.round(v.rect.x * this.width);
+      const x = Math.round((this.mirrored ? 1 - v.rect.x - v.rect.width : v.rect.x) * this.width);
       const w = Math.round(v.rect.width * this.width);
       const h = Math.round(v.rect.height * this.height);
       const y = Math.round((1 - v.rect.y - v.rect.height) * this.height);
@@ -77,6 +79,11 @@ export class Renderer {
       this.gl.setScissor(x, y, w, h);
       this.gl.render(scene, v.camera);
     }
+  }
+
+  setMirror(on: boolean): void {
+    this.mirrored = on;
+    this.canvas.style.transform = on ? 'scaleX(-1)' : '';
   }
 
   get info(): { calls: number; triangles: number; geometries: number; textures: number } {

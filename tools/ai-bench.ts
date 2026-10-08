@@ -21,7 +21,7 @@ const diff = (args[0] ?? 'hard') as Difficulty;
 if (process.env.P) Object.assign(DIFFICULTY[diff], JSON.parse(process.env.P));
 const ids = args.slice(1).length ? args.slice(1) : TRACKS.map((t) => t.id);
 const verbose = ids.length === 1;
-let sum = 0, W = 0, R = 0, O = 0, M = 0;
+let sum = 0, W = 0, R = 0, O = 0, M = 0, D = 0, C = 0;
 for (const id of ids) {
   const def = getTrack(id);
   const track = new TrackPath(def);
@@ -32,23 +32,28 @@ for (const id of ids) {
     racers: [{ id: 'c', name: 'c', characterId: 'bix', kartId: 'comet', isAI: true, stats: { ...BASE_KART_STATS } }] }, physics, track);
   const r = race.racers[0]!;
   const off = new Map<number, number>(); const slow = new Map<number, number>();
-  let offT = 0, slowT = 0, walls = 0, resp = 0;
+  let offT = 0, slowT = 0, walls = 0, resp = 0, driftT = 0, cutT = 0, lastCut = -9;
+  // Off-road time spent on a shortcut trail is deliberate — counted separately.
+  const ai = (race as unknown as { ai: Array<{ trail: unknown; cutAhead: number }> }).ai[0]!;
   for (let t = 0; t < TICK_RATE * 400 && !r.progress.finished; t++) {
     race.step([null], FIXED_DT);
     if (race.time < 3) continue;
     const b = Math.floor(track.locate(r.state.position, r.state.trackIndex, 8).splineDistance / 25) * 25;
-    if (r.state.surface === 2 && r.state.grounded) { offT += FIXED_DT; off.set(b, (off.get(b) ?? 0) + FIXED_DT); }
+    if (ai.trail || ai.cutAhead < 20) lastCut = race.time;
+    if (r.state.surface === 2 && r.state.grounded && race.time - lastCut < 2) cutT += FIXED_DT;
+    else if (r.state.surface === 2 && r.state.grounded) { offT += FIXED_DT; off.set(b, (off.get(b) ?? 0) + FIXED_DT); }
     if (r.state.forwardSpeed < 18) { slowT += FIXED_DT; slow.set(b, (slow.get(b) ?? 0) + FIXED_DT); }
+    if (r.state.drifting) driftT += FIXED_DT;
     if (r.sim.events.wallHit > 2) walls++;
     if (r.sim.events.respawned) resp++;
     if (r.sim.events.miniTurbo) M++;
   }
   const lap = r.progress.finished ? r.progress.finishTime / 2 : NaN;
-  sum += lap; W += walls; R += resp; O += offT;
-  console.log(`${id.padEnd(22)} lap ${lap.toFixed(1)}s  best ${r.progress.bestLap.toFixed(1)}  offroad ${offT.toFixed(1)}s slow ${slowT.toFixed(1)}s walls ${walls} respawns ${resp}`);
+  sum += lap; W += walls; R += resp; O += offT; D += driftT; C += cutT;
+  console.log(`${id.padEnd(22)} lap ${lap.toFixed(1)}s  best ${r.progress.bestLap.toFixed(1)}  offroad ${offT.toFixed(1)}s (+${cutT.toFixed(1)}s shortcut) drift ${driftT.toFixed(1)}s slow ${slowT.toFixed(1)}s walls ${walls} respawns ${resp}`);
   if (verbose) {
     console.log(' offroad @', [...off].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}m:${v.toFixed(1)}`).join(' '));
     console.log(' slow @', [...slow].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}m:${v.toFixed(1)}`).join(' '));
   }
 }
-console.log('sum of laps', sum.toFixed(1), 'walls', W, 'respawns', R, 'offroad', O.toFixed(0), 'miniTurbos', M);
+console.log('sum of laps', sum.toFixed(1), 'walls', W, 'respawns', R, 'offroad', O.toFixed(0), 'shortcut-dirt', C.toFixed(0), 'drift', D.toFixed(0), 'miniTurbos', M);

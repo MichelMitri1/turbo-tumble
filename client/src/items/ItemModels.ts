@@ -429,9 +429,136 @@ function octoRing(): Group {
   return g;
 }
 
+/** Phantom Sheet: a friendly floating sheet ghost with a wavy hem. */
+function phantomSheet(): Group {
+  const g = new Group();
+  const body = [
+    [0, 0.62],
+    [0.22, 0.58],
+    [0.36, 0.44],
+    [0.42, 0.2],
+    [0.44, -0.1],
+    [0.48, -0.32],
+  ].map(([x, y]) => new Vector2(x, y));
+  const sheet = mat('#eeeaff', { rough: 0.6, emissive: 0.25, double: true, opacity: 0.92 });
+  g.add(mesh(new LatheGeometry(body, 24), sheet));
+  // Scalloped hem.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    g.add(mesh(new SphereGeometry(0.14, 10, 8).scale(1, 0.8, 1), sheet, Math.cos(a) * 0.42, -0.36, Math.sin(a) * 0.42));
+  }
+  for (const sx of [-1, 1]) {
+    g.add(mesh(new SphereGeometry(0.08, 10, 8).scale(1, 1.4, 0.6), mat('#2a1f5c'), sx * 0.15, 0.24, 0.37));
+    g.add(mesh(new SphereGeometry(0.06, 8, 6).scale(1.6, 0.7, 0.6), mat('#ff9ad8', { opacity: 0.8 }), sx * 0.27, 0.08, 0.34));
+    // Little arms.
+    const arm = mesh(new SphereGeometry(0.1, 8, 6).scale(1.8, 0.7, 0.7), sheet, sx * 0.48, 0.02, 0.05);
+    arm.rotation.z = sx * -0.5;
+    g.add(arm);
+  }
+  g.add(mesh(new TorusGeometry(0.1, 0.03, 6, 14, Math.PI), mat('#2a1f5c'), 0, 0.08, 0.38));
+  return g;
+}
+
+/** Giant Gummy: a squishy gummy mushroom with sugar spots and an up-arrow badge. */
+function giantGummy(): Group {
+  const g = new Group();
+  const cap = mesh(new SphereGeometry(0.55, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.8, 1), mat('#ff4f8a', { rough: 0.15, emissive: 0.12, opacity: 0.92 }), 0, 0.05, 0);
+  g.add(cap);
+  g.add(mesh(new CylinderGeometry(0.55, 0.55, 0.06, 24), mat('#ffd6e6', { rough: 0.3 }), 0, 0.05, 0));
+  g.add(mesh(new CylinderGeometry(0.26, 0.3, 0.5, 18), mat('#fff3d6', { rough: 0.4 }), 0, -0.22, 0));
+  const spot = mat('#ffe14d', { rough: 0.3, emissive: 0.2 });
+  for (const [x, y, z, r] of [
+    [0, 0.47, 0, 0.13],
+    [0.33, 0.3, 0.2, 0.1],
+    [-0.32, 0.3, 0.22, 0.1],
+    [0.1, 0.3, -0.38, 0.1],
+    [-0.28, 0.22, -0.3, 0.08],
+  ] as const)
+    g.add(mesh(new SphereGeometry(r, 10, 8).scale(1, 0.45, 1), spot, x, y, z));
+  for (const sx of [-1, 1]) g.add(mesh(new SphereGeometry(0.045, 8, 6), mat('#3a1f2a'), sx * 0.09, -0.15, 0.27));
+  const arrow = new Shape();
+  arrow.moveTo(0, 0.2);
+  arrow.lineTo(0.16, 0.02);
+  arrow.lineTo(0.06, 0.02);
+  arrow.lineTo(0.06, -0.18);
+  arrow.lineTo(-0.06, -0.18);
+  arrow.lineTo(-0.06, 0.02);
+  arrow.lineTo(-0.16, 0.02);
+  arrow.closePath();
+  const badge = mesh(extrude(arrow, 0.05, 0.01), mat('#ffffff', { emissive: 0.6 }), 0, 0.28, 0.45);
+  badge.rotation.x = -0.45;
+  g.add(badge);
+  return g;
+}
+
+/** Sky Feather: a curved white plume with a golden quill. */
+function skyFeather(): Group {
+  const g = new Group();
+  const vane = new Shape();
+  vane.moveTo(0, -0.55);
+  vane.quadraticCurveTo(0.34, -0.2, 0.22, 0.25);
+  vane.quadraticCurveTo(0.12, 0.55, 0, 0.62);
+  vane.quadraticCurveTo(-0.16, 0.45, -0.2, 0.15);
+  vane.quadraticCurveTo(-0.22, -0.25, 0, -0.55);
+  const plume = mesh(extrude(vane, 0.06, 0.03), mat('#ffffff', { rough: 0.7, emissive: 0.15 }));
+  g.add(plume);
+  // Barb notches and a warm tip.
+  for (const [x, y, rz] of [
+    [0.22, 0.05, -0.6],
+    [-0.19, -0.12, 0.7],
+    [0.2, -0.28, -0.8],
+  ] as const) {
+    const notch = mesh(new BoxGeometry(0.16, 0.025, 0.09), mat('#e3e8ff'), x, y, 0);
+    notch.rotation.z = rz;
+    g.add(notch);
+  }
+  g.add(mesh(new SphereGeometry(0.13, 10, 8).scale(1, 1.4, 0.4), mat('#ffb52e', { emissive: 0.3 }), 0.02, 0.48, 0));
+  const quill = mesh(new CylinderGeometry(0.025, 0.012, 1.25, 8), mat('#ffc21a', { metal: 0.6, rough: 0.3 }), 0, -0.05, 0.04);
+  g.add(quill);
+  g.rotation.z = -0.35;
+  const wrap = new Group();
+  wrap.add(g);
+  return wrap;
+}
+
+/** Pickup carrier: a little cloud drone with a propeller and a tow cable (lifts fallen karts). */
+function pickupCarrier(): Group {
+  const g = new Group();
+  const cloud = mat('#ffffff', { rough: 0.85, emissive: 0.15 });
+  for (const [x, y, z, r] of [
+    [0, 0, 0, 0.62],
+    [0.55, -0.08, 0.05, 0.45],
+    [-0.55, -0.06, -0.05, 0.47],
+    [0.2, 0.22, -0.3, 0.42],
+    [-0.25, 0.18, 0.3, 0.4],
+    [0, -0.2, 0.42, 0.38],
+  ] as const)
+    g.add(mesh(new SphereGeometry(r, 14, 10), cloud, x, y, z));
+  for (const sx of [-1, 1]) g.add(mesh(new SphereGeometry(0.08, 8, 6).scale(1, 1.3, 0.6), mat('#1b1446'), sx * 0.2, 0.08, 0.62));
+  g.add(mesh(new TorusGeometry(0.1, 0.025, 6, 12, Math.PI).rotateZ(Math.PI), mat('#1b1446'), 0, -0.1, 0.64));
+  const rotor = new Group();
+  rotor.name = 'rotor';
+  rotor.position.y = 0.72;
+  rotor.add(mesh(new CylinderGeometry(0.05, 0.06, 0.25, 8), mat('#ff4f6a'), 0, -0.1, 0));
+  for (const a of [0, Math.PI / 2]) {
+    const blade = mesh(new BoxGeometry(1.5, 0.03, 0.14), mat('#ffd23f', { rough: 0.4 }));
+    blade.rotation.y = a;
+    rotor.add(blade);
+  }
+  g.add(rotor);
+  // Cable down to a hook ring that grabs the kart's roll bar.
+  const cable = mesh(new CylinderGeometry(0.025, 0.025, 1, 6), mat('#4a4466'), 0, -0.5, 0);
+  cable.name = 'cable';
+  g.add(cable);
+  const hook = mesh(new TorusGeometry(0.16, 0.045, 8, 16), mat('#c9ced8', { metal: 0.8, rough: 0.3 }), 0, -1.05, 0);
+  hook.name = 'hook';
+  g.add(hook);
+  return g;
+}
+
 // ------------------------------------------------------------------ registry
 
-export type ModelKey = ItemId | 'prizeBox' | 'decoyBox' | 'fireball' | 'rocketKart' | 'coinPickup';
+export type ModelKey = ItemId | 'prizeBox' | 'decoyBox' | 'fireball' | 'rocketKart' | 'coinPickup' | 'carrier';
 
 const BUILDERS: Record<ModelKey, () => Object3D> = {
   fizz: () => fizzBottle('#ff3b5c'),
@@ -457,12 +584,19 @@ const BUILDERS: Record<ModelKey, () => Object3D> = {
   octo: octoRing,
   coin: () => cluster(sparkCoin, 2, 0.28),
   quake: quakeBlock,
+  phantom: phantomSheet,
+  giant: giantGummy,
+  feather: skyFeather,
+  carrier: pickupCarrier,
   prizeBox: () => prizeBox(false),
   decoyBox: () => prizeBox(true),
   fireball: () => emberOrb(0.8),
   rocketKart: rocket,
   coinPickup: sparkCoin,
 };
+
+/** Every model key (shader warm-up builds one of each). */
+export const MODEL_KEYS = Object.keys(BUILDERS) as ModelKey[];
 
 const templates = new Map<ModelKey, Object3D>();
 

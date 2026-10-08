@@ -4,6 +4,8 @@ import { CHARACTERS, KART_BODIES } from '../config/roster';
 import { TRACKS } from '@shared/tracks/registry';
 import { CUPS } from '@shared/tracks/cups';
 import { el } from './dom';
+import { trackThumb } from './TrackThumbs';
+import { SPEED_CLASSES, type SpeedClass } from '@shared/race/SpeedClass';
 import { bindFullscreenButton } from './fullscreen';
 import { engineLabel, getEngineProfile } from '../audio/EngineProfiles';
 
@@ -20,7 +22,13 @@ export interface MenuChoice {
   items: boolean;
   trackId: string;
   cupId: string;
+  /** Field size including CPUs. */
+  racers: number;
+  speedClass: SpeedClass;
+  mirror: boolean;
 }
+
+const RACER_COUNTS = [4, 6, 8, 12] as const;
 
 const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }> = [
   { id: 'race', title: 'Single Race', blurb: 'One race against the CPU field', icon: '🏁' },
@@ -29,16 +37,18 @@ const MODES: Array<{ id: MenuMode; title: string; blurb: string; icon: string }>
   { id: 'online', title: 'Online', blurb: 'Room codes · or LAN on your Wi-Fi', icon: '🌐' },
 ];
 
-type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'engine' | 'difficulty' | 'laps' | 'items' | 'start' | 'controls';
+type RowId = 'mode' | 'players' | 'split' | 'track' | 'cup' | 'character' | 'kart' | 'engine' | 'difficulty' | 'racers' | 'cc' | 'mirror' | 'laps' | 'items' | 'start' | 'controls';
 const STORAGE_KEY = 'turbo-tumble.menu.v1';
 
-const DEFAULT_CHOICE: MenuChoice = { mode: 'race', players: 1, split: 'horizontal', character: 'bix', kart: 'comet', difficulty: 'normal', laps: 3, items: true, trackId: 'sunny-circuit', cupId: 'sunny-cup' };
+const DEFAULT_CHOICE: MenuChoice = { mode: 'race', players: 1, split: 'horizontal', character: 'bix', kart: 'comet', difficulty: 'normal', laps: 3, items: true, trackId: 'sunny-circuit', cupId: 'sunny-cup', racers: 12, speedClass: 150, mirror: false };
 
 function loadChoice(): MenuChoice {
   try {
     const c = { ...DEFAULT_CHOICE, ...(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<MenuChoice>) };
     if (!TRACKS.some((t) => t.id === c.trackId)) c.trackId = DEFAULT_CHOICE.trackId;
     if (!CUPS.some((x) => x.id === c.cupId)) c.cupId = DEFAULT_CHOICE.cupId;
+    if (!RACER_COUNTS.includes(c.racers as (typeof RACER_COUNTS)[number])) c.racers = DEFAULT_CHOICE.racers;
+    if (!SPEED_CLASSES.includes(c.speedClass)) c.speedClass = DEFAULT_CHOICE.speedClass;
     return c;
   } catch {
     return { ...DEFAULT_CHOICE };
@@ -55,6 +65,7 @@ export class MainMenu {
   private focus: RowId = 'start';
   private readonly rows = new Map<RowId, HTMLElement>();
   private readonly modeCards: HTMLElement[] = [];
+  private readonly thumbs = el('div', 'tt-menu__thumbs');
   open = false;
 
   constructor(
@@ -112,12 +123,27 @@ export class MainMenu {
       el('div', 'tt-menu__panel', [
         el('div', 'tt-logo tt-menu__logo', [el('div', 'tt-logo__top tt-display', 'TURBO'), el('div', 'tt-logo__bottom tt-display', 'TUMBLE')]),
         cards,
-        el('div', 'tt-menu__options', [option('players', 'Players'), option('split', 'Split'), option('track', 'Track'), option('cup', 'Cup'), option('character', 'Racer'), option('kart', 'Kart'), option('difficulty', 'CPU'), option('laps', 'Laps'), option('items', 'Items')]),
+        el('div', 'tt-menu__options', [
+          option('players', 'Players'),
+          option('split', 'Split'),
+          option('track', 'Track'),
+          option('cup', 'Cup'),
+          option('character', 'Racer'),
+          option('kart', 'Kart'),
+          option('difficulty', 'CPU'),
+          option('racers', 'Racers'),
+          option('cc', 'Class'),
+          option('mirror', 'Mirror'),
+          option('laps', 'Laps'),
+          option('items', 'Items'),
+        ]),
+
         start,
         controls,
         el('div', 'tt-menu__help', '↑↓ choose · ←→ change · Enter / Ⓐ select'),
       ]),
       el('div', 'tt-menu__corner', [fullscreen, arcade]),
+      this.thumbs,
     ]);
     parent.appendChild(this.root);
     this.render();
@@ -147,7 +173,8 @@ export class MainMenu {
     if (this.choice.mode !== 'timetrial' && this.choice.players === 2) rows.push('split');
     rows.push(this.choice.mode === 'grandprix' ? 'cup' : 'track');
     // Racer & kart are chosen in the garage (1P) or on the join screen (split-screen).
-    if (this.choice.mode !== 'timetrial') rows.push('difficulty');
+    if (this.choice.mode !== 'timetrial') rows.push('difficulty', 'racers');
+    if (this.choice.mode !== 'online') rows.push('cc', 'mirror');
     if (this.choice.mode !== 'grandprix') rows.push('laps');
     if (this.choice.mode !== 'timetrial') rows.push('items');
     rows.push('start', 'controls');
@@ -204,6 +231,15 @@ export class MainMenu {
       case 'laps':
         c.laps = Math.min(5, Math.max(1, c.laps + delta));
         break;
+      case 'racers':
+        c.racers = cycle(RACER_COUNTS, c.racers as (typeof RACER_COUNTS)[number]);
+        break;
+      case 'cc':
+        c.speedClass = cycle(SPEED_CLASSES, c.speedClass);
+        break;
+      case 'mirror':
+        c.mirror = !c.mirror;
+        break;
       case 'items':
         c.items = !c.items;
         break;
@@ -221,6 +257,25 @@ export class MainMenu {
       /* ignore */
     }
     this.onStart({ ...this.choice, players: this.choice.mode === 'timetrial' ? 1 : this.choice.players });
+  }
+
+  /** Postcards of the selected track (or the cup's four). */
+  private renderThumbs(): void {
+    const c = this.choice;
+    const ids = c.mode === 'grandprix' ? (CUPS.find((x) => x.id === c.cupId)?.tracks ?? []) : [c.trackId];
+    const key = `${ids.join(',')}|${c.mirror}`;
+    if (this.thumbs.dataset.key === key) return;
+    this.thumbs.dataset.key = key;
+    this.thumbs.classList.toggle('is-cup', ids.length > 1);
+    this.thumbs.classList.toggle('is-mirror', c.mirror);
+    this.thumbs.replaceChildren(
+      ...ids.map((id) => {
+        const img = el('img');
+        img.src = trackThumb(id);
+        img.alt = TRACKS.find((t) => t.id === id)?.name ?? id;
+        return el('figure', 'tt-menu__thumb', [img, el('figcaption', '', img.alt)]);
+      }),
+    );
   }
 
   private render(): void {
@@ -242,7 +297,11 @@ export class MainMenu {
       difficulty: DIFFICULTY[c.difficulty].label + (c.mode === 'online' ? ' (if you host)' : ''),
       laps: String(c.laps) + (c.mode === 'online' ? ' (if you host)' : ''),
       items: (c.items ? 'On' : 'Off') + (c.mode === 'online' ? ' (if you host)' : ''),
+      racers: `${c.racers} karts${c.mode === 'online' ? ' (if you host)' : ''}`,
+      cc: `${c.speedClass}cc${c.speedClass === 200 ? ' — hold on!' : ''}`,
+      mirror: c.mirror ? 'On — the world is flipped' : 'Off',
     };
+    this.renderThumbs();
     for (const [id, row] of this.rows) {
       row.classList.toggle('is-focused', id === this.focus);
       row.style.display = visible.has(id) ? '' : 'none';

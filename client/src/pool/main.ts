@@ -1,7 +1,7 @@
 import './styles.css';
-import { BOUNDS, DT, POCKETS, R, Sim, castCue, spotFree, HEAD_STRING_X, MAX_TIP, type BallRest, type ShotInput } from './physics';
+import { BOUNDS, DT, FOOT_SPOT_X, ON_TABLE, POCKETS, R, Sim, spotFree, HEAD_STRING_X, MAX_TIP, type BallRest, type ShotInput } from './physics';
 import type { Action, GameEvent, Group } from './engine';
-import { BALL_COLORS, Transform, ballColor, drawCue, randomOrientation, renderBall, renderTable, spin, type Quat } from './art';
+import { BALL_COLORS, Transform, ballColor, drawCue, hole, randomOrientation, renderBall, renderTable, spin, type Quat } from './art';
 import { LocalLink, type Aim, type GameLink } from './link';
 import type { View } from './view';
 import type { BotLevel } from './bots';
@@ -56,7 +56,7 @@ document.getElementById('game')!.innerHTML = `
 <div class="pl-shell">
   <canvas id="cv"></canvas>
   <div class="pl-topbar">
-    <a class="pl-chip" href="/">← Arcade</a>
+    <button class="pl-chip" id="arcade">← Arcade</button>
     <div class="pl-topbar__right"><button class="pl-chip" id="rules-btn">? Rules</button><button class="pl-chip" id="sound"></button><button class="pl-chip" id="fullscreen"></button></div>
   </div>
 
@@ -175,6 +175,11 @@ $('#rules-btn').addEventListener('click', () => $('#rules').classList.remove('hi
 $('#rules').addEventListener('click', (e) => {
   if ((e.target as HTMLElement).id === 'rules' || (e.target as HTMLElement).id === 'rules-close') $('#rules').classList.add('hidden');
 });
+// "← Arcade" never drops a game without asking.
+$('#arcade').addEventListener('click', () => {
+  if (link) openGameMenu(true);
+  else location.href = '/';
+});
 
 // ============================================================================ state
 
@@ -195,8 +200,15 @@ interface DBall {
   wz: number;
   canvas: HTMLCanvasElement;
   img: ImageData | null;
+  /** Render size / view the cached image was made for, and the orientation it shows. */
   key: string;
+  rq: Quat | null;
 }
+/** Ball images re-rendered this frame (the per-pixel shading is the CPU hot spot at dpr 2). */
+let renders = 0;
+const RENDER_BUDGET = 6;
+/** Re-render once a ball has turned more than ~3° since its cached image (cos of half the angle). */
+const TURN_DOT = Math.cos((3 * Math.PI) / 360);
 const dballs = new Map<number, DBall>();
 let replay: {
   sim: Sim;
@@ -207,6 +219,7 @@ let replay: {
   shot: ShotInput;
   by: string;
   cue: { x: number; y: number };
+  isBreak: boolean;
 } | null = null;
 const sinking: Array<{ id: number; x: number; y: number; px: number; py: number; t: number }> = [];
 // Aim state (mine).
@@ -221,21 +234,36 @@ let call = -1;
 let callAuto = -1;
 let oppAim: Aim | null = null;
 let oppShown: Aim | null = null;
-let strikeAnim = 0;
 let lastTurnKey = '';
-/** Whose shot the screen shows (follows the animation queue, not the latest state). */
-let shownCurrent = '';
+/**
+ * What the HUD shows: it follows the animation queue, not the latest state, so
+ * groups, potted balls and "game over" appear when the balls stop, not before.
+ */
+const hud = { current: '', groups: new Map<string, Group | null>(), over: false };
+/** Foul explanation: the ball hit first / the pocket scratched in, ringed in red for a moment. */
+let foulMark: { ball: number; pocket: number; t: number } | null = null;
+/** Last whole second the shot clock ticked on. */
+let lastTick = -1;
+/** Reconnecting after a dropped socket: input is off until the room is back. */
+let reconnecting = false;
+/** The sim-driven aim guide, recomputed only when the aim changes. */
+let guide: Guide | null = null;
 
 function startLocal(): void {
   settings.name = nameInput.value.trim() || 'Player';
   link?.dispose();
-  attach(new LocalLink({ name: settings.name, avatar: settings.avatar, level: settings.level }));
+  attach(new LocalLink({ name: settings.name, avatar: settings.avatar, level: settings.level, rules: { shotTime: 30 } }));
 }
 
 function attach(l: GameLink): void {
   link = l;
   view = null;
-  shownCurrent = '';
+  hud.current = '';
+  hud.groups.clear();
+  hud.over = false;
+  foulMark = null;
+  guide = null;
+  lastTurnKey = '';
   queue.length = 0;
   busy = false;
   replay = null;
@@ -260,7 +288,7 @@ function attach(l: GameLink): void {
 }
 
 function myTurn(): boolean {
-  return !!view && view.phase === 'aim' && view.current === view.you && !replay && !busy && !queue.length;
+  return !!view && view.phase === 'aim' && view.current === view.you && !replay && !busy && !queue.length && !reconnecting;
 }
 
 // ============================================================================ canvas
@@ -291,20 +319,20 @@ function syncBalls(rest: BallRest[]): void {
   for (const b of rest) {
     let d = dballs.get(b.id);
     if (!d) {
-      d = { id: b.id, x: b.x, y: b.y, q: randomOrientation(), on: b.pocket < 0, wx: 0, wy: 0, wz: 0, canvas: document.createElement('canvas'), img: null, key: '' };
+      d = { id: b.id, x: b.x, y: b.y, q: randomOrientation(), on: b.pocket === ON_TABLE, wx: 0, wy: 0, wz: 0, canvas: document.createElement('canvas'), img: null, key: '', rq: null };
       dballs.set(b.id, d);
     }
     d.x = b.x;
     d.y = b.y;
-    d.on = b.pocket < 0;
+    d.on = b.pocket === ON_TABLE;
     d.wx = d.wy = d.wz = 0;
   }
 }
 
-/** Cue ball position to aim from (ball in hand uses my placement). */
+/** Cue ball position to aim from (my ball in hand uses my placement). */
 function cuePos(): { x: number; y: number } | null {
   if (!view) return null;
-  if (view.ballInHand && cuePlace && (view.current === view.you || !link?.online)) return cuePlace;
+  if (view.ballInHand && cuePlace && view.current === view.you) return cuePlace;
   const c = dballs.get(0);
   return c && c.on ? { x: c.x, y: c.y } : null;
 }
@@ -329,19 +357,24 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
-  link?.tick(dt);
+  renders = 0;
+  // The local table (and the bot) waits while the intro or the in-game menu is up.
+  if (link && (link.online || (!introUp && $('#modal').classList.contains('hidden')))) link.tick(dt);
   if (!view) {
     drawIdle();
     return;
   }
   // Events: a shot blocks the queue until its replay has finished.
   while (!busy && !replay && queue.length) handle(queue.shift()!);
-  if (!replay && !busy && !queue.length) syncBalls(view.balls);
+  if (!replay && !busy && !queue.length) {
+    // Nothing left to show: the latest state is what's on screen.
+    syncBalls(view.balls);
+    syncHud();
+  }
   if (replay) stepReplay(dt);
   onTurnChange();
   // Charging with Space.
   if (charging) power = Math.min(1, power + dt / 1.3);
-  strikeAnim = Math.max(0, strikeAnim - dt);
   if (oppAim) {
     if (!oppShown) oppShown = { ...oppAim };
     const k = Math.min(1, dt * 12);
@@ -369,7 +402,7 @@ function onTurnChange(): void {
   call = -1;
   if (v.phase !== 'aim') return;
   const cue = v.balls.find((b) => b.id === 0)!;
-  cuePlace = v.ballInHand ? (spotOk(cue.x, cue.y) && cue.pocket < 0 ? { x: cue.x, y: cue.y } : defaultSpot()) : null;
+  cuePlace = v.ballInHand && v.current === v.you ? (spotOk(cue.x, cue.y) && cue.pocket === ON_TABLE ? { x: cue.x, y: cue.y } : defaultSpot()) : null;
   if (v.current === v.you) {
     spinX = spinY = 0;
     // Point at the nearest legal ball.
@@ -378,7 +411,7 @@ function onTurnChange(): void {
       let best: BallRest | null = null;
       let bd = Infinity;
       for (const b of v.balls) {
-        if (b.pocket >= 0 || !v.targets.includes(b.id)) continue;
+        if (b.pocket !== ON_TABLE || !v.targets.includes(b.id)) continue;
         const d = (b.x - from.x) ** 2 + (b.y - from.y) ** 2;
         if (d < bd) {
           bd = d;
@@ -416,13 +449,18 @@ function handle(ev: GameEvent): void {
   const v = view!;
   const me = v.you;
   const name = (id: string) => (id === me ? 'You' : (v.players.find((p) => p.id === id)?.name ?? '?'));
+  const has = (id: string) => (id === me ? 'have' : 'has');
   switch (ev.k) {
     case 'start':
       syncBalls(v.balls.map((b) => ({ ...b })));
-      banner(ev.breaker === me ? 'YOUR BREAK' : `${name(ev.breaker).toUpperCase()} BREAKS`);
+      for (const p of v.players) hud.groups.set(p.id, null);
+      hud.current = ev.breaker;
+      renderHud();
+      showIntro(ev.breaker, () => banner(ev.breaker === me ? 'YOUR BREAK' : `${name(ev.breaker).toUpperCase()} BREAKS`));
       break;
     case 'turn':
-      shownCurrent = ev.player;
+      hud.current = ev.player;
+      lastTick = -1;
       renderHud();
       if (ev.player === me) {
         audio.turn();
@@ -435,35 +473,49 @@ function handle(ev: GameEvent): void {
       sim.shoot(ev.shot);
       const cue = ev.start.find((b) => b.id === 0)!;
       const mine = ev.by === me;
-      replay = { sim, acc: 0, evi: 0, pre: mine ? 0 : 0.65, preTotal: 0.65, shot: ev.shot, by: ev.by, cue: { x: cue.x, y: cue.y } };
-      if (mine) {
-        audio.cue(ev.shot.power);
-        if (v.isBreak || ev.shot.power > 0.85) audio.break();
-      }
+      // Everyone gets the pull-back and strike; your own is just quicker.
+      const pre = mine ? 0.25 : 0.65;
+      const racked = ev.start.filter((b) => b.id && b.pocket === ON_TABLE);
+      const isBreak = racked.length === 15 && racked.every((b) => b.x > FOOT_SPOT_X - 0.01 && b.x < FOOT_SPOT_X + 0.22 && Math.abs(b.y) < 0.13);
+      replay = { sim, acc: 0, evi: 0, pre, preTotal: pre, shot: ev.shot, by: ev.by, cue: { x: cue.x, y: cue.y }, isBreak };
       cuePlace = null;
+      foulMark = null;
       break;
     }
     case 'result': {
+      if (ev.assigned) {
+        const by = ev.by;
+        hud.groups.set(by, ev.assigned);
+        hud.groups.set(v.players.find((p) => p.id !== by)?.id ?? '', ev.assigned === 'solids' ? 'stripes' : 'solids');
+      }
+      renderHud();
       if (ev.foul) {
         audio.foul();
         stamp('FOUL');
-        toast(`${esc(ev.foul)} ${ev.by === me ? `${esc(name(otherId()))} has` : 'You have'} ball in hand.`, 'error');
+        const wrongBall = /first$/.test(ev.foul) ? ev.firstHit : -1;
+        foulMark = { ball: wrongBall, pocket: ev.scratch, t: 0 };
+        const other = v.players.find((p) => p.id !== ev.by)?.id ?? '';
+        toast(`${ev.by === me ? 'You' : esc(name(ev.by))} ${esc(ev.foul)} — ${esc(name(other))} ${has(other)} ball in hand`, 'error');
       } else if (ev.assigned) {
-        const myGroup = v.players.find((p) => p.id === me)?.group;
+        const myGroup = hud.groups.get(me);
         banner(`YOU ARE ${(myGroup ?? ev.assigned).toUpperCase()}`);
       } else if (ev.respot8) toast('The 8-ball went down on the break — it\'s back on the spot.');
       else if (!ev.keep && ev.by === me) toast('No ball potted.', 'dim');
       break;
     }
-    case 'timeout':
+    case 'timeout': {
       audio.foul();
-      toast(`${esc(name(ev.by))} ran out of time — ball in hand!`, 'error');
+      const other = v.players.find((p) => p.id !== ev.by)?.id ?? '';
+      toast(`${esc(name(ev.by))} ran out of time — ${esc(name(other))} ${has(other)} ball in hand`, 'error');
       break;
+    }
     case 'left':
       toast(`${esc(name(ev.by))} left the table.`, 'error');
       break;
     case 'over': {
       const won = ev.winner === me;
+      hud.over = true;
+      renderHud();
       busy = true;
       setTimeout(() => {
         busy = false;
@@ -474,33 +526,37 @@ function handle(ev: GameEvent): void {
   }
 }
 
-function otherId(): string {
-  return view!.players.find((p) => p.id !== view!.you)?.id ?? '';
-}
-
 function stepReplay(dt: number): void {
   const r = replay!;
   if (r.pre > 0) {
     r.pre -= dt;
-    if (r.pre <= 0) audio.cue(r.shot.power);
+    if (r.pre <= 0) {
+      audio.cue(r.shot.power);
+      if (r.isBreak) audio.break();
+    }
     return;
   }
   r.acc += dt;
   const sim = r.sim;
+  const t0 = sim.t;
   while (r.acc >= DT && sim.moving) {
     sim.step();
     r.acc -= DT;
   }
-  // Sounds + pockets.
+  // Sounds + pockets, scheduled at their sim-time offset within this frame.
   for (; r.evi < sim.events.length; r.evi++) {
     const e = sim.events[r.evi]!;
-    if (e.k === 'ball') audio.click(e.speed);
-    else if (e.k === 'cushion') audio.cushion(e.speed);
-    else {
-      audio.pocket();
+    const delay = Math.max(0, e.t - t0);
+    if (e.k === 'ball') audio.click(e.speed, delay);
+    else if (e.k === 'cushion') {
+      if (e.jaw) audio.rattle(e.speed, delay);
+      else audio.cushion(e.speed, delay);
+    } else if (e.k === 'pocket') {
+      audio.pocket(delay);
       const d = dballs.get(e.a);
-      const p = POCKETS[e.pocket]!;
-      if (d) sinking.push({ id: e.a, x: d.x, y: d.y, px: p.x, py: p.y, t: 0 });
+      const h = hole(POCKETS[e.pocket]!);
+      if (d) sinking.push({ id: e.a, x: d.x, y: d.y, px: h.x, py: h.y, t: 0 });
+      renderHud();
     }
   }
   for (const b of sim.balls) {
@@ -508,7 +564,7 @@ function stepReplay(dt: number): void {
     if (!d) continue;
     d.x = b.x;
     d.y = b.y;
-    d.on = b.pocket < 0;
+    d.on = b.pocket === ON_TABLE;
     d.wx = b.wx;
     d.wy = b.wy;
     d.wz = b.wz;
@@ -537,37 +593,64 @@ function draw(dt: number): void {
   const rpx = R * s;
   const mine = myTurn();
   // Kitchen highlight while placing the cue for the break.
-  if (v.ballInHand && v.kitchen && v.phase === 'aim' && !replay) {
+  if (v.ballInHand && v.kitchen && v.phase === 'aim' && !replay && mine) {
     const a = [T.x(-BOUNDS.HL, -BOUNDS.HW), T.y(-BOUNDS.HL, -BOUNDS.HW)];
     const b = [T.x(HEAD_STRING_X, BOUNDS.HW), T.y(HEAD_STRING_X, BOUNDS.HW)];
+    g.save();
+    // Not over the pocket holes.
+    g.beginPath();
+    g.rect(0, 0, cv.width, cv.height);
+    for (const p of POCKETS) {
+      const h = hole(p);
+      g.moveTo(T.x(h.x, h.y) + h.r * s, T.y(h.x, h.y));
+      g.arc(T.x(h.x, h.y), T.y(h.x, h.y), h.r * s, 0, Math.PI * 2);
+    }
+    g.clip('evenodd');
     g.fillStyle = 'rgba(255,255,255,0.05)';
     g.fillRect(Math.min(a[0]!, b[0]!), Math.min(a[1]!, b[1]!), Math.abs(b[0]! - a[0]!), Math.abs(b[1]! - a[1]!));
+    g.restore();
   }
-  // Pocket to call for the 8.
-  const callingEight = v.onEight && v.phase === 'aim' && !replay;
+  // Pocket to call for the 8: dashed = the guide's suggestion, solid + "8" badge = called (confirmed by a tap).
+  const callingEight = v.onEight && v.phase === 'aim' && !replay && mine;
   if (callingEight) {
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
     POCKETS.forEach((p, i) => {
-      const chosen = i === (call >= 0 ? call : callAuto);
-      g.strokeStyle = chosen ? `rgba(255,214,64,${0.7 + pulse * 0.3})` : `rgba(255,255,255,${0.15 + pulse * 0.15})`;
-      g.lineWidth = chosen ? 4 : 2;
+      const h = hole(p);
+      const hx = T.x(h.x, h.y);
+      const hy = T.y(h.x, h.y);
+      const called = i === call;
+      const suggested = call < 0 && i === callAuto;
+      g.strokeStyle = called ? '#ffd640' : suggested ? `rgba(255,214,64,${0.55 + pulse * 0.4})` : `rgba(255,255,255,${0.15 + pulse * 0.15})`;
+      g.lineWidth = called ? 4 : suggested ? 3 : 2;
+      if (suggested) g.setLineDash([6, 5]);
       g.beginPath();
-      g.arc(T.x(p.x, p.y), T.y(p.x, p.y), p.r * s * 1.05, 0, Math.PI * 2);
+      g.arc(hx, hy, h.r * s + 3, 0, Math.PI * 2);
       g.stroke();
-      if (chosen) {
-        g.fillStyle = '#ffd640';
-        g.font = `bold ${Math.round(14 + s * 0.02)}px 'Lilita One', sans-serif`;
+      g.setLineDash([]);
+      if (called) {
+        const br = Math.max(9, s * 0.02);
+        g.fillStyle = '#121214';
+        g.strokeStyle = '#ffd640';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(hx, hy, br, 0, Math.PI * 2);
+        g.fill();
+        g.stroke();
+        g.fillStyle = '#fff';
+        g.font = `${Math.round(br * 1.3)}px 'Lilita One', sans-serif`;
         g.textAlign = 'center';
-        g.fillText('8', T.x(p.x, p.y), T.y(p.x, p.y) + 5);
+        g.textBaseline = 'middle';
+        g.fillText('8', hx, hy + 1);
+        g.textBaseline = 'alphabetic';
       }
     });
   }
   // Ball spin integration (visual orientation).
   for (const d of dballs.values()) if (d.on && (d.wx || d.wy || d.wz)) d.q = spin(d.q, d.wx, d.wy, d.wz, dt);
-  // Ball-in-hand: show the placed cue ball.
+  // Ball-in-hand: show my placed cue ball (or the opponent's live placement online).
   const cp = cuePos();
   const cueD = dballs.get(0);
-  if (cueD && cp && v.ballInHand && !replay) {
+  if (cueD && cp && v.ballInHand && !replay && mine) {
     cueD.x = cp.x;
     cueD.y = cp.y;
     cueD.on = true;
@@ -577,6 +660,8 @@ function draw(dt: number): void {
     cueD.y = oppShown.cue.y;
     cueD.on = true;
   }
+  // Where the stick and guides start: wherever the cue ball is drawn this frame (my placement, or the opponent's live one).
+  const cueAt = cueD && cueD.on ? { x: cueD.x, y: cueD.y } : cp;
   // Shadows.
   g.fillStyle = 'rgba(0,0,0,0.32)';
   for (const d of dballs.values()) {
@@ -588,19 +673,48 @@ function draw(dt: number): void {
   // Balls.
   for (const d of dballs.values()) {
     if (!d.on) continue;
-    drawBall(d, T.x(d.x, d.y), T.y(d.x, d.y), rpx, 1);
+    drawBall(d, T.x(d.x, d.y), T.y(d.x, d.y), 1, 1);
   }
-  // Balls dropping into pockets.
+  // Balls dropping into pockets: roll on to the hole's centre, shrink and darken into it.
   for (let i = sinking.length - 1; i >= 0; i--) {
     const k = sinking[i]!;
     k.t += dt;
     const f = Math.min(1, k.t / 0.25);
     const d = dballs.get(k.id);
     if (d && f < 1) {
-      const x = k.x + (k.px - k.x) * f;
-      const y = k.y + (k.py - k.y) * f;
-      drawBall(d, T.x(x, y), T.y(x, y), rpx * (1 - f * 0.55), 1 - f);
+      const e = 1 - (1 - f) * (1 - f);
+      const x = k.x + (k.px - k.x) * e;
+      const y = k.y + (k.py - k.y) * e;
+      const sc = 1 - f * f * 0.6;
+      drawBall(d, T.x(x, y), T.y(x, y), sc, 1 - f * f);
+      g.fillStyle = `rgba(0,0,0,${f * 0.7})`;
+      g.beginPath();
+      g.arc(T.x(x, y), T.y(x, y), rpx * sc, 0, Math.PI * 2);
+      g.fill();
     } else sinking.splice(i, 1);
+  }
+  // Foul explanation: ring the ball hit first / the pocket the cue ball dropped in.
+  if (foulMark) {
+    foulMark.t += dt;
+    const f = foulMark.t;
+    if (f > 2.4) foulMark = null;
+    else {
+      const pulse = 0.8 + 0.2 * Math.sin(f * 14);
+      g.strokeStyle = `rgba(255,50,50,${Math.min(1, 1.6 - f * 0.6) * pulse})`;
+      g.lineWidth = 4;
+      const ring = (x: number, y: number, r: number) => {
+        g.beginPath();
+        g.arc(T.x(x, y), T.y(x, y), r, 0, Math.PI * 2);
+        g.stroke();
+      };
+      const b = dballs.get(foulMark.ball);
+      if (b && b.on) ring(b.x, b.y, rpx * 1.7 + f * 4);
+      const pk = POCKETS[foulMark.pocket];
+      if (pk) {
+        const h = hole(pk);
+        ring(h.x, h.y, h.r * s + 4 + f * 4);
+      }
+    }
   }
   // Ball-in-hand marker.
   if (cueD && v.ballInHand && mine && cp) {
@@ -613,32 +727,58 @@ function draw(dt: number): void {
     g.stroke();
     g.setLineDash([]);
   }
-  // Guides + cue.
+  // Guides + cue (the tip sits where the spin is set).
   if (v.phase === 'aim' && !replay && !busy && !queue.length) {
-    if (mine && cp) {
-      drawGuides(cp, aimDx, aimDy);
-      const back = rpx + 4 + power * 0.28 * s + (strikeAnim > 0 ? -strikeAnim * 40 : 0);
-      const [sdx, sdy] = screenDir(aimDx, aimDy);
-      drawCue(g, T.x(cp.x, cp.y) - sdx * back, T.y(cp.x, cp.y) - sdy * back, sdx, sdy, s);
-    } else if (!mine && oppShown && cp) {
+    if (mine && cueAt) {
+      drawGuides(cueAt, aimDx, aimDy);
+      // The stick is put down while the cue ball is being moved, and comes back behind it.
+      if (dragging !== 'cue') {
+        const back = rpx + 4 + power * PULL * s;
+        const [sdx, sdy] = screenDir(aimDx, aimDy);
+        const [ox, oy] = tipOffset(sdx, sdy, spinX, spinY, rpx);
+        drawCue(g, T.x(cueAt.x, cueAt.y) - sdx * back + ox, T.y(cueAt.x, cueAt.y) - sdy * back + oy, sdx, sdy, s);
+        drawTip(T.x(cueAt.x, cueAt.y) + ox, T.y(cueAt.x, cueAt.y) + oy, rpx, spinX || spinY ? 1 : 0);
+      }
+    } else if (!mine && oppShown && cueAt) {
       const [sdx, sdy] = screenDir(oppShown.dx, oppShown.dy);
-      const back = rpx + 4 + oppShown.power * 0.28 * s;
-      drawCue(g, T.x(cp.x, cp.y) - sdx * back, T.y(cp.x, cp.y) - sdy * back, sdx, sdy, s, 0.9);
+      const back = rpx + 4 + oppShown.power * PULL * s;
+      const [ox, oy] = tipOffset(sdx, sdy, oppShown.sx, oppShown.sy, rpx);
+      drawCue(g, T.x(cueAt.x, cueAt.y) - sdx * back + ox, T.y(cueAt.x, cueAt.y) - sdy * back + oy, sdx, sdy, s, 0.9);
     }
   }
-  // Opponent's stroke before their shot plays.
+  // The stroke before a shot plays: draw back, then strike.
   if (replay && replay.pre > 0) {
     const f = 1 - replay.pre / replay.preTotal;
     const pull = f < 0.75 ? (f / 0.75) * replay.shot.power : replay.shot.power * (1 - (f - 0.75) / 0.25) - 0.05;
     const [sdx, sdy] = screenDir(replay.shot.dx, replay.shot.dy);
-    const back = rpx + 4 + pull * 0.28 * s;
+    const back = rpx + 4 + Math.max(0.04, pull) * PULL * s;
+    const [ox, oy] = tipOffset(sdx, sdy, replay.shot.sx, replay.shot.sy, rpx);
     const c = replay.cue;
-    drawCue(g, T.x(c.x, c.y) - sdx * back, T.y(c.x, c.y) - sdy * back, sdx, sdy, s);
+    drawCue(g, T.x(c.x, c.y) - sdx * back + ox, T.y(c.x, c.y) - sdy * back + oy, sdx, sdy, s);
   } else if (replay && replay.sim.t < 0.15) {
     const [sdx, sdy] = screenDir(replay.shot.dx, replay.shot.dy);
+    const [ox, oy] = tipOffset(sdx, sdy, replay.shot.sx, replay.shot.sy, rpx);
     const c = replay.cue;
-    drawCue(g, T.x(c.x, c.y) - sdx * (rpx + 2), T.y(c.x, c.y) - sdy * (rpx + 2), sdx, sdy, s, 1 - replay.sim.t / 0.15);
+    drawCue(g, T.x(c.x, c.y) - sdx * (rpx + 2) + ox, T.y(c.x, c.y) - sdy * (rpx + 2) + oy, sdx, sdy, s, 1 - replay.sim.t / 0.15);
   }
+}
+
+/** How far (table metres per unit power) the stick draws back. */
+const PULL = 0.2;
+
+/** Where the tip meets the ball on screen: side spin shifts it across the aim line, follow/draw up/down the screen (as on the spin widget). */
+function tipOffset(sdx: number, sdy: number, sx: number, sy: number, rpx: number): [number, number] {
+  const k = rpx * 0.9;
+  return [-sdy * sx * k, sdx * sx * k - sy * k * (T.rot ? 0 : 1)];
+}
+
+/** Chalk mark on the cue ball where the tip strikes. */
+function drawTip(x: number, y: number, rpx: number, on: number): void {
+  if (!on) return;
+  g.fillStyle = 'rgba(70,150,220,0.9)';
+  g.beginPath();
+  g.arc(x, y, Math.max(2, rpx * 0.22), 0, Math.PI * 2);
+  g.fill();
 }
 
 function screenDir(dx: number, dy: number): [number, number] {
@@ -648,92 +788,235 @@ function screenDir(dx: number, dy: number): [number, number] {
   return [x / l, y / l];
 }
 
-function drawBall(d: DBall, sx: number, sy: number, rpx: number, alpha: number): void {
-  const r = rpx * dpr;
-  const key = `${d.q.map((x) => x.toFixed(3)).join(',')}:${r.toFixed(1)}:${T.rot}`;
-  if (key !== d.key) {
+/**
+ * Balls are shaded per pixel into a cached image that is only redrawn when the
+ * ball has visibly turned (and at most RENDER_BUDGET per frame); `scale` shrinks
+ * the cached image (a ball dropping into a pocket) without re-rendering it.
+ */
+function drawBall(d: DBall, sx: number, sy: number, scale: number, alpha: number): void {
+  const r = R * T.s * dpr;
+  const key = `${r.toFixed(1)}:${T.rot}`;
+  const q = d.q;
+  const rq = d.rq;
+  const turned = !rq || Math.abs(q[0] * rq[0] + q[1] * rq[1] + q[2] * rq[2] + q[3] * rq[3]) < TURN_DOT;
+  if (key !== d.key || (turned && renders < RENDER_BUDGET)) {
+    renders++;
     d.key = key;
-    d.img = renderBall(d.id, d.q, r, T, d.img ?? undefined);
+    d.rq = [q[0], q[1], q[2], q[3]];
+    d.img = renderBall(d.id, q, r, T, d.img ?? undefined);
     d.canvas.width = d.img.width;
     d.canvas.height = d.img.height;
     d.canvas.getContext('2d')!.putImageData(d.img, 0, 0);
   }
-  const size = d.canvas.width / dpr;
+  const size = (d.canvas.width / dpr) * scale;
   g.globalAlpha = alpha;
   g.drawImage(d.canvas, sx - size / 2, sy - size / 2, size, size);
   g.globalAlpha = 1;
 }
 
+interface Guide {
+  key: string;
+  /** Cue-ball path up to contact, and after it (through its first cushion).  */
+  pre: Array<[number, number]>;
+  post: Array<[number, number]>;
+  /** Object-ball path to its first cushion / pocket. */
+  obj: Array<[number, number]>;
+  /** Where the cue ball is at contact (the ghost ball), or at the rail if it hits nothing. */
+  ghost: { x: number; y: number };
+  hit: number;
+  /** Object-ball direction at contact (for the 8-ball call) and its pocket if it drops. */
+  nx: number;
+  ny: number;
+  potted: number;
+}
+
+/**
+ * Miniclip-style guide: simulate the shot from the aim (with the current spin
+ * and power, so squirt, swerve and english are all in) and keep the cue ball's
+ * path through its first cushion after contact plus the object ball's line to
+ * its first cushion or pocket.
+ */
+function computeGuide(c: { x: number; y: number }, dx: number, dy: number, pw: number, sx: number, sy: number): Guide {
+  const balls = restForAim();
+  const sim = new Sim(balls);
+  sim.shoot({ dx, dy, power: pw, sx, sy });
+  const cue = sim.ball(0)!;
+  const pre: Array<[number, number]> = [[c.x, c.y]];
+  const post: Array<[number, number]> = [];
+  const obj: Array<[number, number]> = [];
+  let ghost = { x: c.x, y: c.y };
+  let hit = -1;
+  let nx = 0;
+  let ny = 0;
+  let potted = -1;
+  let cueRails = 0;
+  let objDone = false;
+  let evi = 0;
+  let ob: { x: number; y: number } | null = null;
+  const maxSteps = settings.guides ? 700 : 450;
+  for (let i = 0; i < maxSteps && sim.moving; i++) {
+    sim.step();
+    for (; evi < sim.events.length; evi++) {
+      const e = sim.events[evi]!;
+      if (e.k === 'ball' && hit < 0 && (e.a === 0 || e.b === 0)) {
+        hit = e.a === 0 ? e.b : e.a;
+        ghost = { x: cue.x, y: cue.y };
+        ob = sim.ball(hit)!;
+        const l = Math.hypot(ob.x - cue.x, ob.y - cue.y) || 1;
+        nx = (ob.x - cue.x) / l;
+        ny = (ob.y - cue.y) / l;
+        obj.push([ob.x, ob.y]);
+        post.push([cue.x, cue.y]);
+      } else if (e.k === 'cushion' && e.a === 0) {
+        if (hit < 0) {
+          ghost = { x: cue.x, y: cue.y };
+          pre.push([cue.x, cue.y]);
+          i = maxSteps;
+        } else cueRails++;
+      } else if (e.k === 'ball' && hit >= 0 && (e.a === 0 || e.b === 0)) {
+        // The cue ball's line ends at its next ball.
+        cueRails = 2;
+        post.push([cue.x, cue.y]);
+      } else if (ob && !objDone && ((e.k === 'ball' && (e.a === hit || e.b === hit) && e.a !== 0 && e.b !== 0) || ((e.k === 'cushion' || e.k === 'pocket') && e.a === hit))) {
+        // The object ball's line ends at its first cushion, pocket or ball.
+        if (e.k === 'pocket') potted = e.pocket;
+        obj.push([ob.x, ob.y]);
+        objDone = true;
+      }
+    }
+    if (i % 4) continue;
+    if (hit < 0) pre.push([cue.x, cue.y]);
+    else if (cueRails < 2) post.push([cue.x, cue.y]);
+    if (ob && !objDone) obj.push([ob.x, ob.y]);
+    if (hit >= 0 && cueRails >= 2 && objDone) break;
+  }
+  return { key: '', pre, post, obj, ghost, hit, nx, ny, potted };
+}
+
 function drawGuides(c: { x: number; y: number }, dx: number, dy: number): void {
   const v = view!;
-  const balls = restForAim();
-  const hit = castCue(balls, c.x, c.y, dx, dy);
+  const pw = Math.max(0.45, power);
+  const key = [c.x, c.y, dx, dy, pw, spinX, spinY, v.seq, settings.guides].map((x) => (typeof x === 'number' ? x.toFixed(4) : String(x))).join(':');
+  if (!guide || guide.key !== key) {
+    guide = computeGuide(c, dx, dy, pw, spinX, spinY);
+    guide.key = key;
+  }
+  const gd = guide;
   const s = T.s;
-  const px = c.x + dx * hit.t;
-  const py = c.y + dy * hit.t;
+  const poly = (pts: Array<[number, number]>, maxLen: number) => {
+    if (pts.length < 2) return;
+    g.beginPath();
+    g.moveTo(T.x(pts[0]![0], pts[0]![1]), T.y(pts[0]![0], pts[0]![1]));
+    let len = 0;
+    for (let i = 1; i < pts.length && len < maxLen; i++) {
+      len += Math.hypot(pts[i]![0] - pts[i - 1]![0], pts[i]![1] - pts[i - 1]![1]);
+      g.lineTo(T.x(pts[i]![0], pts[i]![1]), T.y(pts[i]![0], pts[i]![1]));
+    }
+    g.stroke();
+  };
+  const long = settings.guides;
+  g.lineCap = 'round';
   g.strokeStyle = 'rgba(255,255,255,0.85)';
   g.lineWidth = 1.6;
-  g.beginPath();
-  g.moveTo(T.x(c.x, c.y), T.y(c.x, c.y));
-  g.lineTo(T.x(px, py), T.y(px, py));
-  g.stroke();
+  poly(gd.pre, 9);
   // Ghost ball.
-  const legal = hit.ball < 0 || v.targets.includes(hit.ball);
+  const legal = gd.hit < 0 || v.targets.includes(gd.hit);
+  const gx = T.x(gd.ghost.x, gd.ghost.y);
+  const gy = T.y(gd.ghost.x, gd.ghost.y);
   g.strokeStyle = legal ? 'rgba(255,255,255,0.9)' : 'rgba(255,70,70,0.95)';
   g.lineWidth = 1.8;
   g.beginPath();
-  g.arc(T.x(px, py), T.y(px, py), R * s, 0, Math.PI * 2);
+  g.arc(gx, gy, R * s, 0, Math.PI * 2);
   g.stroke();
   if (!legal) {
     const k = R * s * 0.6;
     g.beginPath();
-    g.moveTo(T.x(px, py) - k, T.y(px, py) - k);
-    g.lineTo(T.x(px, py) + k, T.y(px, py) + k);
-    g.moveTo(T.x(px, py) + k, T.y(px, py) - k);
-    g.lineTo(T.x(px, py) - k, T.y(px, py) + k);
+    g.moveTo(gx - k, gy - k);
+    g.lineTo(gx + k, gy + k);
+    g.moveTo(gx + k, gy - k);
+    g.lineTo(gx - k, gy + k);
     g.stroke();
   }
   callAuto = -1;
-  if (hit.ball >= 0) {
-    const b = balls.find((x) => x.id === hit.ball)!;
-    const cosA = dx * hit.nx + dy * hit.ny;
-    const len = (settings.guides ? 0.5 : 0.18) * Math.max(0.25, cosA);
-    // Object ball path.
-    g.strokeStyle = 'rgba(255,255,255,0.75)';
-    g.beginPath();
-    g.moveTo(T.x(b.x, b.y), T.y(b.x, b.y));
-    g.lineTo(T.x(b.x + hit.nx * len, b.y + hit.ny * len), T.y(b.x + hit.nx * len, b.y + hit.ny * len));
-    g.stroke();
-    // Cue ball deflection (tangent line).
-    const tx = dx - cosA * hit.nx;
-    const ty = dy - cosA * hit.ny;
-    const tl = Math.hypot(tx, ty);
-    if (tl > 0.02) {
-      const l2 = (settings.guides ? 0.3 : 0.12) * tl;
-      g.strokeStyle = 'rgba(255,255,255,0.4)';
-      g.setLineDash([4, 4]);
-      g.beginPath();
-      g.moveTo(T.x(px, py), T.y(px, py));
-      g.lineTo(T.x(px + (tx / tl) * l2, py + (ty / tl) * l2), T.y(px + (tx / tl) * l2, py + (ty / tl) * l2));
-      g.stroke();
-      g.setLineDash([]);
-    }
+  if (gd.hit >= 0) {
+    // Object ball to its first cushion / pocket.
+    g.strokeStyle = gd.potted >= 0 ? 'rgba(255,214,64,0.9)' : 'rgba(255,255,255,0.75)';
+    g.lineWidth = 1.6;
+    poly(gd.obj, long ? 9 : 0.22);
+    // Cue ball after contact, dashed, through its first cushion.
+    g.strokeStyle = 'rgba(255,255,255,0.45)';
+    g.setLineDash([4, 4]);
+    poly(gd.post, long ? 0.9 : 0.16);
+    g.setLineDash([]);
+    // Spin arrow at the ghost ball: follow / draw along the aim, side spin as a curl.
+    if (spinY || spinX) drawSpinArrow(gx, gy, R * s);
     // Suggest the pocket the 8 is heading for.
-    if (hit.ball === 8 && v.onEight) {
-      let best = -1;
-      let bd = -Infinity;
-      POCKETS.forEach((p, i) => {
-        const ox = p.x - b.x;
-        const oy = p.y - b.y;
-        const l = Math.hypot(ox, oy);
-        const d = (ox * hit.nx + oy * hit.ny) / l;
-        if (d > bd) {
-          bd = d;
-          best = i;
-        }
-      });
-      callAuto = best;
+    if (gd.hit === 8 && v.onEight) {
+      if (gd.potted >= 0) callAuto = gd.potted;
+      else {
+        const b = gd.obj[0]!;
+        let best = -1;
+        let bd = -Infinity;
+        POCKETS.forEach((p, i) => {
+          const ox = p.x - b[0];
+          const oy = p.y - b[1];
+          const l = Math.hypot(ox, oy);
+          const d = (ox * gd.nx + oy * gd.ny) / l;
+          if (d > bd) {
+            bd = d;
+            best = i;
+          }
+        });
+        callAuto = best;
+      }
     }
+  }
+  g.lineCap = 'butt';
+}
+
+function drawSpinArrow(gx: number, gy: number, r: number): void {
+  const [sdx, sdy] = screenDir(aimDx, aimDy);
+  g.strokeStyle = 'rgba(120,200,255,0.95)';
+  g.fillStyle = 'rgba(120,200,255,0.95)';
+  g.lineWidth = 2;
+  if (Math.abs(spinY) > 0.05) {
+    // Follow pushes on through the object ball, draw comes back.
+    const dir = spinY > 0 ? 1 : -1;
+    const len = r * (1.2 + Math.abs(spinY) * 2.5);
+    const x0 = gx + sdx * r * 1.15 * dir;
+    const y0 = gy + sdy * r * 1.15 * dir;
+    const x1 = x0 + sdx * len * dir;
+    const y1 = y0 + sdy * len * dir;
+    g.beginPath();
+    g.moveTo(x0, y0);
+    g.lineTo(x1, y1);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(x1 + sdx * 5 * dir, y1 + sdy * 5 * dir);
+    g.lineTo(x1 - sdy * 4, y1 + sdx * 4);
+    g.lineTo(x1 + sdy * 4, y1 - sdx * 4);
+    g.closePath();
+    g.fill();
+  }
+  if (Math.abs(spinX) > 0.05) {
+    // Side spin: a curl around the ghost ball in the direction it turns (right english = counter-clockwise from above).
+    const ccw = (spinX > 0) !== T.rot;
+    const a0 = Math.atan2(sdy, sdx) + Math.PI / 2;
+    const sweep = (0.9 + Math.abs(spinX)) * (ccw ? 1 : -1);
+    g.beginPath();
+    g.arc(gx, gy, r * 1.55, a0, a0 + sweep, !ccw);
+    g.stroke();
+    const ae = a0 + sweep;
+    const ex = gx + Math.cos(ae) * r * 1.55;
+    const ey = gy + Math.sin(ae) * r * 1.55;
+    const tx = -Math.sin(ae) * (ccw ? 1 : -1);
+    const ty = Math.cos(ae) * (ccw ? 1 : -1);
+    g.beginPath();
+    g.moveTo(ex + tx * 5, ey + ty * 5);
+    g.lineTo(ex - ty * 4, ey + tx * 4);
+    g.lineTo(ex + ty * 4, ey - tx * 4);
+    g.closePath();
+    g.fill();
   }
 }
 
@@ -752,10 +1035,14 @@ cv.addEventListener('pointerdown', (e) => {
     return;
   }
   if (v.onEight) {
-    const i = POCKETS.findIndex((p) => Math.hypot(w.x - p.x, w.y - p.y) < p.r + 0.05);
+    const i = POCKETS.findIndex((p) => {
+      const h = hole(p);
+      return Math.hypot(w.x - h.x, w.y - h.y) < h.r + 0.04;
+    });
     if (i >= 0) {
       call = i;
       audio.ui();
+      toast('8-ball called — pull the power bar to shoot', 'dim', 1500);
       return;
     }
   }
@@ -874,6 +1161,13 @@ addEventListener('keydown', (e) => {
     power = 0;
   }
 });
+addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || !link || document.activeElement?.tagName === 'INPUT') return;
+  if (!$('#rules').classList.contains('hidden')) return $('#rules').classList.add('hidden');
+  if (charging) return;
+  if ($('#modal').classList.contains('hidden')) openGameMenu();
+  else if ($('#modal-panel').querySelector('#gm-resume, #gm-no')) closeModal();
+});
 addEventListener('keyup', (e) => {
   if (e.code !== 'Space' || !charging) return;
   charging = false;
@@ -897,22 +1191,31 @@ function shoot(): void {
     return;
   }
   const a: Action = { t: 'shoot', shot: { dx: aimDx, dy: aimDy, power, sx: spinX, sy: spinY }, cue: v.ballInHand && cuePlace ? cuePlace : undefined, call: v.onEight ? pocket : undefined };
-  strikeAnim = 0.12;
   link?.send(a);
   power = 0;
 }
 
 // ---------------------------------------------------------------- HUD
 
+/** Caught up with the queue: take the HUD from the view (covers states we never got the events for, e.g. after a reconnect). */
+function syncHud(): void {
+  const v = view!;
+  hud.current = v.phase === 'over' ? hud.current || v.current : v.current;
+  for (const p of v.players) hud.groups.set(p.id, p.group);
+  hud.over = v.phase === 'over';
+  renderHud();
+}
+
+/** The HUD follows the displayed table (dballs / hud), not the latest state, so it never spoils a shot. */
 function renderHud(): void {
   const v = view;
   if (!v) return;
   v.players.forEach((p, i) => {
     const el = $(`#p${i}`);
-    const turn = (shownCurrent || v.current) === p.id && v.phase !== 'over';
-    const group: Group | null = p.group;
+    const turn = (hud.current || v.current) === p.id && !hud.over;
+    const group: Group | null = hud.groups.get(p.id) ?? null;
     const ids = group === 'solids' ? [1, 2, 3, 4, 5, 6, 7] : group === 'stripes' ? [9, 10, 11, 12, 13, 14, 15] : [];
-    const onTable = new Set(v.balls.filter((b) => b.pocket < 0).map((b) => b.id));
+    const onTable = new Set([...dballs.values()].filter((b) => b.on).map((b) => b.id));
     const left = ids.filter((id) => onTable.has(id));
     const balls = group
       ? ids.map((id) => ballIcon(id, onTable.has(id) ? '' : 'potted')).join('') + (left.length === 0 ? ballIcon(8, 'eight') : '')
@@ -925,16 +1228,33 @@ function renderHud(): void {
       el.innerHTML = html;
     }
   });
-  const curId = shownCurrent || v.current;
+  const curId = hud.current || v.current;
   const cur = v.players.find((p) => p.id === curId);
-  $('#turn-text').innerHTML = v.phase === 'over' && !replay ? 'GAME OVER' : curId === v.you ? '<b>YOUR SHOT</b>' : `${esc(cur?.name ?? '')}'s shot`;
+  $('#turn-text').innerHTML = hud.over ? 'GAME OVER' : curId === v.you ? '<b>YOUR SHOT</b>' : `${esc(cur?.name ?? '')}'s shot`;
 }
 
+/**
+ * Shot clock ring. The engine's clock runs a little longer than shotTime
+ * (CLOCK_GRACE) so the ring only starts shrinking once the shot replay is over;
+ * the last five seconds tick and flash red.
+ */
 function renderTimer(): void {
   const v = view!;
   const total = v.rules.shotTime;
-  const left = Math.max(0, v.shotLeft - (performance.now() - updateAt) / 1000);
-  for (const el of document.querySelectorAll<HTMLElement>('.pl-side__av.turn .pl-timer')) el.style.setProperty('--p', total && v.phase === 'aim' && !replay ? String(left / total) : '1');
+  const running = !!total && v.phase === 'aim' && !replay && !busy && !queue.length;
+  const left = Math.min(total, Math.max(0, v.shotLeft - (performance.now() - updateAt) / 1000));
+  const low = running && left < 5;
+  if (low && v.current === v.you) {
+    const sec = Math.ceil(left);
+    if (sec !== lastTick) {
+      lastTick = sec;
+      audio.tick();
+    }
+  }
+  for (const el of document.querySelectorAll<HTMLElement>('.pl-side__av.turn')) {
+    el.classList.toggle('low', low);
+    el.querySelector<HTMLElement>('.pl-timer')!.style.setProperty('--p', running ? String(left / total) : '1');
+  }
 }
 
 function renderControls(): void {
@@ -946,22 +1266,37 @@ function renderControls(): void {
   $('#spin-dot').style.transform = `translate(${(spinX / 0.75) * 50}%, ${(-spinY / 0.75) * 50}%)`;
   const v = view!;
   const hint = $('#hint');
-  const text = mine ? (v.onEight ? (call >= 0 ? `8-ball → pocket called. Pull the power bar to shoot.` : 'Tap a pocket to call the 8-ball') : v.ballInHand ? (v.kitchen ? 'Break! Drag the cue ball behind the line, aim, pull to shoot' : 'Ball in hand — drag the cue ball') : '') : '';
+  const pocketName = (i: number) => ['top left', 'top side', 'top right', 'bottom left', 'bottom side', 'bottom right'][T.rot ? [3, 4, 5, 0, 1, 2][i]! : i] ?? '';
+  const text = mine
+    ? v.onEight
+      ? call >= 0
+        ? `8-ball called in the ${pocketName(call)} pocket — tap another pocket to change`
+        : callAuto >= 0
+          ? `8-ball → ${pocketName(callAuto)} pocket (tap a pocket to call a different one)`
+          : 'Tap a pocket to call the 8-ball'
+      : v.ballInHand
+        ? v.kitchen
+          ? 'Break! Drag the cue ball behind the line, aim, pull to shoot'
+          : 'Ball in hand — drag the cue ball'
+        : ''
+    : reconnecting
+      ? 'Reconnecting…'
+      : '';
   hint.classList.toggle('hidden', !text);
   if (hint.textContent !== text) hint.textContent = text;
 }
 
 // ---------------------------------------------------------------- messages
 
-function toast(html: string, kind = ''): void {
+function toast(html: string, kind = '', ms = 3500): void {
   const m = $('#msg');
   const el = document.createElement('div');
   el.className = `pl-toast ${kind}`;
   el.innerHTML = html;
   m.prepend(el);
   while (m.children.length > 3) m.lastElementChild!.remove();
-  setTimeout(() => el.classList.add('old'), 3500);
-  setTimeout(() => el.remove(), 5000);
+  setTimeout(() => el.classList.add('old'), ms);
+  setTimeout(() => el.remove(), ms + 1500);
 }
 function banner(text: string): void {
   const el = document.createElement('div');
@@ -986,6 +1321,63 @@ function openModal(html: string): HTMLElement {
 }
 function closeModal(): void {
   $('#modal').classList.add('hidden');
+  $('#modal-panel').onclick = null;
+}
+
+/** Match intro: VS card, a coin flip for the break, then the rack settles. */
+let introUp = false;
+function showIntro(breaker: string, done: () => void): void {
+  introUp = true;
+  const v = view!;
+  const ps = v.players;
+  const card = (p: (typeof ps)[number]) => `<div class="pl-vsc ${p.id === breaker ? 'breaks' : ''}">${avatar(p.avatar)}<b>${esc(p.id === v.you ? 'You' : p.name)}</b><small>${p.bot ? 'BOT' : ''}</small></div>`;
+  busy = true;
+  const el = document.createElement('div');
+  el.className = 'pl-intro';
+  el.innerHTML = `<div class="pl-intro__row">${card(ps[0]!)}<div class="pl-coin"><div class="pl-coin__face pl-coin__face--a">${ballIcon(8)}</div><div class="pl-coin__face pl-coin__face--b">${avatar(ps[breaker === ps[0]!.id ? 0 : 1]!.avatar)}</div></div>${card(ps[1]!)}</div><div class="pl-intro__text pl-display">COIN FLIP</div>`;
+  document.body.appendChild(el);
+  const text = el.querySelector<HTMLElement>('.pl-intro__text')!;
+  audio.ui();
+  setTimeout(() => {
+    text.textContent = breaker === v.you ? 'YOU BREAK' : `${ps.find((p) => p.id === breaker)?.name.toUpperCase() ?? ''} BREAKS`;
+    el.classList.add('decided');
+    audio.turn();
+  }, 1500);
+  setTimeout(() => {
+    el.classList.add('out');
+    audio.rack();
+  }, 2500);
+  setTimeout(() => {
+    el.remove();
+    busy = false;
+    introUp = false;
+    if (link) done();
+  }, 2900);
+}
+
+/** In-game menu (Esc / "← Arcade"): resume, rules, or leave (to the arcade or this game's menu) with a confirmation. */
+function openGameMenu(toArcade = false): void {
+  if (!link) return;
+  const p = openModal(`<h2 class="pl-display">PAUSED</h2><p class="pl-dim">${link.online ? 'Your shot clock keeps running.' : 'The bot waits for you.'}</p>
+    <div class="pl-stack"><button class="pl-btn pl-btn--go" id="gm-resume"><span class="pl-display">RESUME</span></button><button class="pl-btn" id="gm-rules">? Rules</button><button class="pl-btn pl-btn--danger" id="gm-leave">Leave game</button></div>`);
+  p.onclick = (e) => {
+    const id = (e.target as HTMLElement).closest('button')?.id;
+    if (id === 'gm-resume') closeModal();
+    if (id === 'gm-rules') $('#rules').classList.remove('hidden');
+    if (id === 'gm-leave') confirmLeave(toArcade);
+  };
+}
+function confirmLeave(toArcade: boolean): void {
+  const p = openModal(`<h2 class="pl-display">LEAVE THE GAME?</h2><p class="pl-dim">${hud.over ? 'Back to the arcade.' : `You'll forfeit this game${link?.online ? ' and your opponent wins' : ''}.`}</p>
+    <div class="pl-two"><button class="pl-btn pl-btn--danger" id="gm-yes">Leave</button><button class="pl-btn" id="gm-no">Stay</button></div>`);
+  p.onclick = (e) => {
+    const id = (e.target as HTMLElement).closest('button')?.id;
+    if (id === 'gm-no') openGameMenu(toArcade);
+    if (id === 'gm-yes') {
+      toMenu();
+      if (toArcade) location.href = '/';
+    }
+  };
 }
 
 function showOver(won: boolean, reason: string): void {
@@ -1027,6 +1419,7 @@ function toMenu(): void {
   view = null;
   void net?.leave();
   net = null;
+  reconnecting = false;
   closeModal();
   for (const id of ['#hud', '#power', '#spin', '#hint']) $(id).classList.add('hidden');
   $('#online').classList.add('hidden');
@@ -1091,11 +1484,25 @@ async function connect(how: (n: PoolNet) => Promise<void>): Promise<void> {
     oStatus(m, true);
     if (link) toast(esc(m), 'error');
   };
+  n.onDrop = () => {
+    if (net !== n) return;
+    reconnecting = true;
+    if (link?.online) toast('Connection lost — reconnecting…', 'error', 30000);
+    else oStatus('Connection lost — reconnecting…', true);
+  };
+  n.onReconnect = () => {
+    if (net !== n) return;
+    reconnecting = false;
+    if (link?.online) toast('Reconnected.');
+    else oStatus('');
+  };
   n.onClosed = (reason) => {
     if (net !== n) return;
     net = null;
+    const wasReconnecting = reconnecting;
+    reconnecting = false;
     if (link?.online) {
-      toast('Disconnected.', 'error');
+      toast(wasReconnecting ? 'Could not reconnect — the game is lost.' : 'Disconnected.', 'error');
       setTimeout(toMenu, 1200);
     } else oStatus(reason ?? 'Disconnected.', true);
   };
@@ -1180,5 +1587,36 @@ if (q.has('play')) startLocal();
   },
   get myTurn() {
     return myTurn();
+  },
+  spin(x: number, y: number) {
+    spinX = x;
+    spinY = y;
+  },
+  place(x: number, y: number) {
+    cuePlace = { x, y };
+  },
+  setPower(p: number) {
+    power = p;
+  },
+  callPocket(i: number) {
+    call = i;
+  },
+  toScreen(x: number, y: number) {
+    return { x: T.x(x, y), y: T.y(x, y) };
+  },
+  get cuePlace() {
+    return cuePlace;
+  },
+  get replay() {
+    return replay;
+  },
+  get sinking() {
+    return sinking.length;
+  },
+  get foulMark() {
+    return foulMark;
+  },
+  get hud() {
+    return hud;
   },
 };

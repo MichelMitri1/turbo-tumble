@@ -134,6 +134,30 @@ export class KittenAudio {
   drumroll(): void {
     for (let i = 0; i < 16; i++) this.noise(0.05, 0.1 + i * 0.01, 400, 'lowpass', i * 0.06);
   }
+  /** Last second of a Nope window. */
+  tick(): void {
+    this.tone(1250, 0.05, 'square', 0.06);
+  }
+  /** A card flipping face up. */
+  flip(): void {
+    this.noise(0.06, 0.22, 3200, 'bandpass', 0, 2.5);
+    this.tone(900, 0.05, 'triangle', 0.04, 1.4);
+  }
+  /** An attack lands on someone. */
+  hit(): void {
+    this.noise(0.18, 0.5, 220, 'lowpass');
+    this.tone(120, 0.22, 'square', 0.1, 0.5);
+  }
+  /** Imploding: everything sucked into a point. */
+  implode(): void {
+    this.tone(70, 0.9, 'sawtooth', 0.12, 8);
+    this.noise(0.9, 0.35, 400, 'bandpass', 0, 0.7);
+    this.tone(1800, 0.25, 'sine', 0.1, 0.2, 0.85);
+  }
+  reverse(): void {
+    [880, 660, 440].forEach((n, i) => this.tone(n, 0.12, 'triangle', 0.08, 1, i * 0.06));
+    [440, 660, 880].forEach((n, i) => this.tone(n, 0.12, 'triangle', 0.08, 1, 0.22 + i * 0.06));
+  }
   win(me: boolean): void {
     const seq = me ? [523, 659, 784, 1047, 784, 1047] : [440, 392, 349, 262];
     seq.forEach((n, i) => this.tone(n, 0.3, 'triangle', 0.15, 1, i * 0.15));

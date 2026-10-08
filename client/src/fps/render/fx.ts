@@ -17,6 +17,9 @@ class Particles {
   private c0: Float32Array;
   private c1: Float32Array;
   private next = 0;
+  /** Slots 0..used may hold live particles; everything past it is dead (the ring restarts at 0 whenever it empties). */
+  private used = 0;
+  private alive = 0;
   constructor(
     readonly n: number,
     additive: boolean,
@@ -40,13 +43,16 @@ class Particles {
     g.setAttribute('size', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('alpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4);
+    g.setDrawRange(0, 0);
     const m = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: { scale: { value: 800 } },
       vertexShader: `attribute float size; attribute float alpha; attribute vec3 color; varying vec3 vC; varying float vA; uniform float scale;
-        void main(){ vC = color; vA = alpha; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * scale / max(0.1, -mv.z); gl_Position = projectionMatrix * mv; }`,
+        void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); float d = -mv.z; vC = color;
+          // Fade out right in front of the lens and cap the size, so nothing balloons over the screen.
+          vA = alpha * smoothstep(0.35, 1.2, d); gl_PointSize = min(size * scale / max(0.1, d), 96.0); gl_Position = projectionMatrix * mv; }`,
       fragmentShader: `varying vec3 vC; varying float vA; void main(){ vec2 d = gl_PointCoord - 0.5; float r = dot(d,d) * 4.0; if (r > 1.0) discard; float a = 1.0 - r; gl_FragColor = vec4(vC, vA * a * a); }`,
     });
     this.points = new THREE.Points(g, m);
@@ -58,10 +64,21 @@ class Particles {
   emit(x: number, y: number, z: number, vx: number, vy: number, vz: number, c0: THREE.Color, c1: THREE.Color, size: number, life: number, grow = 0, grav = 0, drag = 0): void {
     const i = this.next;
     this.next = (this.next + 1) % this.n;
-    this.pos.set([x, y, z], i * 3);
-    this.vel.set([vx, vy, vz], i * 3);
-    this.c0.set([c0.r, c0.g, c0.b], i * 3);
-    this.c1.set([c1.r, c1.g, c1.b], i * 3);
+    if (this.life[i]! <= 0) this.alive++;
+    if (i >= this.used) this.used = i + 1;
+    const j = i * 3;
+    this.pos[j] = x;
+    this.pos[j + 1] = y;
+    this.pos[j + 2] = z;
+    this.vel[j] = vx;
+    this.vel[j + 1] = vy;
+    this.vel[j + 2] = vz;
+    this.c0[j] = c0.r;
+    this.c0[j + 1] = c0.g;
+    this.c0[j + 2] = c0.b;
+    this.c1[j] = c1.r;
+    this.c1[j + 1] = c1.g;
+    this.c1[j + 2] = c1.b;
     this.size[i] = size;
     this.base[i] = size;
     this.life[i] = this.max[i] = life;
@@ -70,13 +87,25 @@ class Particles {
     this.drag[i] = drag;
   }
   update(dt: number): void {
-    for (let i = 0; i < this.n; i++) {
-      if (this.life[i]! <= 0) {
+    const g = this.points.geometry;
+    if (!this.alive) {
+      // Nothing to simulate or upload; restart the ring so the next burst stays compact.
+      if (this.used) {
+        this.used = this.next = 0;
+        g.setDrawRange(0, 0);
+      }
+      return;
+    }
+    const used = this.used;
+    for (let i = 0; i < used; i++) {
+      if (this.life[i]! <= 0) continue;
+      const l = (this.life[i]! -= dt);
+      if (l <= 0) {
         this.alpha[i] = 0;
+        this.alive--;
         continue;
       }
-      const l = (this.life[i]! -= dt);
-      const t = 1 - Math.max(0, l) / this.max[i]!;
+      const t = 1 - l / this.max[i]!;
       const k = Math.exp(-this.drag[i]! * dt);
       const j = i * 3;
       this.vel[j]! *= k;
@@ -86,33 +115,61 @@ class Particles {
       this.pos[j + 1]! += this.vel[j + 1]! * dt;
       this.pos[j + 2]! += this.vel[j + 2]! * dt;
       for (let c = 0; c < 3; c++) this.col[j + c] = this.c0[j + c]! + (this.c1[j + c]! - this.c0[j + c]!) * t;
-      this.alpha[i] = l > 0 ? Math.min(1, (1 - t) * 1.5) : 0;
+      this.alpha[i] = Math.min(1, (1 - t) * 1.5);
       this.size[i] = this.base[i]! * (1 + this.grow[i]! * t);
     }
-    const g = this.points.geometry;
-    for (const n of ['position', 'color', 'size', 'alpha']) g.getAttribute(n).needsUpdate = true;
+    g.setDrawRange(0, used);
+    for (const n of ['position', 'color', 'size', 'alpha']) {
+      const a = g.getAttribute(n) as THREE.BufferAttribute;
+      a.addUpdateRange(0, used * a.itemSize);
+      a.needsUpdate = true;
+    }
+  }
+  dispose(): void {
+    this.points.geometry.dispose();
+    (this.points.material as THREE.Material).dispose();
   }
 }
 
 const C = (r: number, g: number, b: number) => new THREE.Color(r, g, b);
 const rnd = (s: number) => (Math.random() - 0.5) * 2 * s;
+const MAX_TRACERS = 64;
+const MAX_DECALS = 160;
+/** Point lights live in a fixed pool: adding or removing one would recompile every lit shader (the count is in the program hash). */
+const LIGHT_POOL = 6;
 
 export class Fx {
   readonly group = new THREE.Group();
   private glow = new Particles(3000, true);
   private smoke = new Particles(2000, false);
-  private tracers: Array<{ line: THREE.Line; t: number }> = [];
+  private tracers: Array<{ t: number; a: THREE.Vector3; b: THREE.Vector3 }> = [];
+  private tracerGeo = new THREE.BufferGeometry();
+  private tracerPos = new Float32Array(MAX_TRACERS * 6);
   private tracerMat = new THREE.LineBasicMaterial({ color: new THREE.Color(3, 2.6, 1.6), transparent: true, opacity: 0.9 });
   private decals: THREE.Mesh[] = [];
+  private decalGeo = new THREE.PlaneGeometry(0.09, 0.09);
+  private scorchGeo = new THREE.CircleGeometry(1, 20);
   private decalMat: THREE.MeshBasicMaterial;
   private scorchMat: THREE.MeshBasicMaterial;
-  private flashes: Array<{ light: THREE.PointLight; t: number; max: number; i: number }> = [];
+  private lights: Array<{ light: THREE.PointLight; t: number; max: number; i: number }> = [];
   private sprites: Array<{ s: THREE.Sprite; t: number; max: number; size: number }> = [];
   private boomTex: THREE.Texture;
+  private decalTex: THREE.Texture;
   private flashMat: THREE.SpriteMaterial;
 
   constructor() {
     this.group.add(this.smoke.points, this.glow.points);
+    this.tracerGeo.setAttribute('position', new THREE.BufferAttribute(this.tracerPos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.tracerGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4);
+    this.tracerGeo.setDrawRange(0, 0);
+    const lines = new THREE.LineSegments(this.tracerGeo, this.tracerMat);
+    lines.frustumCulled = false;
+    this.group.add(lines);
+    for (let i = 0; i < LIGHT_POOL; i++) {
+      const light = new THREE.PointLight('#ffb060', 0, 6, 2);
+      this.group.add(light);
+      this.lights.push({ light, t: 0, max: 1, i: 0 });
+    }
     const c = document.createElement('canvas');
     c.width = c.height = 64;
     const g = c.getContext('2d')!;
@@ -122,7 +179,8 @@ export class Fx {
     grd.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = grd;
     g.fillRect(0, 0, 64, 64);
-    this.decalMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
+    this.decalTex = new THREE.CanvasTexture(c);
+    this.decalMat = new THREE.MeshBasicMaterial({ map: this.decalTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
     this.scorchMat = this.decalMat.clone();
     this.scorchMat.opacity = 0.75;
     const b = document.createElement('canvas');
@@ -145,16 +203,14 @@ export class Fx {
     this.smoke.setScale(s);
   }
 
-  tracer(from: THREE.Vector3, to: THREE.Vector3, chance = 1): void {
+  tracer(from: THREE.Vector3, to: THREE.Vector3, chance = 1, life = 0.06): void {
     if (Math.random() > chance) return;
     // A short streak travelling along the path reads better than a full line.
     const d = to.clone().sub(from);
     const len = d.length();
     const a = from.clone().addScaledVector(d, Math.min(0.3, 1.5 / Math.max(1, len)));
-    const g = new THREE.BufferGeometry().setFromPoints([a, to]);
-    const line = new THREE.Line(g, this.tracerMat);
-    this.group.add(line);
-    this.tracers.push({ line, t: 0.06 });
+    if (this.tracers.length >= MAX_TRACERS) this.tracers.shift();
+    this.tracers.push({ t: life, a, b: to.clone() });
   }
 
   impact(p: THREE.Vector3, n: THREE.Vector3, kind: 'metal' | 'dust' | 'wood' | 'blood'): void {
@@ -167,13 +223,18 @@ export class Fx {
     for (let i = 0; i < 5; i++) this.smoke.emit(p.x + n.x * 0.05, p.y + n.y * 0.05, p.z + n.z * 0.05, n.x * 1.5 + rnd(0.6), n.y * 1.5 + rnd(0.6) + 0.3, n.z * 1.5 + rnd(0.6), dc[0]!, dc[1]!, 0.1, 0.6, 3, 0.5, 2.5);
     // Bullet hole.
     if (Math.abs(n.y) < 0.99 || n.y > 0.5) {
-      const dec = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.09), this.decalMat);
+      const dec = new THREE.Mesh(this.decalGeo, this.decalMat);
       dec.position.copy(p).addScaledVector(n, 0.004);
       dec.lookAt(p.clone().add(n));
-      this.group.add(dec);
-      this.decals.push(dec);
-      if (this.decals.length > 160) this.decals.shift()!.removeFromParent();
+      this.addDecal(dec);
     }
+  }
+
+  /** Decals share their geometry, so evicting one is just a scene removal. */
+  private addDecal(m: THREE.Mesh): void {
+    this.group.add(m);
+    this.decals.push(m);
+    if (this.decals.length > MAX_DECALS) this.decals.shift()!.removeFromParent();
   }
 
   muzzle(p: THREE.Vector3): void {
@@ -197,44 +258,57 @@ export class Fx {
     this.sprites.push({ s, t: 0, max: 0.35, size: r * 1.2 });
     this.light(p.clone().add(new THREE.Vector3(0, 1, 0)), '#ff9a40', 60, 0.5, r * 4);
     // Scorch mark.
-    const sc = new THREE.Mesh(new THREE.CircleGeometry(r * 0.45, 20), this.scorchMat);
+    const sc = new THREE.Mesh(this.scorchGeo, this.scorchMat);
+    sc.scale.setScalar(r * 0.45);
     sc.rotation.x = -Math.PI / 2;
     sc.position.set(p.x, Math.max(0.02, p.y - 0.4 > 0.1 ? p.y - 0.4 : 0.02), p.z);
-    this.group.add(sc);
-    this.decals.push(sc);
+    this.addDecal(sc);
   }
 
+  /** One of each effect mesh (sharing the real geometry / materials) for shader warm-up: add, compile, remove. */
+  warmObjects(): THREE.Object3D[] {
+    // One live particle of each kind, so both point blend modes get drawn too.
+    this.smoke.emit(0, -40, 0, 0, 0, 0, C(0, 0, 0), C(0, 0, 0), 0.1, 0.2);
+    this.glow.emit(0, -40, 0, 0, 0, 0, C(0, 0, 0), C(0, 0, 0), 0.1, 0.2);
+    return [new THREE.Mesh(this.decalGeo, this.decalMat), new THREE.Mesh(this.scorchGeo, this.scorchMat), new THREE.Sprite(this.flashMat)];
+  }
+
+  /** Borrow the dimmest pooled light (never add / remove lights at runtime). */
   private light(p: THREE.Vector3, color: string, intensity: number, dur: number, dist: number): void {
-    const l = new THREE.PointLight(color, intensity, dist, 2);
-    l.position.copy(p);
-    this.group.add(l);
-    this.flashes.push({ light: l, t: dur, max: dur, i: intensity });
-    if (this.flashes.length > 6) {
-      const old = this.flashes.shift()!;
-      old.light.removeFromParent();
-    }
+    let slot = this.lights[0]!;
+    for (const l of this.lights) if (l.light.intensity < slot.light.intensity) slot = l;
+    if (slot.light.intensity > intensity) return;
+    slot.light.color.set(color);
+    slot.light.distance = dist;
+    slot.light.position.copy(p);
+    slot.light.intensity = intensity;
+    slot.t = slot.max = dur;
+    slot.i = intensity;
   }
 
   update(dt: number): void {
     this.glow.update(dt);
     this.smoke.update(dt);
+    let n = 0;
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i]!;
       t.t -= dt;
-      if (t.t <= 0) {
-        t.line.removeFromParent();
-        t.line.geometry.dispose();
-        this.tracers.splice(i, 1);
-      }
+      if (t.t <= 0) this.tracers.splice(i, 1);
     }
-    for (let i = this.flashes.length - 1; i >= 0; i--) {
-      const f = this.flashes[i]!;
+    for (const t of this.tracers) {
+      this.tracerPos.set([t.a.x, t.a.y, t.a.z, t.b.x, t.b.y, t.b.z], n * 6);
+      n++;
+    }
+    this.tracerGeo.setDrawRange(0, n * 2);
+    if (n) {
+      const a = this.tracerGeo.getAttribute('position') as THREE.BufferAttribute;
+      a.addUpdateRange(0, n * 6);
+      a.needsUpdate = true;
+    }
+    for (const f of this.lights) {
+      if (f.t <= 0) continue;
       f.t -= dt;
       f.light.intensity = Math.max(0, f.i * (f.t / f.max));
-      if (f.t <= 0) {
-        f.light.removeFromParent();
-        this.flashes.splice(i, 1);
-      }
     }
     for (let i = this.sprites.length - 1; i >= 0; i--) {
       const s = this.sprites[i]!;
@@ -247,5 +321,21 @@ export class Fx {
         this.sprites.splice(i, 1);
       }
     }
+  }
+
+  dispose(): void {
+    this.glow.dispose();
+    this.smoke.dispose();
+    this.tracerGeo.dispose();
+    this.tracerMat.dispose();
+    this.decalGeo.dispose();
+    this.scorchGeo.dispose();
+    this.decalMat.dispose();
+    this.scorchMat.dispose();
+    this.decalTex.dispose();
+    this.boomTex.dispose();
+    this.flashMat.dispose();
+    for (const l of this.lights) l.light.dispose();
+    this.group.removeFromParent();
   }
 }

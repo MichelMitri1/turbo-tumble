@@ -6,6 +6,7 @@ import {
   CylinderGeometry,
   DoubleSide,
   Group,
+  DodecahedronGeometry,
   IcosahedronGeometry,
   Mesh,
   MeshBasicMaterial,
@@ -24,6 +25,7 @@ import { CRUISER_HALF_LENGTH, MoverField, PENDULUM_ARM, PENDULUM_PIVOT, STOMPER_
 import { gantryOffset } from '@shared/track/TrackColliders';
 import type { MoverDefinition } from '@shared/types/track';
 import type { BuildContext } from '../BuildContext';
+import { TrackMaterials } from '../materials';
 
 interface MoverLook {
   rock: string;
@@ -34,6 +36,17 @@ interface MoverLook {
 
 const DEFAULT_LOOK: MoverLook = { rock: '#8a7f74', block: '#646b78', jet: '#8fe0ff', jetGlow: 0.4 };
 const LOOKS: Record<string, Partial<MoverLook>> = {
+  magma: { rock: '#2a2020', block: '#2a2222', jet: '#ff6a1a', jetGlow: 1.8 },
+  glacier: { rock: '#e8f6ff', block: '#9fd8f6', jet: '#d8f6ff', jetGlow: 0.6 },
+  mesa: { rock: '#b8703a', block: '#8a4a2a', jet: '#ffd8a0', jetGlow: 0.2 },
+  beach: { rock: '#b88a5a', block: '#8a6a4a', jet: '#bff8ff', jetGlow: 0.5 },
+  river: { rock: '#7a6a5a', block: '#6a6a6a', jet: '#d8f6ff', jetGlow: 0.5 },
+  jungle: { rock: '#7a7a5a', block: '#6a6a4a', jet: '#c8fff0', jetGlow: 0.5 },
+  marsh: { rock: '#4a4a3a', block: '#3a3a40', jet: '#9aff6a', jetGlow: 1.4 },
+  factory: { rock: '#5a5a62', block: '#5a606e', jet: '#e8f0ff', jetGlow: 0.6 },
+  starlight: { rock: '#7a8aff', block: '#3a4a96', jet: '#9af0ff', jetGlow: 1.4 },
+  comet: { rock: '#5affd8', block: '#2a6a6a', jet: '#9afff0', jetGlow: 1.4 },
+  prism: { rock: '#ff8af0', block: '#6a4a96', jet: '#ffd8ff', jetGlow: 1.4 },
   volcano: { rock: '#4a3a34', block: '#3a3030', jet: '#ff7a1a', jetGlow: 1.6 },
   snow: { rock: '#f4f8ff', block: '#9fc2e6', jet: '#eef8ff' },
   alpine: { rock: '#eef4fb', block: '#7f8a9a', jet: '#eef8ff' },
@@ -142,6 +155,7 @@ function makeVisual(def: MoverDefinition, index: number, field: MoverField, mats
       const s = def.size * 2;
       const body = new Group();
       body.add(mesh(new BoxGeometry(s, 2.6, s), mats.block));
+      stomperDecor(ctx, body, s);
       const bandMat = (mats.stripe as MeshStandardMaterial).clone();
       const band = mesh(new BoxGeometry(s + 0.12, 0.7, s + 0.12), bandMat);
       band.position.y = -0.9;
@@ -181,14 +195,16 @@ function makeVisual(def: MoverDefinition, index: number, field: MoverField, mats
       };
     }
     case 'roller': {
-      const ball = mesh(new IcosahedronGeometry(def.size, 1), mats.rock);
+      const ball = rollerSkin(ctx, def, mats);
       root.add(ball);
+      // Skins are modelled rolling about local +Z: turn that onto the road direction.
+      const align = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), pose.tangent);
       return {
         root,
         update(p, d) {
           root.position.copy(p.position);
           q.setFromAxisAngle(p.tangent, p.value / d.size);
-          ball.quaternion.copy(q);
+          ball.quaternion.copy(q).multiply(align);
         },
       };
     }
@@ -197,7 +213,7 @@ function makeVisual(def: MoverDefinition, index: number, field: MoverField, mats
       post.position.y = 1.2;
       root.add(post);
       const arm = new Group();
-      const bar = mesh(new BoxGeometry(def.size * 2, 0.7, 0.7), mats.stripe);
+      const bar = sweeperArm(ctx, def, mats);
       arm.add(bar);
       for (const e of [-1, 1]) {
         const knob = mesh(new SphereGeometry(0.55, 12, 8), mats.metal);
@@ -308,4 +324,153 @@ function makeVisual(def: MoverDefinition, index: number, field: MoverField, mats
       };
     }
   }
+}
+
+const SPACE = new Set(['space', 'starlight', 'comet', 'prism', 'sky']);
+
+/** The rolling hazard wears the course: hay bales, snowballs, tumbleweeds, lava rocks, barrels… */
+function rollerSkin(ctx: BuildContext, def: MoverDefinition, mats: Mats): Object3D {
+  const r = def.size;
+  const theme = ctx.def.theme;
+  const g = new Group();
+  if (theme === 'farm' || theme === 'autumn') {
+    // Round hay bale rolling on its side (axis along the road, like the sphere it replaces).
+    const hay = new MeshStandardMaterial({ color: theme === 'farm' ? '#e8c45a' : '#d89a4a', roughness: 1, flatShading: true });
+    const bale = mesh(new CylinderGeometry(r, r, r * 1.5, 16), hay);
+    bale.rotation.x = Math.PI / 2;
+    g.add(bale);
+    for (const z of [-0.4, 0.4]) {
+      const band = mesh(new TorusGeometry(r * 1.01, 0.06, 4, 20), new MeshStandardMaterial({ color: '#8a3a2a', roughness: 0.8 }));
+      band.position.z = z * r;
+      g.add(band);
+    }
+    return g;
+  }
+  if (theme === 'snow' || theme === 'glacier' || theme === 'alpine') {
+    const snow = new MeshStandardMaterial({ color: '#f6faff', roughness: 0.85, flatShading: true });
+    g.add(mesh(new IcosahedronGeometry(r, 2), snow));
+    for (let i = 0; i < 5; i++) {
+      const lump = mesh(new IcosahedronGeometry(r * 0.32, 1), snow);
+      lump.position.setFromSphericalCoords(r * 0.85, (i / 5) * Math.PI, i * 2.1);
+      g.add(lump);
+    }
+    return g;
+  }
+  if (theme === 'desert' || theme === 'mesa') {
+    // Tumbleweed: a tangle of twig loops.
+    const twig = new MeshStandardMaterial({ color: theme === 'mesa' ? '#8a5a3a' : '#a8804a', roughness: 1 });
+    for (let i = 0; i < 7; i++) {
+      const loop = mesh(new TorusGeometry(r * (0.75 + (i % 3) * 0.1), 0.07, 4, 14), twig, false);
+      loop.rotation.set(i * 0.9, i * 1.7, i * 0.4);
+      g.add(loop);
+    }
+    g.add(mesh(new IcosahedronGeometry(r * 0.55, 0), new MeshStandardMaterial({ color: '#7a5a3a', wireframe: true }), false));
+    return g;
+  }
+  if (theme === 'volcano' || theme === 'magma') {
+    g.add(mesh(new IcosahedronGeometry(r, 1), mats.rock));
+    const glow = TrackMaterials.emissive('#ff5a1a', 2.2);
+    for (let i = 0; i < 6; i++) {
+      const seam = mesh(new BoxGeometry(r * 1.2, 0.12, 0.12), glow, false);
+      seam.position.setFromSphericalCoords(r * 0.92, 0.4 + (i / 6) * 2.4, i * 1.9);
+      seam.lookAt(0, 0, 0);
+      g.add(seam);
+    }
+    return g;
+  }
+  if ((theme === 'beach' || theme === 'tropical') && ctx.kits.has('pirate', 'barrel')) {
+    const barrel = ctx.kits.instantiate('pirate', 'barrel');
+    const size = ctx.kits.size('pirate', 'barrel');
+    barrel.scale.setScalar((r * 2) / Math.max(size.x, size.y));
+    // Lying on its side, rolling about the road direction.
+    const holder = new Group();
+    barrel.position.y = -r;
+    holder.add(barrel);
+    holder.rotation.x = Math.PI / 2;
+    g.add(holder);
+    return g;
+  }
+  if (SPACE.has(theme)) {
+    const rock = new MeshStandardMaterial({ color: LOOKS[theme]?.rock ?? '#8a7cff', roughness: 0.9, flatShading: true });
+    const ast = mesh(new DodecahedronGeometry(r, 1), rock);
+    ast.scale.set(1, 0.85, 1.1);
+    g.add(ast);
+    for (let i = 0; i < 4; i++) {
+      const crater = mesh(new SphereGeometry(r * 0.25, 8, 6), new MeshStandardMaterial({ color: '#3a2a6a', roughness: 1 }), false);
+      crater.position.setFromSphericalCoords(r * 0.9, 0.5 + i * 0.7, i * 2.4);
+      g.add(crater);
+    }
+    return g;
+  }
+  if (theme === 'mushroom') {
+    g.add(mesh(new IcosahedronGeometry(r, 2), new MeshStandardMaterial({ color: '#d8487a', roughness: 0.7 })));
+    const spot = TrackMaterials.emissive('#fff0f8', 0.6);
+    for (let i = 0; i < 8; i++) {
+      const sp = mesh(new SphereGeometry(r * 0.22, 8, 6), spot, false);
+      sp.position.setFromSphericalCoords(r * 0.92, (i / 8) * Math.PI + 0.2, i * 2.3);
+      sp.scale.setScalar(1).multiplyScalar(1);
+      g.add(sp);
+    }
+    return g;
+  }
+  g.add(mesh(new IcosahedronGeometry(r, 1), mats.rock));
+  return g;
+}
+
+/** Stomper faces: an angry stone face in the ruins, frost on ice blocks, a press plate in the factory. */
+function stomperDecor(ctx: BuildContext, body: Group, s: number): void {
+  const theme = ctx.def.theme;
+  if (theme === 'ruins' || theme === 'jungle' || theme === 'desert' || theme === 'mesa') {
+    const dark = TrackMaterials.paint('#2a2420');
+    const eye = TrackMaterials.emissive('#ff4a2a', 1.6);
+    for (const z of [-1, 1]) {
+      for (const x of [-1, 1]) {
+        const brow = mesh(new BoxGeometry(s * 0.28, 0.25, 0.1), dark, false);
+        brow.position.set(x * s * 0.2, 0.75, (z * s) / 2 + z * 0.06);
+        brow.rotation.z = x * z * 0.35;
+        body.add(brow);
+        const e = mesh(new BoxGeometry(s * 0.12, s * 0.12, 0.1), eye, false);
+        e.position.set(x * s * 0.2, 0.35, (z * s) / 2 + z * 0.06);
+        body.add(e);
+      }
+      const mouth = mesh(new BoxGeometry(s * 0.5, 0.3, 0.1), dark, false);
+      mouth.position.set(0, -0.35, (z * s) / 2 + z * 0.06);
+      body.add(mouth);
+    }
+  } else if (theme === 'snow' || theme === 'glacier') {
+    const frost = new MeshStandardMaterial({ color: '#e8f8ff', roughness: 0.15, transparent: true, opacity: 0.55 });
+    body.add(mesh(new BoxGeometry(s + 0.3, 2.9, s + 0.3), frost, false));
+  } else if (theme === 'factory') {
+    const plate = TrackMaterials.paint('#2a2c34');
+    for (let i = -1; i <= 1; i++) {
+      const rib = mesh(new BoxGeometry(s + 0.1, 0.2, 0.3), plate, false);
+      rib.position.set(0, 1.0, i * s * 0.3);
+      body.add(rib);
+    }
+  }
+}
+
+/** Sweeper arms: a toothed cog in the factory, a laser bar in space, striped bar elsewhere. */
+function sweeperArm(ctx: BuildContext, def: MoverDefinition, mats: Mats): Object3D {
+  const theme = ctx.def.theme;
+  if (theme === 'factory') {
+    const g = new Group();
+    const cog = TrackMaterials.paint('#b87a3a');
+    g.add(mesh(new BoxGeometry(def.size * 2, 0.7, 0.9), cog));
+    for (let i = -3; i <= 3; i++) {
+      if (!i) continue;
+      const tooth = mesh(new BoxGeometry(0.5, 0.5, 1.4), cog);
+      tooth.position.x = (i / 3) * def.size * 0.92;
+      g.add(tooth);
+    }
+    return g;
+  }
+  if (SPACE.has(theme)) {
+    const color = theme === 'sky' ? '#ffffff' : (LOOKS[theme]?.jet ?? '#9af0ff');
+    const g = new Group();
+    g.add(mesh(new BoxGeometry(def.size * 2, 0.35, 0.35), new MeshBasicMaterial({ color: new Color(color).multiplyScalar(1.6) }), false));
+    g.add(mesh(new BoxGeometry(def.size * 2, 0.9, 0.9), new MeshBasicMaterial({ color, transparent: true, opacity: 0.3, depthWrite: false }), false));
+    return g;
+  }
+  return mesh(new BoxGeometry(def.size * 2, 0.7, 0.7), mats.stripe);
 }

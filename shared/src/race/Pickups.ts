@@ -18,6 +18,9 @@ export interface ItemBoxState {
 
 export interface CoinState {
   position: Vector3;
+  /** Track anchor (CPUs steer for coins too). */
+  distance: number;
+  lateral: number;
   respawn: number;
 }
 
@@ -52,8 +55,10 @@ export class Pickups {
     }
     for (const row of def.coins) {
       for (let k = 0; k < row.count; k++) {
-        const f = track.anchorToWorld({ distance: row.distance + k * row.spacing, lateral: row.lateral ?? 0, height: 1.0 + (row.height ?? 0) });
-        this.coins.push({ position: f.position.clone(), respawn: 0 });
+        const distance = row.distance + k * row.spacing;
+        const lateral = row.lateral ?? 0;
+        const f = track.anchorToWorld({ distance, lateral, height: 1.0 + (row.height ?? 0) });
+        this.coins.push({ position: f.position.clone(), distance, lateral, respawn: 0 });
       }
     }
     for (const st of def.streams ?? []) {

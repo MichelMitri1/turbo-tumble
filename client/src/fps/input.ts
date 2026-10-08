@@ -73,7 +73,7 @@ export class FpsInput {
     el.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
       if (!this.locked) {
-        void el.requestPointerLock?.();
+        this.lock();
         return;
       }
       this.mouse[e.button] = true;
@@ -96,8 +96,14 @@ export class FpsInput {
     });
   }
 
+  /** Ask for pointer lock; browsers refuse without a fresh user gesture (CLICK TO PLAY covers that). */
   lock(): void {
-    void this.el.requestPointerLock?.();
+    try {
+      const p = this.el.requestPointerLock?.() as Promise<void> | undefined;
+      p?.catch?.(() => undefined);
+    } catch {
+      /* no gesture yet */
+    }
   }
   unlock(): void {
     if (document.pointerLockElement) document.exitPointerLock();

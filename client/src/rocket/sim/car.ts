@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { arenaNormal, arenaRaycast } from './arena';
 import * as C from './constants';
+import { DEFAULT_RULES, type Rules } from './rules';
 
 /** Per-tick inputs, Rocket League style (all analog values in −1..1). */
 export interface Controls {
@@ -73,6 +74,8 @@ export class Car {
   lastJump = false;
   /** Controls used this tick (renderer reads steer / boost / handbrake). */
   readonly controls: Controls = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false };
+  /** Match rules (gravity, jump, boost, air control…). */
+  rules: Readonly<Rules> = DEFAULT_RULES;
   readonly invInertia: Vector3;
   readonly halfExtents: Vector3;
   readonly hitboxOffset: Vector3;
@@ -117,7 +120,7 @@ export class Car {
   }
 
   /** Place the car at rest (kickoff / respawn). */
-  place(x: number, y: number, yaw: number, boost = C.BOOST_SPAWN): void {
+  place(x: number, y: number, yaw: number, boost = this.rules.boostMode === 'unlimited' ? C.BOOST_MAX : this.rules.boostMode === 'none' ? 0 : C.BOOST_SPAWN): void {
     this.pos.set(x, y, C.CAR_REST_Z);
     this.vel.set(0, 0, 0);
     this.angVel.set(0, 0, 0);
@@ -152,7 +155,8 @@ export class Car {
 
   // ---------------------------------------------------------------------- wheels
 
-  private updateWheels(): void {
+  /** Raycast the wheels (also used by replays, which only restore snapshots). */
+  updateWheels(): void {
     const dir = this.t1.copy(this.up).negate();
     let n = 0;
     const normalSum = this.t3.set(0, 0, 0);
@@ -188,7 +192,8 @@ export class Car {
     const fwdSpeed = this.forwardSpeed;
 
     this.updateDrive(dt, ctl, fwdSpeed);
-    if (!this.onGround) this.updateAir(dt, ctl, this.numContacts === 0);
+    // Air control applies whenever fewer than three wheels touch (like RocketSim).
+    if (!this.onGround) this.updateAir(dt, ctl);
     else this.isFlipping = false;
     this.updateJump(dt, ctl, jumpPressed);
     this.updateAutoFlip(dt, jumpPressed);
@@ -197,7 +202,7 @@ export class Car {
     this.updateBoost(dt, ctl);
 
     // Gravity, speed limits, supersonic.
-    this.vel.z += C.GRAVITY * dt;
+    this.vel.z += C.GRAVITY * this.rules.gravity * dt;
     if (this.vel.lengthSq() > C.CAR_MAX_SPEED * C.CAR_MAX_SPEED) this.vel.setLength(C.CAR_MAX_SPEED);
     if (this.angVel.lengthSq() > C.CAR_MAX_ANG * C.CAR_MAX_ANG) this.angVel.setLength(C.CAR_MAX_ANG);
     const sp = this.speed;
@@ -233,6 +238,8 @@ export class Car {
     if (ctl.boost && this.boost > 0) realThrottle = 1;
     let engine = realThrottle;
     let brake = 0;
+    // On a wall the full stop brake never engages: the car rolls down instead of hanging.
+    const onWall = Math.abs(this.groundNormal.z) < 0.9;
     if (!ctl.handbrake) {
       if (Math.abs(realThrottle) >= 0.001) {
         if (absF > C.STOPPING_SPEED && Math.sign(realThrottle) !== Math.sign(fwdSpeed)) {
@@ -241,7 +248,7 @@ export class Car {
         }
       } else {
         engine = 0;
-        brake = absF < C.STOPPING_SPEED ? 1 : C.COAST_BRAKE_FACTOR;
+        brake = absF < C.STOPPING_SPEED && !onWall ? 1 : C.COAST_BRAKE_FACTOR;
       }
     }
     const contactFrac = this.numContacts / 4;
@@ -284,24 +291,29 @@ export class Car {
     if (realThrottle === 0) lat *= C.curve(C.NON_STICKY_FRICTION_CURVE, N.z);
     this.vel.addScaledVector(ls, -vL * Math.min(1, lat * contactFrac));
     // Powerslide also bleeds a bit of forward speed.
-    if (this.handbrakeVal && !engine) this.vel.addScaledVector(fs, -vF * (1 - C.curve(C.HANDBRAKE_LONG_CURVE, slip)) * 0.02 * this.handbrakeVal);
+    if (this.handbrakeVal && !engine) this.vel.addScaledVector(fs, -vF * (1 - C.curve(C.HANDBRAKE_LONG_CURVE, slip)) * 0.004 * this.handbrakeVal);
 
-    // Steering: bicycle model (wheelbase ≈ 85 uu) on Rocket League's steer-angle curve.
-    let steerAngle = C.curve(C.STEER_ANGLE_CURVE, absF);
-    if (this.handbrakeVal) steerAngle += (C.curve(C.POWERSLIDE_STEER_CURVE, absF) - steerAngle) * this.handbrakeVal;
-    const curvature = Math.tan(steerAngle) / WHEELBASE;
+    // Steering: Rocket League's measured curvature table; the powerslide blends
+    // towards its own steer-angle curve (bicycle model, wheelbase ≈ 85 uu, scaled
+    // so both agree without the slide).
+    let curvature = C.curve(C.CURVATURE_CURVE, absF);
+    if (this.handbrakeVal) {
+      const ratio = curvature / (Math.tan(C.curve(C.STEER_ANGLE_CURVE, absF)) / WHEELBASE);
+      const slide = (Math.tan(C.curve(C.POWERSLIDE_STEER_CURVE, absF)) / WHEELBASE) * ratio;
+      curvature += (slide - curvature) * this.handbrakeVal;
+    }
     const targetYaw = -ctl.steer * curvature * vF;
     const yawNow = this.angVel.dot(N);
-    const response = Math.min(1, (this.onGround ? 22 : 6) * dt) * (this.handbrakeVal ? 0.55 : 1);
+    const response = Math.min(1, (this.onGround ? 30 : 6) * dt) * (this.handbrakeVal ? 0.55 : 1);
     this.angVel.addScaledVector(N, (targetYaw - yawNow) * response);
 
-    // Sticky force into the surface.
-    const fullStick = realThrottle !== 0 || absF > C.STOPPING_SPEED;
+    // Sticky force into the surface (kept on walls so a stopped car slides down on its wheels).
+    const fullStick = realThrottle !== 0 || absF > C.STOPPING_SPEED || onWall;
     const sticky = 0.5 + (fullStick ? 1 - Math.abs(N.z) : 0);
     this.vel.addScaledVector(N, sticky * C.GRAVITY * dt);
   }
 
-  private updateAir(dt: number, ctl: Controls, airControl: boolean): void {
+  private updateAir(dt: number, ctl: Controls): void {
     if (this.isFlipping) this.isFlipping = this.hasFlipped && this.flipTime < C.FLIP_TORQUE_TIME;
     let doAir = true;
     let pitchScaleFlip = 1;
@@ -318,7 +330,7 @@ export class Car {
         if (pitchScaleFlip < 1) doAir = true;
       }
     }
-    doAir = doAir && !this.isAutoFlipping && airControl;
+    doAir = doAir && !this.isAutoFlipping;
     if (doAir) {
       let pitchScale = 1;
       if (this.isFlipping) pitchScale = 0;
@@ -330,11 +342,12 @@ export class Car {
       const dP = w.dot(right) * C.AIR_DAMPING.pitch * (1 - Math.abs(p));
       const dY = -w.dot(this.up) * C.AIR_DAMPING.yaw * (1 - Math.abs(ctl.yaw));
       const dR = w.dot(this.forward) * C.AIR_DAMPING.roll;
+      const k = this.rules.airControl;
       const acc = this.t2
         .copy(right)
-        .multiplyScalar(p * C.AIR_TORQUE.pitch - dP)
-        .addScaledVector(this.up, -(ctl.yaw * C.AIR_TORQUE.yaw - dY))
-        .addScaledVector(this.forward, ctl.roll * C.AIR_TORQUE.roll - dR);
+        .multiplyScalar(p * C.AIR_TORQUE.pitch * k - dP)
+        .addScaledVector(this.up, -(ctl.yaw * C.AIR_TORQUE.yaw * k - dY))
+        .addScaledVector(this.forward, ctl.roll * C.AIR_TORQUE.roll * k - dR);
       w.addScaledVector(acc, C.TORQUE_SCALE * dt);
     }
     if (ctl.throttle) this.vel.addScaledVector(this.forward, ctl.throttle * C.THROTTLE_AIR_ACCEL * dt);
@@ -352,11 +365,11 @@ export class Car {
     } else if (this.onGround && pressed) {
       this.isJumping = true;
       this.jumpTime = 0;
-      this.vel.addScaledVector(this.up, C.JUMP_IMPULSE);
+      this.vel.addScaledVector(this.up, C.JUMP_IMPULSE * this.rules.jumpHeight);
     }
     if (this.isJumping) {
       this.hasJumped = true;
-      this.vel.addScaledVector(this.up, C.JUMP_ACCEL * (this.jumpTime < C.JUMP_MIN_TIME ? 0.62 : 1) * dt);
+      this.vel.addScaledVector(this.up, C.JUMP_ACCEL * this.rules.jumpHeight * (this.jumpTime < C.JUMP_MIN_TIME ? 0.62 : 1) * dt);
     }
     if (this.isJumping || this.hasJumped) this.jumpTime += dt;
   }
@@ -408,7 +421,7 @@ export class Car {
         const mag = Math.abs(ctl.yaw) + Math.abs(ctl.pitch) + Math.abs(ctl.roll);
         if (mag >= C.DODGE_DEADZONE) this.startFlip(ctl, fwdSpeed);
         else {
-          this.vel.addScaledVector(this.up, C.JUMP_IMPULSE);
+          this.vel.addScaledVector(this.up, C.JUMP_IMPULSE * this.rules.jumpHeight);
           this.hasDoubleJumped = true;
         }
       }
@@ -460,8 +473,9 @@ export class Car {
     } else this.isBoosting = false;
     this.boostingTime = this.isBoosting ? this.boostingTime + dt : 0;
     if (this.isBoosting) {
-      this.boost = Math.max(0, this.boost - C.BOOST_PER_SECOND * dt);
-      this.vel.addScaledVector(this.forward, (this.onGround ? C.BOOST_ACCEL_GROUND : C.BOOST_ACCEL_AIR) * dt);
+      if (this.rules.boostMode === 'unlimited') this.boost = C.BOOST_MAX;
+      else this.boost = Math.max(0, this.boost - C.BOOST_PER_SECOND * dt);
+      this.vel.addScaledVector(this.forward, (this.onGround ? C.BOOST_ACCEL_GROUND : C.BOOST_ACCEL_AIR) * this.rules.boostStrength * dt);
     }
   }
 

@@ -260,3 +260,48 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); 
   .cf-hand-panel { grid-template-columns: 54px 1fr; padding: 8px; }
   .cf-next .cf-card { width: 46px; }
 }
+
+/* ---------- battle polish ---------- */
+.cf-crowns i { font-size: 30px; line-height: 1; }
+.cf-foe-elixir { font-family: var(--font-display); font-size: 14px; padding: 2px 8px; border-radius: 10px; background: rgba(230, 79, 208, 0.25); border: 2px solid var(--elixir); color: #ffd0f6; min-width: 42px; text-align: center; }
+.cf-foe-elixir:empty { display: none; }
+.cf-next small b { color: #ff9ff0; }
+.cf-elixir__bar.full { animation: cf-full 0.9s ease-in-out infinite alternate; }
+.cf-elixir__spent { position: absolute; inset: 0 auto 0 0; background: rgba(255, 255, 255, 0.85); opacity: 0; }
+.cf-elixir__spent.drop { animation: cf-drop 0.55s ease-out forwards; }
+.cf-elixir { position: relative; }
+.cf-elixir__pops { position: absolute; left: 6px; top: -6px; width: 40px; height: 0; pointer-events: none; }
+.cf-elixir__pops b { position: absolute; left: 0; top: 0; font-family: var(--font-display); font-weight: 400; font-size: 20px; color: #ffb0f4; text-shadow: 0 2px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink); animation: cf-plus 0.9s ease-out forwards; }
+.cf-elixir__drop.bump { animation: cf-bump 0.3s ease; }
+.cf-vignette { position: absolute; inset: 0; pointer-events: none !important; box-shadow: inset 0 0 160px 40px rgba(255, 40, 60, 0.55); opacity: 0; transition: opacity 0.3s ease; }
+.cf-vignette.on { animation: cf-vig 1s ease-in-out infinite; }
+.cf-ot { position: absolute; left: 50%; top: 128px; transform: translateX(-50%) rotate(-2deg); font-size: 22px; color: var(--cyan); padding: 2px 14px; border-radius: 12px; background: rgba(27, 20, 70, 0.8); border: 3px solid var(--cyan); pointer-events: none; animation: cf-pulse 0.8s ease-in-out infinite alternate; }
+.cf-hud__row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cf-emotes { display: flex; gap: 5px; }
+.cf-emotes button { font-family: var(--font-display); font-size: 13px; padding: 4px 8px; border-radius: 12px; border: 3px solid var(--ink); background: var(--white); color: var(--ink); box-shadow: 0 3px 0 var(--ink); cursor: pointer; }
+.cf-emotes button:hover { background: var(--yellow); }
+.cf-emotes button:disabled { opacity: 0.45; }
+.cf-tip { position: fixed; z-index: 70; width: 230px; padding: 10px 12px; border-radius: 16px; background: linear-gradient(180deg, var(--ink-soft), var(--ink)); border: 3px solid var(--ink); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.45); pointer-events: none !important; }
+.cf-tip h3 { margin: 0; font-size: 20px; }
+.cf-tip p { margin: 4px 0 6px; font-weight: 700; font-size: 12px; line-height: 1.3; opacity: 0.9; }
+.cf-tip .cf-info__rar { text-align: left; font-size: 11px !important; margin: 0; }
+.cf-tip .cf-info__stats { margin-top: 4px; gap: 4px; }
+.cf-tip .cf-info__stats div { padding: 4px 6px; }
+.cf-tip .cf-info__stats b { font-size: 14px; }
+.cf-hand.nope { animation: cf-shake 0.35s ease; }
+.cf-deckinfo { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; font-weight: 800; font-size: 13px; }
+.cf-deckinfo__code { display: flex; gap: 6px; }
+.cf-deckinfo em { font-style: normal; color: var(--pink); margin-left: 8px; }
+.cf-deckinfo b { color: var(--cyan); font-family: var(--font-display); font-weight: 400; font-size: 16px; }
+
+/* Floating damage numbers */
+.cf-dmg { position: absolute; left: 0; top: 0; font-family: var(--font-display); font-size: 17px; color: #fff; text-shadow: 0 2px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink); pointer-events: none; will-change: transform, opacity; white-space: nowrap; }
+.cf-dmg.crit { font-size: 26px; color: var(--yellow); }
+.cf-dmg.tower { font-size: 24px; color: #ff4b5c; }
+
+@keyframes cf-full { from { box-shadow: 0 0 0 rgba(255, 106, 213, 0); } to { box-shadow: 0 0 16px rgba(255, 106, 213, 0.95); } }
+@keyframes cf-drop { 0% { opacity: 0.95; } 100% { opacity: 0; transform: translateY(6px); } }
+@keyframes cf-plus { 0% { opacity: 0; transform: translateY(6px) scale(0.6); } 25% { opacity: 1; transform: translateY(-8px) scale(1.15); } 100% { opacity: 0; transform: translateY(-34px) scale(1); } }
+@keyframes cf-bump { 50% { transform: scale(1.25); } }
+@keyframes cf-vig { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+

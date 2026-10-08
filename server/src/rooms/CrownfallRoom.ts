@@ -44,6 +44,7 @@ export class CrownfallRoom extends Room {
   private battleId = 0;
   private phase: CfLobbyView['phase'] = 'lobby';
   private startTimer = 0;
+  private lastEmote = new Map<string, number>();
 
   override onCreate(options: CfCreateOptions): void {
     this.roomId = claimRoomCode();
@@ -53,8 +54,20 @@ export class CrownfallRoom extends Room {
       const p = this.players.get(client.sessionId);
       const e = this.engine;
       if (!p || !e || this.phase !== 'battle') return;
-      const ok = e.play({ team: p.seat, cardId: String(msg?.cardId ?? ''), x: Number(msg?.x), y: Number(msg?.y) });
+      const x = Number(msg?.x);
+      const y = Number(msg?.y);
+      const ok = Number.isFinite(x) && Number.isFinite(y) && e.play({ team: p.seat, cardId: String(msg?.cardId ?? ''), x, y });
       if (!ok) client.send(CfMsg.Nope, { cardId: msg?.cardId });
+    });
+    this.onMessage(CfMsg.Emote, (client, msg: { emote?: number }) => {
+      const p = this.players.get(client.sessionId);
+      const n = Number(msg?.emote);
+      if (!p || !this.engine || this.phase !== 'battle' || !Number.isInteger(n) || n < 0 || n > 3) return;
+      // One taunt every 2.5 s per player.
+      const now = Date.now();
+      if (now - (this.lastEmote.get(client.sessionId) ?? 0) < 2500) return;
+      this.lastEmote.set(client.sessionId, now);
+      this.engine.emote(p.seat, n);
     });
     this.onMessage(CfMsg.Rematch, (client, msg: { deck?: string[] }) => {
       const p = this.players.get(client.sessionId);

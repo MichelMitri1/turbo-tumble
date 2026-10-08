@@ -1,4 +1,4 @@
-import type { TrackDefinition } from '../types/track';
+import type { LandmarkPlacement, TrackDefinition } from '../types/track';
 import { defineCourse } from './courseFactory';
 import { LAYOUTS, type CourseLayout } from './layouts';
 
@@ -24,6 +24,7 @@ export const SUNNY_CIRCUIT = defineCourse({
   difficulty: 'easy',
   seed: 1337,
   ...layout('sunny-circuit'),
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'castle', anchor: { distance: L * 0.36, side: 'right', wallOffset: 45 } }, { type: 'arch', anchor: { distance: L * 0.58 }, params: { style: 'banner' } }, { type: 'arch', anchor: { distance: L * 0.84 }, params: { style: 'banner' } }],
 });
 
 export const PALM_BAY = defineCourse({
@@ -33,6 +34,9 @@ export const PALM_BAY = defineCourse({
   difficulty: 'easy',
   seed: 201,
   ...layout('palm-bay'),
+  crowd: 'stand',
+  sea: 'south',
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'lighthouse', anchor: { distance: L * 0.47, side: 'left', wallOffset: 30 } }, { type: 'resort', anchor: { distance: L * 0.2, side: 'right', wallOffset: 22 } }, { type: 'arch', anchor: { distance: L * 0.72 }, params: { style: 'bamboo' } }],
 });
 
 export const HARVEST_LANE = defineCourse({
@@ -42,6 +46,8 @@ export const HARVEST_LANE = defineCourse({
   difficulty: 'easy',
   seed: 202,
   ...layout('harvest-lane'),
+  crowd: 'stand',
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'barn', anchor: { distance: L * 0.3, side: 'right', wallOffset: 26 } }, { type: 'arch', anchor: { distance: L * 0.66 }, params: { style: 'barnGate' } }],
 });
 
 export const MAPLE_GLEN = defineCourse({
@@ -51,6 +57,8 @@ export const MAPLE_GLEN = defineCourse({
   difficulty: 'easy',
   seed: 205,
   ...layout('maple-glen'),
+  crowd: 'stand',
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'giantTree', anchor: { distance: L * 0.42, side: 'left', wallOffset: 30 } }, { type: 'arch', anchor: { distance: L * 0.18 }, params: { style: 'wood' } }, { type: 'arch', anchor: { distance: L * 0.76 }, params: { style: 'wood' } }],
 });
 
 // ================================================================== Splash Cup (medium)
@@ -59,11 +67,15 @@ export const MAPLE_GLEN = defineCourse({
 export const CORAL_COVE = defineCourse({
   id: 'coral-cove',
   name: 'Coral Cove',
-  theme: 'tropical',
+  theme: 'beach',
   difficulty: 'medium',
   seed: 212,
   roadStyle: 'sand',
   ...layout('coral-cove'),
+  crowd: 'none',
+  sea: 'east',
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'cove', anchor: { distance: L * 0.32, side: 'right', wallOffset: 24 } }, { type: 'cove', anchor: { distance: L * 0.7, side: 'left', wallOffset: 22 }, params: { variant: 1 } }, { type: 'arch', anchor: { distance: L * 0.52 }, params: { style: 'bamboo' } }],
 });
 
 export const PINEWOOD_PASS = defineCourse({
@@ -73,15 +85,21 @@ export const PINEWOOD_PASS = defineCourse({
   difficulty: 'medium',
   seed: 203,
   ...layout('pinewood-pass'),
+  crowd: 'none',
+  billboards: 3,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'sawmill', anchor: { distance: L * 0.36, side: 'left', wallOffset: 26 } }, { type: 'arch', anchor: { distance: L * 0.7 }, params: { style: 'log' } }],
 });
 
 export const RIVER_RAPIDS = defineCourse({
   id: 'river-rapids',
   name: 'River Rapids',
-  theme: 'alpine',
+  theme: 'river',
   difficulty: 'medium',
   seed: 213,
   ...layout('river-rapids'),
+  crowd: 'none',
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'waterfall', anchor: { distance: L * 0.5, side: 'right', wallOffset: 30 }, params: { style: 'river' } }, { type: 'sawmill', anchor: { distance: L * 0.15, side: 'left', wallOffset: 30 }, params: { variant: 1 } }, { type: 'arch', anchor: { distance: L * 0.8 }, params: { style: 'rope' } }],
 });
 
 export const DUNE_CANYON = defineCourse({
@@ -92,6 +110,9 @@ export const DUNE_CANYON = defineCourse({
   seed: 204,
   roadStyle: 'sand',
   ...layout('dune-canyon'),
+  crowd: 'stand',
+  billboards: 3,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'pyramids', anchor: { distance: L * 0.42, side: 'left', wallOffset: 70 } }, { type: 'arch', anchor: { distance: L * 0.72 }, params: { style: 'sandstone' } }],
 });
 
 // ================================================================== Wild Cup (medium)
@@ -103,6 +124,9 @@ export const MUSHROOM_HOLLOW = defineCourse({
   difficulty: 'medium',
   seed: 206,
   ...layout('mushroom-hollow'),
+  crowd: 'none',
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'giantMushrooms', params: { count: 5 } }, { type: 'giantMushrooms', anchor: { distance: L * 0.55, side: 'right', wallOffset: 30 }, params: { count: 0, grove: true } }],
 });
 
 export const TEMPLE_RUINS = defineCourse({
@@ -113,15 +137,21 @@ export const TEMPLE_RUINS = defineCourse({
   seed: 207,
   roadStyle: 'cobble',
   ...layout('temple-ruins'),
+  crowd: 'none',
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'stepPyramid', anchor: { distance: L * 0.46, side: 'right', wallOffset: 40 } }, { type: 'arch', anchor: { distance: L * 0.2 }, params: { style: 'stone' } }, { type: 'arch', anchor: { distance: L * 0.76 }, params: { style: 'stone' } }],
 });
 
 export const JUNGLE_FALLS = defineCourse({
   id: 'jungle-falls',
   name: 'Jungle Falls',
-  theme: 'ruins',
+  theme: 'jungle',
   difficulty: 'medium',
   seed: 214,
   ...layout('jungle-falls'),
+  crowd: 'none',
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'waterfall', anchor: { distance: L * 0.3, side: 'left', wallOffset: 30 }, params: { style: 'jungle' } }, { type: 'idol', anchor: { distance: L * 0.64, side: 'right', wallOffset: 26 } }, { type: 'arch', anchor: { distance: L * 0.86 }, params: { style: 'vine' } }],
 });
 
 export const SUNSET_COAST = defineCourse({
@@ -132,6 +162,9 @@ export const SUNSET_COAST = defineCourse({
   seed: 209,
   ...layout('sunset-coast'),
   traffic: { count: 3, speed: 16 },
+  crowd: 'stand',
+  sea: 'west',
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'boardwalk', anchor: { distance: L * 0.4, side: 'left', wallOffset: 24 } }, { type: 'lighthouse', anchor: { distance: L * 0.8, side: 'right', wallOffset: 30 }, params: { stripes: '#2a4a9a' } }],
 });
 
 // ================================================================== Thunder Cup (medium–hard)
@@ -144,6 +177,9 @@ export const FROST_PEAK = defineCourse({
   seed: 208,
   roadStyle: 'ice',
   ...layout('frost-peak'),
+  crowd: 'stand',
+  billboards: 3,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'skiLift', anchor: { distance: L * 0.3, side: 'right', wallOffset: 22 } }, { type: 'arch', anchor: { distance: L * 0.62 }, params: { style: 'snow' } }],
 });
 
 export const NEON_METRO = defineCourse({
@@ -155,25 +191,31 @@ export const NEON_METRO = defineCourse({
   roadStyle: 'neon',
   ...layout('neon-metro'),
   traffic: { count: 5, speed: 15 },
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'neonTower', anchor: { distance: L * 0.45, side: 'left', wallOffset: 30 } }, { type: 'arch', anchor: { distance: L * 0.25 }, params: { style: 'neon' } }, { type: 'arch', anchor: { distance: L * 0.7 }, params: { style: 'neon' } }],
 });
 
 export const MOONLIT_MARSH = defineCourse({
   id: 'moonlit-marsh',
   name: 'Moonlit Marsh',
-  theme: 'mushroom',
+  theme: 'marsh',
   difficulty: 'medium',
   seed: 215,
   roadStyle: 'wood',
   ...layout('moonlit-marsh'),
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'marshGraves', anchor: { distance: L * 0.4, side: 'right', wallOffset: 22 } }, { type: 'arch', anchor: { distance: L * 0.15 }, params: { style: 'lantern' } }, { type: 'arch', anchor: { distance: L * 0.74 }, params: { style: 'lantern' } }],
 });
 
 export const CLOCKWORK_FACTORY = defineCourse({
   id: 'clockwork-factory',
   name: 'Clockwork Factory',
-  theme: 'city',
+  theme: 'factory',
   difficulty: 'hard',
   seed: 216,
   ...layout('clockwork-factory'),
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'factoryYard' }, { type: 'arch', anchor: { distance: L * 0.2 }, params: { style: 'girder' } }, { type: 'arch', anchor: { distance: L * 0.55 }, params: { style: 'girder' } }, { type: 'arch', anchor: { distance: L * 0.86 }, params: { style: 'girder' } }],
 });
 
 // ================================================================== Extreme Cup (hard)
@@ -185,6 +227,9 @@ export const VOLCANO_RUN = defineCourse({
   difficulty: 'hard',
   seed: 211,
   ...layout('volcano-run'),
+  billboards: 2,
+  crowd: 'none',
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'arch', anchor: { distance: L * 0.5 }, params: { style: 'obsidian' } }],
 });
 
 export const SKY_GARDEN = defineCourse({
@@ -196,25 +241,30 @@ export const SKY_GARDEN = defineCourse({
   space: true,
   startHeight: 40,
   ...layout('sky-garden'),
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'skyIslands' }, { type: 'arch', anchor: { distance: L * 0.15 }, params: { style: 'ring' } }, { type: 'arch', anchor: { distance: L * 0.4 }, params: { style: 'ring' } }, { type: 'arch', anchor: { distance: L * 0.65 }, params: { style: 'ring' } }, { type: 'arch', anchor: { distance: L * 0.9 }, params: { style: 'ring' } }],
 });
 
 export const GLACIER_GAUNTLET = defineCourse({
   id: 'glacier-gauntlet',
   name: 'Glacier Gauntlet',
-  theme: 'snow',
+  theme: 'glacier',
   difficulty: 'hard',
   seed: 218,
   roadStyle: 'ice',
   ...layout('glacier-gauntlet'),
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'iceSpires' }, { type: 'arch', anchor: { distance: L * 0.3 }, params: { style: 'ice' } }, { type: 'arch', anchor: { distance: L * 0.7 }, params: { style: 'ice' } }],
 });
 
 export const THUNDER_RIDGE = defineCourse({
   id: 'thunder-ridge',
   name: 'Thunder Ridge',
-  theme: 'desert',
+  theme: 'mesa',
   difficulty: 'hard',
   seed: 219,
   ...layout('thunder-ridge'),
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'stormTower', anchor: { distance: L * 0.42, side: 'left', wallOffset: 40 } }, { type: 'arch', anchor: { distance: L * 0.7 }, params: { style: 'rock' } }],
 });
 
 // ================================================================== Cosmic Cup (hardest)
@@ -222,46 +272,51 @@ export const THUNDER_RIDGE = defineCourse({
 export const STARLIGHT_HIGHWAY = defineCourse({
   id: 'starlight-highway',
   name: 'Starlight Highway',
-  theme: 'space',
+  theme: 'starlight',
   difficulty: 'hard',
   seed: 220,
   space: true,
   roadStyle: 'rainbow',
   startHeight: 30,
   ...layout('starlight-highway'),
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'spaceStation' }, { type: 'arch', anchor: { distance: L * 0.25 }, params: { style: 'star' } }, { type: 'arch', anchor: { distance: L * 0.75 }, params: { style: 'star' } }],
 });
 
 export const MAGMA_CORE = defineCourse({
   id: 'magma-core',
   name: 'Magma Core',
-  theme: 'volcano',
+  theme: 'magma',
   difficulty: 'hard',
   seed: 221,
   ...layout('magma-core'),
+  billboards: 0,
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'magmaCore' }, { type: 'arch', anchor: { distance: L * 0.3 }, params: { style: 'obsidian' } }, { type: 'arch', anchor: { distance: L * 0.68 }, params: { style: 'obsidian' } }],
 });
 
 export const COMET_COASTER = defineCourse({
   id: 'comet-coaster',
   name: 'Comet Coaster',
-  theme: 'space',
+  theme: 'comet',
   difficulty: 'hard',
   seed: 222,
   space: true,
   roadStyle: 'neon',
   startHeight: 30,
   ...layout('comet-coaster'),
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'comet' }, { type: 'arch', anchor: { distance: L * 0.2 }, params: { style: 'ring' } }, { type: 'arch', anchor: { distance: L * 0.45 }, params: { style: 'ring' } }, { type: 'arch', anchor: { distance: L * 0.8 }, params: { style: 'ring' } }],
 });
 
 export const PRISM_ROAD = defineCourse({
   id: 'prism-road',
   name: 'Prism Road',
-  theme: 'space',
+  theme: 'prism',
   difficulty: 'hard',
   seed: 223,
   space: true,
   roadStyle: 'rainbow',
   startHeight: 30,
   ...layout('prism-road'),
+  landmarks: (L): LandmarkPlacement[] => [{ type: 'prism' }, { type: 'arch', anchor: { distance: L * 0.3 }, params: { style: 'crystal' } }, { type: 'arch', anchor: { distance: L * 0.6 }, params: { style: 'crystal' } }, { type: 'arch', anchor: { distance: L * 0.9 }, params: { style: 'crystal' } }],
 });
 
 /** Cup order (and menus) follow this list. */

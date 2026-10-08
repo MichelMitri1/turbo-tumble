@@ -15,6 +15,11 @@ export function load(name: string): Promise<GLTF> {
   let p = cache.get(name);
   if (!p) {
     p = loader.loadAsync(`/assets/fps/${name}.glb`).then((g) => {
+      // Clones share this geometry for the page lifetime: mark it so per-match cleanup leaves it alone.
+      g.scene.traverse((n) => {
+        const m = n as THREE.Mesh;
+        if (m.isMesh) m.geometry.userData.cached = true;
+      });
       ready.set(name, g);
       return g;
     });
@@ -97,6 +102,9 @@ export const TEAM_LOOK = [
   { body: '#a48c62', dark: '#5a4a32', accent: '#d45b4b' },
 ] as const;
 
+/** Rig height (the skinned bounds walk every vertex: measure once). */
+let rigHeight = 0;
+
 /** A skinned soldier for third-person use. */
 export function soldierRig(team: 0 | 1): SoldierRig {
   const g = ready.get('soldier')!;
@@ -121,8 +129,11 @@ export function soldierRig(team: 0 | 1): SoldierRig {
     });
     m.material = Array.isArray(m.material) ? mats : mats[0]!;
   });
-  const box = new THREE.Box3().setFromObject(root);
-  const height = box.max.y - box.min.y || 1.8;
+  if (!rigHeight) {
+    const box = new THREE.Box3().setFromObject(root);
+    rigHeight = box.max.y - box.min.y || 1.8;
+  }
+  const height = rigHeight;
   const mixer = new THREE.AnimationMixer(root);
   const clips = new Map(g.animations.map((a) => [a.name, a]));
   return { root, mixer, clips, bones, materials, height };

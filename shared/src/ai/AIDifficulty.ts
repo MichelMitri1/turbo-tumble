@@ -29,7 +29,7 @@ export interface DifficultyProfile {
 export const DIFFICULTY: Record<Difficulty, DifficultyProfile> = {
   easy: { label: 'Easy', speedMul: 0.9, lineFollow: 0.45, laneWander: 2.8, driftSkill: 0.2, driftRadius: 30, cornerPace: 1.05, itemSkill: 0.3, itemDelay: 2, steerGain: 0.9, overtakes: false },
   normal: { label: 'Normal', speedMul: 1.0, lineFollow: 0.85, laneWander: 1.3, driftSkill: 0.75, driftRadius: 34, cornerPace: 1.25, itemSkill: 0.75, itemDelay: 0.7, steerGain: 1.1, overtakes: true },
-  hard: { label: 'Hard', speedMul: 1.06, lineFollow: 1, laneWander: 0.4, driftSkill: 1, driftRadius: 34, cornerPace: 1.4, itemSkill: 1, itemDelay: 0.15, steerGain: 1.25, overtakes: true },
+  hard: { label: 'Hard', speedMul: 1.06, lineFollow: 1, laneWander: 0.4, driftSkill: 1, driftRadius: 42, cornerPace: 1.3, itemSkill: 1, itemDelay: 0.15, steerGain: 1.25, overtakes: true },
 };
 
 /**

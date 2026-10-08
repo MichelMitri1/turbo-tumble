@@ -11,8 +11,12 @@ export interface CamSettings {
   swivel: number;
   transition: number;
   shake: boolean;
+  invertX: boolean;
+  invertY: boolean;
+  /** Ball cam button: press to toggle, or hold for ball cam. */
+  ballCamMode: 'toggle' | 'hold';
 }
-export const DEFAULT_CAM: CamSettings = { fov: 110, distance: 270, height: 100, angle: -4, stiffness: 0.45, swivel: 2.5, transition: 1.2, shake: true };
+export const DEFAULT_CAM: CamSettings = { fov: 110, distance: 270, height: 100, angle: -4, stiffness: 0.45, swivel: 2.5, transition: 1.2, shake: true, invertX: false, invertY: false, ballCamMode: 'toggle' };
 
 export interface CamTarget {
   pos: THREE.Vector3; // sim units
@@ -40,12 +44,23 @@ export class ChaseCamera {
   swivelY = 0;
   private yaw = 0;
   private pitch = 0;
+  /** Smoothed swivel (follows the stick at the swivel speed). */
+  private swX = 0;
+  private swY = 0;
   private readonly camUp = new THREE.Vector3(0, 1, 0);
   private ballBlend = 1;
   private shakeT = 0;
   private shakeAmp = 0;
   private initialized = false;
   private readonly lookOffset = new THREE.Vector3();
+  /** Camera shake / punch allowed ("Motion effects" setting). */
+  motion = true;
+  /** Ball-cam toggle in progress: the swing eases at the transition speed instead of snapping. */
+  private lastBallCam = true;
+  private swingT = 0;
+  private punchT = 0;
+  private punchAmp = 0;
+  private baseFov = 70;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 1200);
@@ -56,17 +71,74 @@ export class ChaseCamera {
     this.camera.aspect = aspect;
     // Rocket League's FOV is horizontal.
     const h = (this.settings.fov * Math.PI) / 180;
-    this.camera.fov = (2 * Math.atan(Math.tan(h / 2) / aspect) * 180) / Math.PI;
+    this.baseFov = (2 * Math.atan(Math.tan(h / 2) / aspect) * 180) / Math.PI;
+    this.camera.fov = this.baseFov;
     this.camera.updateProjectionMatrix();
   }
 
   shake(amount: number): void {
+    if (!this.motion) return;
     this.shakeAmp = Math.max(this.shakeAmp, amount);
     this.shakeT = 0.6;
   }
 
+  /** A quick FOV punch-in (kickoff "GO!", big hits): `amount` = fraction of the FOV. */
+  punch(amount: number): void {
+    if (!this.motion) return;
+    this.punchAmp = Math.max(this.punchAmp, amount);
+    this.punchT = 1;
+  }
+
   reset(): void {
     this.initialized = false;
+    this.bcInit = false;
+    this.swingT = 0;
+    this.lastBallCam = this.ballCam;
+  }
+
+  private applyPunch(dt: number): void {
+    if (this.punchT <= 0) {
+      if (this.camera.fov !== this.baseFov) {
+        this.camera.fov = this.baseFov;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
+    this.punchT = Math.max(0, this.punchT - dt * 4);
+    // Snap in, ease back out.
+    const k = this.punchT * this.punchT;
+    this.camera.fov = this.baseFov * (1 - this.punchAmp * k);
+    this.camera.updateProjectionMatrix();
+    if (this.punchT === 0) this.punchAmp = 0;
+  }
+
+  private bcInit = false;
+  private readonly bcTarget = new THREE.Vector3();
+  private readonly bcPos = new THREE.Vector3();
+  /** Stadium camera (replays): sits near `pos` and smoothly tracks `target` (three units). */
+  broadcast(pos: THREE.Vector3, target: THREE.Vector3, dt: number): void {
+    if (!this.bcInit) {
+      this.bcTarget.copy(target);
+      this.bcPos.copy(pos);
+      this.bcInit = true;
+    }
+    this.bcTarget.lerp(target, Math.min(1, dt * 7));
+    // Drift slightly toward the action, like a camera operator.
+    this.bcPos.lerp(this.v.copy(pos).lerp(target, 0.12), Math.min(1, dt * 1.5));
+    this.camera.position.copy(this.bcPos);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(this.bcTarget);
+    this.applyShake(dt);
+    this.applyPunch(dt);
+  }
+  private readonly v = new THREE.Vector3();
+
+  private applyShake(dt: number): void {
+    if (this.shakeT > 0 && this.settings.shake !== false && this.motion) {
+      this.shakeT -= dt;
+      const a = this.shakeAmp * Math.max(0, this.shakeT / 0.6);
+      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a));
+    } else this.shakeAmp = 0;
   }
 
   /** Free orbit (spectating / replays / end screen). */
@@ -90,6 +162,10 @@ export class ChaseCamera {
     let dir: THREE.Vector3;
     const ballThree = ball ? toThree(ball.x, ball.y, ball.z, new THREE.Vector3()) : null;
     const wantBall = this.ballCam && !!ballThree;
+    if (this.ballCam !== this.lastBallCam) {
+      this.lastBallCam = this.ballCam;
+      this.swingT = 1;
+    }
     this.ballBlend += ((wantBall ? 1 : 0) - this.ballBlend) * Math.min(1, dt * (1 / Math.max(0.05, st.transition)) * 4);
     if (wantBall && ballThree) dir = v1.copy(ballThree).sub(carPos);
     else {
@@ -120,8 +196,11 @@ export class ChaseCamera {
     const right0 = new THREE.Vector3().crossVectors(ref, this.camUp).normalize();
     const fwd0 = new THREE.Vector3().crossVectors(this.camUp, right0).normalize();
     let yaw = Math.atan2(flat.dot(right0), flat.dot(fwd0));
-    // Swivel (right stick): up to ~180° around.
-    yaw += this.swivelX * Math.PI;
+    // Swivel (right stick): up to ~180° around, eased at the swivel speed.
+    const swRate = Math.min(1, dt * st.swivel * 4);
+    this.swX += ((st.invertX ? -this.swivelX : this.swivelX) - this.swX) * swRate;
+    this.swY += ((st.invertY ? -this.swivelY : this.swivelY) - this.swY) * swRate;
+    yaw += this.swX * Math.PI;
     // Ball cam: the camera sits on the ball→car line (elevation follows the ball, clamped).
     let elev = 0;
     if (wantBall && ballThree && !this.rearView) {
@@ -129,28 +208,33 @@ export class ChaseCamera {
       const horiz = Math.max(1, d.clone().addScaledVector(this.camUp, -d.dot(this.camUp)).length());
       elev = Math.max(-0.25, Math.min(0.6, Math.atan2(d.dot(this.camUp) - 0.6, horiz + st.distance * S * 0.6))) * this.ballBlend;
     }
-    const pitch = elev + this.swivelY * 0.6;
+    const pitch = elev + this.swY * 0.6;
     if (!this.initialized) {
       this.yaw = yaw;
       this.pitch = pitch;
       this.initialized = true;
     }
-    // Smooth the swing (ball cam turns faster, like the game).
+    // Smooth the swing (ball cam turns faster, like the game). Right after a ball-cam
+    // toggle the swing eases over at the transition speed instead of whipping round.
     let dy = yaw - this.yaw;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
-    const rate = (wantBall ? 9 : 7.5) * (0.6 + st.stiffness);
+    // Tight heading follow so the car stays centred while turning (stiffness only softens it a little).
+    let rate = (wantBall ? 14 : 12) * (0.75 + 0.5 * st.stiffness);
+    if (this.swingT > 0) {
+      this.swingT = Math.max(0, this.swingT - dt * st.transition * 1.4);
+      const ease = this.swingT * this.swingT;
+      rate = rate * (1 - ease) + 3.2 * st.transition * ease;
+    }
     this.yaw += dy * Math.min(1, dt * rate);
     this.pitch += (pitch - this.pitch) * Math.min(1, dt * rate);
 
     const flatDir = fwd0.clone().multiplyScalar(Math.cos(this.yaw)).addScaledVector(right0, Math.sin(this.yaw));
     const side = new THREE.Vector3().crossVectors(flatDir, this.camUp).normalize();
     const viewDir = flatDir.clone().applyAxisAngle(side, this.pitch);
-    // Pull back with speed (lower stiffness = more stretch).
-    const speed = car.vel.length();
-    const stretch = 1 + (1 - st.stiffness) * Math.min(1, speed / 2300) * 0.18;
-    const dist = st.distance * S * stretch;
-    const camPos = carPos.clone().addScaledVector(viewDir, -dist).addScaledVector(this.camUp, st.height * S);
+    // Rigidly attached behind the car at a fixed distance: boosting, bumps and turns never
+    // push the car off-centre or away from the camera.
+    const camPos = carPos.clone().addScaledVector(viewDir, -st.distance * S).addScaledVector(this.camUp, st.height * S);
     // The camera may pass behind the walls / ceiling (like the real game); only the floor stops it.
     camPos.y = Math.max(0.25, camPos.y);
     const look = viewDir.clone().applyAxisAngle(side, (st.angle * Math.PI) / 180);
@@ -158,10 +242,7 @@ export class ChaseCamera {
     this.camera.up.copy(this.camUp);
     this.lookOffset.copy(camPos).add(look);
     this.camera.lookAt(this.lookOffset);
-    if (this.shakeT > 0 && this.settings.shake !== false) {
-      this.shakeT -= dt;
-      const a = this.shakeAmp * Math.max(0, this.shakeT / 0.6);
-      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a));
-    } else this.shakeAmp = 0;
+    this.applyShake(dt);
+    this.applyPunch(dt);
   }
 }

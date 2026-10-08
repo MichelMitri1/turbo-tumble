@@ -16,6 +16,19 @@ const P: Record<string, string> = {
   ffa: '<path d="M6 10a6 6 0 0 1 12 0c0 3-2 4-2 6H8c0-2-2-3-2-6z"/><path d="M9 19h6M10 11h.01M14 11h.01"/>',
   dom: '<path d="M6 21V3M6 4h11l-3 4 3 4H6"/>',
   kc: '<rect x="7" y="4" width="10" height="15" rx="3"/><circle cx="12" cy="7.5" r="1"/><path d="M10 12h4M10 15h4"/>',
+  // Weapon classes (kill feed): side profiles, muzzle to the right.
+  ar: '<path d="M2 10h15l3-1h2v3h-5l-1 2h-3l-1 4H9l1-4H6l-2 3H2z"/><path d="M12 14l-1 3"/>',
+  smg: '<path d="M4 9h12l2-1h3v3h-5v2h-3l-1 5H9l1-5H6v-2H4z"/>',
+  lmg: '<path d="M2 9h16l4-1v3h-6l-1 1h-4v2H8l-1 3H5l1-3H2z"/><rect x="9" y="12" width="4" height="4"/><path d="M15 12l2 4M19 12l-1 4"/>',
+  shotgun: '<path d="M2 10h20v2H11l-1 1H7l-2 4H3l1-4H2z"/><path d="M12 12h6v2h-6z"/>',
+  sniper: '<path d="M1 11h21v2H10l-2 2H5l-2 3H1l1-4z"/><rect x="8" y="7" width="7" height="3" rx="1"/><path d="M10 10v1M13 10v1"/>',
+  marksman: '<path d="M1 11h20v2H11l-1 3H8l1-3H5l-2 3H1l1-4z"/><rect x="8" y="8" width="5" height="2" rx="1"/>',
+  pistol: '<path d="M5 8h14v3h-8l-1 2H8l-1 5H4l1-5z"/>',
+  knife: '<path d="M3 15l12-8c3-2 5-2 6-1-2 4-6 7-11 9z"/><path d="M3 15l-1 2 3 1 1-2"/>',
+  grenade: '<circle cx="12" cy="14" r="6"/><path d="M10 8V6h4v2M14 6l3-2M12 11v6M9 14h6"/>',
+  barrel: '<path d="M12 3l2 5 5-2-2 5 5 2-5 2 2 5-5-2-2 5-2-5-5 2 2-5-5-2 5-2-2-5 5 2z"/>',
+  headshot: '<path d="M6 13a6 6 0 1 1 12 0v3h-2v3H8v-3H6z"/><circle cx="9.5" cy="12" r="1.5"/><circle cx="14.5" cy="12" r="1.5"/><path d="M11 19v-2M13 19v-2"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 };
 
 export function icon(name: string, cls = 'zh-ico'): string {

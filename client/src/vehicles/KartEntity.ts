@@ -43,6 +43,7 @@ export class KartEntity {
     grounded: true,
     boost: 0,
     drift: 0,
+    size: 1,
   };
   private readonly prevPos = new Vector3();
   private readonly prevQuat = new Quaternion();
@@ -149,5 +150,6 @@ export class KartEntity {
     c.grounded = s.grounded;
     c.boost = s.rocketTimer > 0 ? 1.3 : s.boostTimer > 0 ? 1 : 0;
     c.drift = s.drifting ? s.driftDir : 0;
+    c.size = this.view.size;
   }
 }

@@ -1,7 +1,8 @@
-import { Vector3, type Mesh, type Scene } from 'three';
+import { Vector3, type Mesh, type MeshStandardMaterial, type Scene } from 'three';
 import type { PhysicsWorld } from '@shared/physics/PhysicsWorld';
 import { RaceSimulation, type RacerSetup } from '@shared/race/RaceSimulation';
 import { ITEMS } from '@shared/items/ItemTypes';
+import { GP_POINTS } from '@shared/race/GrandPrix';
 import type { PlayerInput } from '@shared/types/input';
 import type { AssetLoader } from '../assets/AssetLoader';
 import { CHASE_CAMERA, tuningForViewport } from '../config/camera';
@@ -13,11 +14,11 @@ import { ChaseCamera } from '../rendering/ChaseCamera';
 import type { ViewRender } from '../rendering/Renderer';
 import { computeViewports, tvViewport, type ViewportRect } from '../rendering/ViewportLayout';
 import type { TrackRuntime } from '../tracks/TrackBuilder';
-import { Hud, formatTime, type ResultRow } from '../ui/Hud';
+import { Hud, formatTime, type IncomingThreat, type ResultRow } from '../ui/Hud';
 import type { MinimapDot } from '../ui/Minimap';
 import { KartEntity } from '../vehicles/KartEntity';
 import { buildKartRig } from '../vehicles/KartModelFactory';
-import { KartView } from '../vehicles/KartView';
+import { KartView, TAG_LAYER_FIRST } from '../vehicles/KartView';
 import type { Effects } from '../vfx/Effects';
 import { GhostPlayer, GhostRecorder, GhostStore, type GhostRun } from './Ghost';
 import { RacePresenter } from './RacePresenter';
@@ -27,6 +28,8 @@ import type { NetClient } from '../net/NetClient';
 import { NetRaceSync, type NetStats } from '../net/NetRaceSync';
 import type { GameAudio } from '../audio/GameAudio';
 import { RaceAudio } from '../audio/RaceAudio';
+import { Flyover } from './Flyover';
+import { INPUT_ACTIONS } from '../input/bindings';
 
 export interface SessionDeps {
   scene: Scene;
@@ -65,6 +68,11 @@ export class RaceSession {
   private spectateIndex = 0;
   private readonly tvRect: ViewportRect | null;
   private spectateTimer = SPECTATOR_SWITCH;
+  /** Rival name tags (off in 3–4 player split-screen, where they'd clutter the small views). */
+  private readonly showTags: boolean;
+  /** Pre-race flyover; the race clock waits while it plays. */
+  private intro: Flyover | null = null;
+  private readonly introPoses: Array<{ pos: Vector3; look: Vector3 }> = [];
   /** Online races: prediction / interpolation against the server. */
   readonly sync: NetRaceSync | null = null;
   /** Online menu open over the live race: local players coast. */
@@ -74,6 +82,7 @@ export class RaceSession {
   private recorder: GhostRecorder | null = null;
   private ghost: GhostPlayer | null = null;
   private record: GhostRun | null = null;
+  private ghostMaterials: MeshStandardMaterial[] = [];
   newRecord = false;
 
   constructor(
@@ -106,6 +115,7 @@ export class RaceSession {
             catchUp: config.mode === 'race' || config.mode === 'grandprix',
             seed,
             countdown: config.mode === 'attract' ? 0.5 : 4,
+            speedClass: config.speedClass ?? 150,
           },
       deps.physics,
       deps.track.path,
@@ -118,6 +128,7 @@ export class RaceSession {
       return k;
     });
     this.inputs = this.race.racers.map(() => null);
+    this.showTags = config.players.length >= 1 && config.players.length <= 2 && config.mode !== 'timetrial';
     if (online) this.sync = new NetRaceSync(online.net, online.start, this.race, this.karts);
     this.itemViews = new ItemViews(this.race, deps.fx);
     deps.fx.skids.clear();
@@ -129,10 +140,11 @@ export class RaceSession {
       const racerIndex = this.sync ? this.sync.seats[slot]! : this.race.racers.findIndex((r) => r.id === `p${slot + 1}`);
       const camera = new ChaseCamera(tuningForViewport(16 / 9, config.players.length), deps.physics);
       const many = config.players.length;
-      const hud = new Hud(deps.ui, deps.icons, deps.track.path, { standings: !timeTrial && many <= 2, minimap: true, timer: true, hint: many === 1 });
+      const hud = new Hud(deps.ui, deps.icons, deps.track.path, { standings: !timeTrial && many <= 2, minimap: true, timer: true, hint: many === 1, compactStandings: many > 1, mirror: config.mirror ?? false });
       const netId = online ? this.race.racers[racerIndex]!.id : `local:${slot}`;
       const player = new LocalPlayer(slot, netId, racerIndex, deps.input.createSource(p.device), this.karts[racerIndex]!, camera, hud);
       camera.snap(player.kart.chase);
+      camera.camera.layers.enable(TAG_LAYER_FIRST + slot);
       this.players.push(player);
     });
     // Attract mode, or the spare quarter in 3-player split-screen, gets a TV camera.
@@ -140,6 +152,7 @@ export class RaceSession {
     if (this.tvRect) {
       this.spectator = new ChaseCamera({ ...CHASE_CAMERA, distance: 9, height: 5.2, fov: 60 }, deps.physics);
       this.spectator.snap(this.karts[0]!.chase);
+      this.spectator.camera.layers.enable(TAG_LAYER_FIRST + 4);
     }
 
     this.audio = new RaceAudio(deps.audio, {
@@ -149,12 +162,48 @@ export class RaceSession {
       spectator: this.spectator?.camera ?? null,
       quiet: config.mode === 'attract',
       music: def.music,
+      mirror: config.mirror ?? false,
     });
 
     const gantry = deps.track.root.getObjectByName('start-gantry');
     this.presenter = new RacePresenter(this.race, this.players, this.karts, deps.fx, (gantry?.userData.startLights as Mesh[] | undefined) ?? []);
 
     if (timeTrial && this.players[0]) this.setupTimeTrial();
+
+    const wantsIntro = !online && config.mode !== 'attract' && this.players.length > 0 && new URLSearchParams(location.search).get('intro') !== '0';
+    if (wantsIntro) {
+      this.intro = new Flyover(deps.track.path);
+      for (const p of this.players) {
+        const cam = p.camera.camera;
+        this.introPoses.push({ pos: cam.position.clone(), look: cam.getWorldDirection(new Vector3()).multiplyScalar(10).add(cam.position) });
+        p.hud.setIntro(def.name);
+      }
+    }
+  }
+
+  /** Is the pre-race flyover still playing? */
+  get introPlaying(): boolean {
+    return this.intro !== null;
+  }
+
+  /** Flyover cameras; any button skips. Returns true while it is still playing. */
+  private updateIntro(dt: number): boolean {
+    const intro = this.intro;
+    if (!intro) return false;
+    const input = this.deps.input;
+    const skip = intro.time > 0.4 && (input.keyboard.anyPressed() || this.players.some((p) => INPUT_ACTIONS.some((a) => p.source.pressed(a))));
+    if (!skip) {
+      this.players.forEach((p, i) => intro.update(i === 0 ? dt : 0, p.camera.camera, this.introPoses[i]!.pos, this.introPoses[i]!.look));
+    }
+    if (skip || intro.done) {
+      this.intro = null;
+      for (const p of this.players) {
+        p.camera.snap(p.kart.chase);
+        p.hud.setIntro(null);
+      }
+      return false;
+    }
+    return true;
   }
 
   private setupTimeTrial(): void {
@@ -163,6 +212,7 @@ export class RaceSession {
     if (this.record) {
       const rig = buildKartRig(this.deps.assets, getKartBody(this.record.kartId), getCharacter(this.record.characterId));
       this.ghost = new GhostPlayer(this.record, rig.root);
+      this.ghostMaterials = rig.materials;
       this.deps.scene.add(rig.root);
     }
   }
@@ -213,9 +263,12 @@ export class RaceSession {
   tick(dt: number): void {
     for (const p of this.players) {
       p.source.read(p.input);
+      if (this.config.mirror) p.input.steer = -p.input.steer;
       if (this.suppressInput) Object.assign(p.input, { throttle: 0, brake: 0, steer: 0, drift: false, item: false });
       this.inputs[p.racerIndex] = p.input;
     }
+    // The grid waits for the flyover.
+    if (this.intro) return;
     if (this.sync) {
       this.sync.tick(
         this.players.map((p) => p.input),
@@ -266,6 +319,7 @@ export class RaceSession {
     this.pending.length = 0;
 
     this.updateThreats();
+    const intro = this.updateIntro(dt);
     const countdown = this.race.phase === 'countdown';
     for (const k of this.karts) {
       k.view.countdown = countdown;
@@ -279,13 +333,21 @@ export class RaceSession {
         fx.wallSparks(k.render.position, k.chase.forward, ev.wallHit);
       }
       if (ev.driftStageUp) fx.driftStageFlash(k.render.position, ev.driftStageUp);
-      if (ev.respawned) fx.respawnBeam(k.render.position);
+      if (ev.respawned && k.state.liftTimer <= 0) fx.respawnBeam(k.render.position);
+      if (k.view.takeTrick()) {
+        fx.trickSparkle(k.render.position);
+        this.audio.trick(k.racer.index);
+      }
       if (ev.miniTurbo) {
         k.view.kick(ev.miniTurbo);
         fx.miniTurbo(k.render.position, ev.miniTurbo);
       }
       const timed = k.racer.slot.timer > 0 ? k.racer.slot.timedItem : null;
       k.view.setAccessory(timed);
+      if (this.showTags) {
+        const owner = this.players.find((p) => p.racerIndex === k.racer.index);
+        k.view.setTag(k.racer.name, k.racer.progress.position, getCharacter(k.racer.characterId).color, owner ? TAG_LAYER_FIRST + owner.slot : null);
+      }
       k.view.update(k.render, k.state, dt);
       if (dt > 0) fx.kart(k.racer.index, k.render, k.state, dt);
     }
@@ -297,7 +359,7 @@ export class RaceSession {
         if (ev.landed > 4) p.camera.kickLanding(ev.landed);
         if (ev.wallHit > 4) p.camera.addTrauma(Math.min(0.55, ev.wallHit / 22));
         if (ev.miniTurbo) p.camera.addTrauma(0.08 * ev.miniTurbo);
-        if (dt > 0 || this.race.phase === 'countdown') p.camera.update(p.kart.chase, Math.max(dt, 0));
+        if (!intro && (dt > 0 || this.race.phase === 'countdown')) p.camera.update(p.kart.chase, Math.max(dt, 0));
       }
       this.updateHud(p, dt);
     }
@@ -337,6 +399,39 @@ export class RaceSession {
     }
   }
 
+  /**
+   * The most urgent shot homing in on racer `me`: drones locked onto them, a Crown
+   * Buster after them, or anything closing fast from behind. Drives the HUD edge
+   * warning (and its beep).
+   */
+  private incomingFor(me: number): IncomingThreat | null {
+    const k = this.karts[me]!;
+    const p = k.render.position;
+    const fwd = k.chase.forward;
+    let best: IncomingThreat | null = null;
+    for (const e of this.race.items.entities.list) {
+      if (e.dead || e.attach !== 'none' || e.owner === me) continue;
+      const homing = (e.kind === 'seeker' || e.kind === 'crown') && e.target === me;
+      if (!homing && e.kind !== 'puck' && e.kind !== 'fireball' && e.kind !== 'seeker') continue;
+      const rx = e.position.x - p.x;
+      const rz = e.position.z - p.z;
+      const dist = Math.hypot(rx, rz);
+      const range = homing ? 70 : 22;
+      if (dist > range || dist < 0.3) continue;
+      if (!homing) {
+        const behind = (rx * fwd.x + rz * fwd.z) / dist < -0.3;
+        const closing = -(rx * e.velocity.x + rz * e.velocity.z) / dist > 5;
+        if (!behind || !closing) continue;
+      }
+      const urgency = 1 - dist / range;
+      if (best && best.urgency >= urgency) continue;
+      const side = Math.max(-1, Math.min(1, (rx * -fwd.z + rz * fwd.x) / dist));
+      best = { icon: this.deps.icons[e.kind === 'crown' ? 'crownBuster' : e.kind] ?? '', side, urgency };
+    }
+    if (best) this.audio.incoming(me, best.urgency);
+    return best;
+  }
+
   private updateSpectator(dt: number): void {
     this.spectateTimer -= dt;
     if (this.spectateTimer <= 0) {
@@ -368,9 +463,12 @@ export class RaceSession {
       speedFx: this.speedFx(r),
       slipstreamCharge: r.state.slipstreamCharge / 1.2,
       slipstreamActive: r.state.slipstreamTimer > 0,
-      jumpFlight: r.state.jumpFlight,
+      trickable: !r.state.grounded && (r.state.jumpFlight || r.state.lipSpeed > 15),
       jumpTrick: r.state.jumpTrick,
+      reserve: slot.reserve,
+      reserveRoulette: slot.reserveRoulette,
     });
+    p.hud.setIncoming(this.incomingFor(r.index));
     const shownTime = r.progress.finished ? r.progress.finishTime : Math.max(0, this.race.time);
     const currentLap = !r.progress.finished && r.progress.lap >= 1 ? Math.max(0, this.race.time - r.progress.lapStartTime) : null;
     p.hud.updateTimer(shownTime, r.progress.lapTimes, currentLap, this.record?.time ?? null);
@@ -439,13 +537,14 @@ export class RaceSession {
     const end = this.sync?.end;
     if (end) {
       const mine = this.race.racers[me]!.id;
-      return end.rows.map((row) => ({ position: row.position, name: `${row.name}  +${row.points}`, time: row.finished ? formatTime(row.time) : 'DNF', me: row.id === mine }));
+      return end.rows.map((row) => ({ position: row.position, name: row.name, time: row.finished ? formatTime(row.time) : 'DNF', me: row.id === mine, points: row.points }));
     }
-    return this.race.standings().map((r) => ({
+    return this.race.standings().map((r, i) => ({
       position: r.progress.position,
       name: r.name,
       time: r.progress.finished ? formatTime(r.progress.finishTime) : `Lap ${Math.max(1, r.progress.lap)}`,
       me: r.index === me,
+      points: GP_POINTS[i] ?? 0,
     }));
   }
 
@@ -454,9 +553,12 @@ export class RaceSession {
     this.sync?.dispose();
     this.audio.dispose();
     this.race.dispose();
-    for (const k of this.karts) scene.remove(k.view.root, k.view.contactShadow);
+    for (const k of this.karts) k.view.dispose();
     scene.remove(this.itemViews.root);
-    if (this.ghost) scene.remove(this.ghost.model);
+    if (this.ghost) {
+      scene.remove(this.ghost.model);
+      for (const m of this.ghostMaterials) m.dispose();
+    }
     for (const p of this.players) p.hud.dispose();
   }
 

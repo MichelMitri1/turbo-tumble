@@ -2,9 +2,10 @@ import { Room, ServerError, type Client } from '@colyseus/core';
 import { World, type PlayerInfo, type WorldEvent } from '../../../client/src/rocket/sim/world';
 import { Bots, BOT_NAMES } from '../../../client/src/rocket/sim/bot';
 import { NO_CONTROLS, type Controls } from '../../../client/src/rocket/sim/car';
-import { TICK } from '../../../client/src/rocket/sim/constants';
+import { CAR_IDS, TICK } from '../../../client/src/rocket/sim/constants';
 import { unpackControls, writeSnapshot } from '../../../client/src/rocket/sim/snapshot';
 import { RB_MAX_PER_TEAM, RB_VERSION, RbMsg, type RbBegin, type RbConfig, type RbInput, type RbJoin, type RbLobby, type RbLobbyPlayer } from '../../../client/src/rocket/net/protocol';
+import { isArenaId, pickArena, type ArenaId } from '../../../client/src/rocket/arenas';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
 
@@ -16,7 +17,7 @@ interface Member {
   connected: boolean;
 }
 
-const BODIES = new Set(['octane', 'dominus', 'breakout']);
+const BODIES = new Set<string>(CAR_IDS);
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Player';
 const SERVER_EVENTS = new Set<WorldEvent['k']>(['goal', 'demo', 'over', 'overtime', 'kickoff']);
 
@@ -30,7 +31,7 @@ export class RocketRoom extends Room {
   override maxClients = RB_MAX_PER_TEAM * 2;
   private members = new Map<string, Member>();
   private hostId = '';
-  private config: RbConfig = { size: 2, botLevel: 'pro', length: 300, bots: true };
+  private config: RbConfig = { size: 2, botLevel: 'pro', length: 300, bots: true, arena: 'random' };
   private phase: RbLobby['phase'] = 'lobby';
   private world: World | null = null;
   private bots: Bots | null = null;
@@ -42,32 +43,38 @@ export class RocketRoom extends Room {
   private overTimer = 0;
   private statsTimer = 0;
   private snapBuf: Float32Array | null = null;
+  /** The running match's seed and arena (sent to late joiners / reconnects too). */
+  private seed = 0;
+  private arena: ArenaId = 'dome';
 
   override onCreate(options: RbJoin): void {
     this.roomId = claimRoomCode();
     void this.setPrivate(options?.visibility !== 'public');
     void this.setMetadata({ code: this.roomId, game: 'boostball' });
-    this.onMessage(RbMsg.Config, (client, c: Partial<RbConfig>) => {
-      if (client.sessionId !== this.hostId || this.phase !== 'lobby') return;
+    this.onMessage(RbMsg.Config, (client, c: Partial<RbConfig> | undefined) => {
+      if (client.sessionId !== this.hostId || this.phase !== 'lobby' || !c || typeof c !== 'object') return;
       if (c.size === 1 || c.size === 2 || c.size === 3) this.config.size = c.size;
       if (c.botLevel === 'rookie' || c.botLevel === 'pro' || c.botLevel === 'allstar') this.config.botLevel = c.botLevel;
       if (typeof c.length === 'number' && [120, 180, 300, 600].includes(c.length)) this.config.length = c.length;
       if (typeof c.bots === 'boolean') this.config.bots = c.bots;
+      if (c.arena === 'random' || isArenaId(c.arena)) this.config.arena = c.arena;
       this.balance();
       this.sendLobby();
     });
-    this.onMessage(RbMsg.Team, (client, m: { team?: number }) => {
+    this.onMessage(RbMsg.Team, (client, m: { team?: number } | undefined) => {
       const me = this.members.get(client.sessionId);
-      if (!me || this.phase !== 'lobby' || (m.team !== 0 && m.team !== 1)) return;
-      const count = [...this.members.values()].filter((x) => x.team === m.team && x !== me).length;
+      const team = m?.team;
+      if (!me || this.phase !== 'lobby' || (team !== 0 && team !== 1)) return;
+      const count = [...this.members.values()].filter((x) => x.team === team && x !== me).length;
       if (count >= RB_MAX_PER_TEAM) return client.send(RbMsg.Error, { msg: 'That team is full.' });
-      me.team = m.team;
+      me.team = team;
       this.config.size = Math.max(this.config.size, count + 1) as RbConfig['size'];
       this.sendLobby();
     });
-    this.onMessage(RbMsg.Body, (client, m: { body?: string }) => {
+    this.onMessage(RbMsg.Body, (client, m: { body?: unknown } | undefined) => {
       const me = this.members.get(client.sessionId);
-      if (me && m.body && BODIES.has(m.body)) me.body = m.body as Member['body'];
+      const body = m?.body;
+      if (me && typeof body === 'string' && BODIES.has(body)) me.body = body as Member['body'];
       this.sendLobby();
     });
     this.onMessage(RbMsg.Start, (client) => {
@@ -90,12 +97,12 @@ export class RocketRoom extends Room {
       }
       this.latestTick.set(id, Math.max(this.latestTick.get(id) ?? 0, m.t + n - 1));
     });
-    this.onMessage(RbMsg.Chat, (client, m: { g?: number; i?: number }) => {
+    this.onMessage(RbMsg.Chat, (client, m: { g?: number; i?: number } | undefined) => {
       const id = this.ids.get(client.sessionId);
-      if (id == null || typeof m.g !== 'number' || typeof m.i !== 'number') return;
+      if (id == null || typeof m?.g !== 'number' || typeof m.i !== 'number') return;
       this.broadcast(RbMsg.Chat, { id, g: Math.max(0, Math.min(3, m.g | 0)), i: Math.max(0, Math.min(3, m.i | 0)) });
     });
-    this.onMessage(RbMsg.Ping, (client, m: { t: number }) => client.send(RbMsg.Ping, { t: m?.t ?? 0 }));
+    this.onMessage(RbMsg.Ping, (client, m: { t?: unknown } | undefined) => client.send(RbMsg.Ping, { t: typeof m?.t === 'number' ? m.t : 0 }));
     this.setSimulationInterval((ms) => this.update(ms), 1000 / 60);
     console.log(`[boostball ${this.roomId}] created`);
   }
@@ -106,7 +113,7 @@ export class RocketRoom extends Room {
     const t0 = [...this.members.values()].filter((m) => m.team === 0).length;
     const t1 = this.members.size - t0;
     const team: 0 | 1 = t0 <= t1 ? 0 : 1;
-    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, body: BODIES.has(o?.body) ? o.body : 'octane', connected: true });
+    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, body: o?.body && BODIES.has(o.body) ? o.body : 'octane', connected: true });
     if (!this.hostId) this.hostId = client.sessionId;
     this.balance();
     this.sendLobby();
@@ -154,7 +161,7 @@ export class RocketRoom extends Room {
   }
 
   private beginMsg(): RbBegin {
-    return { players: this.world!.players.map((p) => ({ ...p })), ids: Object.fromEntries(this.ids), seed: 0, length: this.config.length, lan: LAN_MODE };
+    return { players: this.world!.players.map((p) => ({ ...p })), ids: Object.fromEntries(this.ids), seed: this.seed, length: this.config.length, lan: LAN_MODE, arena: this.arena };
   }
 
   private startMatch(): void {
@@ -169,10 +176,13 @@ export class RocketRoom extends Room {
     if (this.config.bots) {
       for (const team of [0, 1] as const) {
         const have = players.filter((p) => p.team === team).length;
-        for (let i = have; i < this.config.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: (['octane', 'dominus', 'breakout'] as const)[Math.floor(Math.random() * 3)]! });
+        for (let i = have; i < this.config.size; i++) players.push({ id: id++, name: names.pop()!, team, bot: true, body: CAR_IDS[Math.floor(Math.random() * CAR_IDS.length)]! });
       }
     }
-    this.world = new World(players, this.config.length, (Math.random() * 1e9) | 0);
+    // Clients build their World from the same seed, so their kickoff matches ours.
+    this.seed = (Math.random() * 1e9) | 0;
+    this.arena = pickArena(this.config.arena);
+    this.world = new World(players, this.config.length, this.seed);
     this.bots = new Bots(this.world, this.config.botLevel);
     this.inputBuf.clear();
     this.lastInput.clear();

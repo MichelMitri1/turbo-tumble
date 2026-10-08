@@ -121,7 +121,8 @@ export function applyCamo(gun: THREE.Object3D, camoId: string): void {
           .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = camoColor(vCamoP, pat, c1, c2, c3, ctime, camoSpark);')
           .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * camoSpark + (pat == 6 ? diffuseColor.rgb * 0.35 : vec3(0.0));');
       };
-      mat.customProgramCacheKey = () => `camo-${c.id}`;
+      // Same GLSL for every camo (only uniforms differ), so one program serves them all.
+      mat.customProgramCacheKey = () => 'camo';
       return mat;
     });
     m.material = Array.isArray(m.material) ? out : out[0]!;

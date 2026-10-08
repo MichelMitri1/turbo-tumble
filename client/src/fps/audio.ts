@@ -1,14 +1,28 @@
 import type { WeaponClass } from './sim/weapons';
 
+export type Surface = 'hard' | 'soft' | 'metal' | 'wood';
+
+/** Enemy gunfire further than this is inaudible under the action (and costs nodes). */
+const SHOT_CULL = 70;
+
 /** Procedural war sounds: gunshots per weapon class (with distance), reloads, hits, explosions, announcer. */
 export class FpsAudio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private verb: ConvolverNode | null = null;
+  /** Reverb send shared by every sound (one gain per sound instead of one per burst). */
+  private verbIn: GainNode | null = null;
   private heli: { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
   volume = 0.7;
   announcer = true;
+  /** Slowest speechSynthesis.speak() call so far (ms), for the perf probe. */
+  sayMs = 0;
+
+  constructor() {
+    // The voice list loads lazily; ask early so the first callout doesn't wait for it.
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices();
+  }
 
   unlock(): void {
     if (this.ctx) {
@@ -34,9 +48,19 @@ export class FpsAudio {
     }
     this.verb = c.createConvolver();
     this.verb.buffer = ir;
-    const vg = c.createGain();
-    vg.gain.value = 0.25;
-    this.verb.connect(vg).connect(this.master);
+    this.verbIn = c.createGain();
+    this.verbIn.gain.value = 0.25;
+    this.verbIn.connect(this.verb).connect(this.master);
+    // The first utterance initialises the speech engine (can stall a frame): do it now, silently, at menu time.
+    if (typeof speechSynthesis !== 'undefined') {
+      try {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        speechSynthesis.speak(u);
+      } catch {
+        /* no voice */
+      }
+    }
   }
 
   setVolume(v: number): void {
@@ -44,9 +68,25 @@ export class FpsAudio {
     if (this.master) this.master.gain.value = v;
   }
 
-  private burst(dur: number, freq: number, q: number, vol: number, type: BiquadFilterType, delay = 0, sweep = 0, verb = 0, pan = 0): void {
+  /** One output per sound: a panner into the master (+ an optional reverb send). Every part of the sound connects here. */
+  private out(pan: number, verb = 0): AudioNode | null {
     const c = this.ctx;
-    if (!c || !this.master || !this.noise) return;
+    if (!c || !this.master) return null;
+    if (!pan && !verb) return this.master;
+    const p = c.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    p.connect(this.master);
+    if (verb && this.verbIn) {
+      const vg = c.createGain();
+      vg.gain.value = verb;
+      p.connect(vg).connect(this.verbIn);
+    }
+    return p;
+  }
+
+  private burst(dur: number, freq: number, q: number, vol: number, type: BiquadFilterType, delay = 0, sweep = 0, dest: AudioNode | null = this.master): void {
+    const c = this.ctx;
+    if (!c || !dest || !this.noise) return;
     const t = c.currentTime + delay;
     const s = c.createBufferSource();
     s.buffer = this.noise;
@@ -58,21 +98,14 @@ export class FpsAudio {
     const g = c.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    const p = c.createStereoPanner();
-    p.pan.value = Math.max(-1, Math.min(1, pan));
-    s.connect(f).connect(g).connect(p).connect(this.master);
-    if (verb && this.verb) {
-      const vg = c.createGain();
-      vg.gain.value = verb;
-      g.connect(vg).connect(this.verb);
-    }
+    s.connect(f).connect(g).connect(dest);
     s.start(t, Math.random() * 1.5);
     s.stop(t + dur + 0.05);
   }
 
-  private tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 1, delay = 0, pan = 0): void {
+  private tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 1, delay = 0, dest: AudioNode | null = this.master): void {
     const c = this.ctx;
-    if (!c || !this.master) return;
+    if (!c || !dest) return;
     const t = c.currentTime + delay;
     const o = c.createOscillator();
     const g = c.createGain();
@@ -82,62 +115,113 @@ export class FpsAudio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + 0.004);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    const p = c.createStereoPanner();
-    p.pan.value = pan;
-    o.connect(g).connect(p).connect(this.master);
+    o.connect(g).connect(dest);
     o.start(t);
     o.stop(t + dur + 0.05);
   }
 
   /** A gunshot. `dist` in metres (0 = you), `pan` −1..1. */
   shot(cls: WeaponClass, suppressed: boolean, dist = 0, pan = 0): void {
+    if (dist > SHOT_CULL || !this.ctx) return;
     const near = Math.max(0.04, 1 / (1 + dist * 0.06));
     if (suppressed) {
-      this.burst(0.08, 1400, 0.8, 0.45 * near, 'bandpass', 0, 0.5, 0, pan);
-      this.tone(160, 0.06, 'sine', 0.25 * near, 0.6, 0, pan);
+      if (dist > 30) return;
+      const o = this.out(pan);
+      this.burst(0.08, 1400, 0.8, 0.45 * near, 'bandpass', 0, 0.5, o);
+      this.tone(160, 0.06, 'sine', 0.25 * near, 0.6, 0, o);
       return;
     }
     const heavy = cls === 'sniper' || cls === 'shotgun' ? 1.6 : cls === 'pistol' ? 0.75 : cls === 'lmg' ? 1.15 : cls === 'smg' ? 0.85 : 1;
-    // Crack (high), body (mid), boom (low), tail (reverb).
+    // Crack (high), body (mid), boom (low), tail (reverb). Far shots are just a dull body.
     const far = dist > 25;
-    if (!far) this.burst(0.05, 3500, 0.7, 0.55 * near, 'highpass', 0, 0.4, 0, pan);
-    this.burst(0.16 * heavy, far ? 700 : 1300, 0.6, 0.8 * near, 'lowpass', 0, 0.35, 0.6, pan);
-    this.tone(far ? 70 : 95 * (2 - heavy * 0.5), 0.14 * heavy, 'sine', 0.75 * near * heavy, 0.45, 0, pan);
-    if (cls === 'sniper') this.burst(0.9, 500, 0.5, 0.35 * near, 'lowpass', 0.05, 0.3, 0.9, pan);
+    const o = this.out(pan, 0.6);
+    if (!far) this.burst(0.05, 3500, 0.7, 0.55 * near, 'highpass', 0, 0.4, o);
+    this.burst(0.16 * heavy, far ? 700 : 1300, 0.6, 0.8 * near, 'lowpass', 0, 0.35, o);
+    if (!far || heavy > 1.1) this.tone(far ? 70 : 95 * (2 - heavy * 0.5), 0.14 * heavy, 'sine', 0.75 * near * heavy, 0.45, 0, o);
+    if (cls === 'sniper') this.burst(0.9, 500, 0.5, 0.35 * near, 'lowpass', 0.05, 0.3, o);
   }
 
+  /** Reload foley per weapon class: mag out, mag in, then bolt / slide / pump. `t` = reload length. */
   reload(cls: WeaponClass, t: number): void {
-    // Mag out, mag in, slide/bolt.
-    this.click(0.15, 900);
-    this.click(t * 0.55, 1200);
-    if (cls !== 'shotgun') this.click(t * 0.85, 700, 0.35);
-    else for (let i = 0; i < 4; i++) this.click(0.4 + i * (t / 5), 1500, 0.2);
+    if (cls === 'shotgun') {
+      const shells = Math.max(2, Math.min(6, Math.round(t / 0.5)));
+      for (let i = 0; i < shells; i++) this.click(0.3 + (i * (t - 0.7)) / shells, 1500, 0.2, 'shell');
+      this.click(t - 0.2, 500, 0.35);
+      this.click(t - 0.08, 800, 0.35);
+      return;
+    }
+    if (cls === 'lmg') {
+      // Box mag: lid, belt rattle, lid slam.
+      this.click(0.3, 1100, 0.25);
+      for (let i = 0; i < 6; i++) this.click(t * 0.35 + i * 0.05, 2600 + i * 120, 0.08);
+      this.click(t * 0.7, 700, 0.35);
+      this.click(t * 0.9, 600, 0.35);
+      return;
+    }
+    this.click(0.15, cls === 'pistol' ? 1300 : 900);
+    this.click(t * 0.55, cls === 'pistol' ? 1600 : 1200, 0.28);
+    if (cls === 'sniper') {
+      this.click(t * 0.78, 600, 0.3);
+      this.click(t * 0.88, 900, 0.3);
+    } else if (cls === 'pistol') this.click(t * 0.85, 2000, 0.3);
+    else this.click(t * 0.85, cls === 'smg' ? 900 : 700, 0.35);
   }
   bolt(): void {
     this.click(0.12, 600, 0.3);
     this.click(0.3, 900, 0.3);
   }
-  private click(delay: number, f: number, vol = 0.25): void {
-    this.burst(0.04, f, 2, vol, 'bandpass', delay);
-    this.tone(f * 1.8, 0.03, 'square', vol * 0.25, 1, delay);
+  private click(delay: number, f: number, vol = 0.25, kind: 'click' | 'shell' = 'click'): void {
+    this.burst(kind === 'shell' ? 0.06 : 0.04, f, 2, vol, 'bandpass', delay);
+    this.tone(f * (kind === 'shell' ? 1.2 : 1.8), 0.03, kind === 'shell' ? 'triangle' : 'square', vol * 0.25, 1, delay);
   }
   empty(): void {
     this.click(0, 2400, 0.2);
   }
+  /** Hit: a short dry tick. Kill: a bright two-note ding on top. */
   hitmarker(kill: boolean, head: boolean): void {
-    this.tone(head ? 2600 : 1800, 0.05, 'square', 0.12);
-    this.burst(0.03, 4000, 3, 0.25, 'bandpass');
+    this.burst(0.025, head ? 5200 : 4000, 3, 0.3, 'bandpass');
+    this.tone(head ? 2600 : 1900, 0.035, 'square', 0.08);
     if (kill) {
-      this.tone(1300, 0.09, 'sine', 0.18, 1, 0.04);
-      this.tone(1750, 0.14, 'sine', 0.15, 1, 0.1);
+      this.tone(1568, 0.22, 'sine', 0.2, 1, 0.02);
+      this.tone(2349, 0.32, 'sine', 0.14, 1, 0.07);
+      this.tone(3136, 0.18, 'triangle', 0.05, 1, 0.07);
     }
   }
   hurt(): void {
     this.burst(0.12, 300, 1, 0.4, 'lowpass');
   }
-  footstep(dist: number, pan = 0): void {
+  /** Footstep on a surface: heel + toe (+ scuff), filtered by what's underfoot. */
+  footstep(dist: number, pan = 0, surface: Surface = 'hard'): void {
+    if (dist > 30) return;
     const v = Math.max(0.02, 0.22 / (1 + dist * 0.25));
-    this.burst(0.06, 220 + Math.random() * 80, 1.4, v, 'bandpass', 0, 0, 0, pan);
+    const o = this.out(pan);
+    const r = 0.9 + Math.random() * 0.2;
+    if (surface === 'soft') {
+      this.burst(0.09, 500 * r, 0.8, v * 0.9, 'bandpass', 0, 0.6, o);
+      this.burst(0.07, 1800 * r, 0.6, v * 0.35, 'highpass', 0.05, 0, o);
+    } else if (surface === 'metal') {
+      this.burst(0.05, 260 * r, 1.4, v, 'bandpass', 0, 0, o);
+      this.tone(420 * r, 0.12, 'triangle', v * 0.25, 0.9, 0.01, o);
+      this.burst(0.04, 2400 * r, 2, v * 0.4, 'bandpass', 0.05, 0, o);
+    } else if (surface === 'wood') {
+      this.burst(0.06, 180 * r, 1.2, v * 1.1, 'bandpass', 0, 0, o);
+      this.burst(0.05, 700 * r, 1.6, v * 0.5, 'bandpass', 0.045, 0, o);
+    } else {
+      this.burst(0.05, 240 * r, 1.4, v, 'bandpass', 0, 0, o);
+      this.burst(0.04, 1200 * r, 1.2, v * 0.45, 'bandpass', 0.05, 0, o);
+      if (Math.random() < 0.5) this.burst(0.06, 3000 * r, 0.8, v * 0.15, 'highpass', 0.07, 0, o);
+    }
+  }
+  /** A bullet snapping past your head. */
+  whizz(pan = 0): void {
+    const o = this.out(pan);
+    this.burst(0.14, 3200, 4, 0.35, 'bandpass', 0, 0.35, o);
+    this.burst(0.06, 6000, 1, 0.12, 'highpass', 0, 0, o);
+  }
+  /** One double-thump heartbeat (low health). */
+  heartbeat(vol: number): void {
+    this.tone(55, 0.12, 'sine', 0.5 * vol, 0.8);
+    this.tone(48, 0.14, 'sine', 0.38 * vol, 0.8, 0.22);
   }
   land(): void {
     this.burst(0.12, 180, 1, 0.35, 'lowpass');
@@ -148,12 +232,18 @@ export class FpsAudio {
   }
   explosion(dist: number, pan = 0): void {
     const v = Math.max(0.08, 1.2 / (1 + dist * 0.05));
-    this.burst(1.8, 900, 0.4, v, 'lowpass', 0, 0.08, 1, pan);
-    this.tone(45, 0.9, 'sine', v, 0.5, 0, pan);
-    this.burst(0.25, 3000, 0.6, v * 0.4, 'highpass', 0, 0.3, 0, pan);
+    const o = this.out(pan, 1);
+    this.burst(1.8, 900, 0.4, v, 'lowpass', 0, 0.08, o);
+    this.tone(45, 0.9, 'sine', v, 0.5, 0, o);
+    if (dist < 60) this.burst(0.25, 3000, 0.6, v * 0.4, 'highpass', 0, 0.3, o);
   }
-  jet(): void {
-    this.burst(3.2, 400, 0.5, 0.7, 'bandpass', 0, 6, 0.4);
+  /** Jet fly-over: a rising roar into a falling howl, panned with the jet. */
+  jet(dist = 0, pan = 0): void {
+    const v = Math.max(0.15, 0.9 / (1 + dist * 0.015));
+    const o = this.out(pan, 0.4);
+    this.burst(1.2, 300, 0.5, v * 0.6, 'bandpass', 0, 5, o);
+    this.burst(2.4, 1600, 0.4, v, 'bandpass', 0.9, 0.2, o);
+    this.burst(2.2, 120, 0.6, v * 0.8, 'lowpass', 0.9, 0.5, o);
   }
   heliLoop(on: boolean, dist = 30): void {
     const c = this.ctx;
@@ -176,6 +266,7 @@ export class FpsAudio {
       lfo.start();
       src.connect(filter).connect(gain).connect(this.master);
       src.start();
+      src.onended = () => lfo.stop();
       this.heli = { src, gain, filter };
     } else if (!on && this.heli) {
       this.heli.gain.gain.setTargetAtTime(0, c.currentTime, 0.3);
@@ -190,6 +281,13 @@ export class FpsAudio {
   capture(): void {
     [523, 659, 784].forEach((f, i) => this.tone(f, 0.18, 'triangle', 0.14, 1, i * 0.1));
   }
+  /** Dog tag: bright chime when confirmed, lower when denied. */
+  tag(confirmed: boolean): void {
+    const base = confirmed ? 988 : 659;
+    this.tone(base, 0.1, 'triangle', 0.14);
+    this.tone(base * 1.5, 0.16, 'triangle', 0.11, 1, 0.07);
+    this.burst(0.05, 5000, 2, 0.12, 'bandpass', 0.02);
+  }
   medal(): void {
     this.tone(1046, 0.08, 'triangle', 0.1);
     this.tone(1568, 0.12, 'triangle', 0.08, 1, 0.06);
@@ -201,6 +299,7 @@ export class FpsAudio {
   /** CoD-style voice callouts via the browser's speech synthesis. */
   say(text: string): void {
     if (!this.announcer || typeof speechSynthesis === 'undefined') return;
+    const t0 = performance.now();
     try {
       const u = new SpeechSynthesisUtterance(text);
       const voices = speechSynthesis.getVoices();
@@ -213,5 +312,6 @@ export class FpsAudio {
     } catch {
       /* no voice */
     }
+    this.sayMs = Math.max(this.sayMs, performance.now() - t0);
   }
 }

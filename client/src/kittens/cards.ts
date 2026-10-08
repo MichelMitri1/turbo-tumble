@@ -20,6 +20,10 @@ export type CardType =
   | 'godcat' // Angel Cat: play as any card except Nope
   | 'devilcat' // Demon Cat: explode (lives on the playmat)
   | 'feral' // wild cat card
+  | 'imploding' // (expansion) first draw: reinsert face up; drawn face up: you implode, no Defuse
+  | 'reverse' // (expansion) reverse turn order, end your turn without drawing
+  | 'bottom' // (expansion) Draw From the Bottom: end your turn drawing the bottom card
+  | 'alter' // (expansion) Alter the Future: see the top 3 and reorder them
   | 'cat'; // powerless cat card (pairs / triples)
 
 export type CatKind = 'pizza' | 'robo' | 'cactus' | 'disco' | 'banana' | 'mustache' | 'sushi' | 'rainbow' | 'potato';
@@ -29,33 +33,41 @@ export interface Card {
   id: number;
   type: CardType;
   cat?: CatKind;
+  /** Lies face up in the draw pile (the reinserted Imploding Kitten). */
+  faceUp?: boolean;
 }
 
 export interface CardInfo {
   name: string;
   text: string;
+  /** One-liner printed on cards in your hand (the full text shows in the zoomed preview). */
+  short: string;
   /** Hand-sorting order. */
   order: number;
   color: string;
 }
 
 export const CARD_INFO: Record<CardType, CardInfo> = {
-  kitten: { name: 'Kaboom Kitten', text: 'Show this immediately. Unless you have a Defuse, you explode and you are out.', order: 0, color: '#2a1f3d' },
-  defuse: { name: 'Defuse', text: 'Instead of exploding, secretly put the Kaboom Kitten back into the deck anywhere you like.', order: 1, color: '#43c26b' },
-  nope: { name: 'Nope', text: 'Stop any action except a Kaboom Kitten or a Defuse. Play any time — even on another Nope.', order: 2, color: '#e8334a' },
-  attack: { name: 'Attack 2×', text: 'End your turn without drawing. The next player takes two turns in a row.', order: 3, color: '#ff8c1a' },
-  targeted: { name: 'Targeted Attack 2×', text: 'End your turn without drawing. Choose ANY player to take two turns in a row.', order: 4, color: '#ff5a1a' },
-  skip: { name: 'Skip', text: 'End your turn without drawing a card.', order: 5, color: '#3f8cff' },
-  favor: { name: 'Favor', text: 'One player must give you a card of their choice.', order: 6, color: '#ff6ad5' },
-  shuffle: { name: 'Shuffle', text: 'Shuffle the draw pile.', order: 7, color: '#9b4dff' },
-  future: { name: 'See the Future 3×', text: 'Privately look at the top three cards of the draw pile.', order: 8, color: '#5b3fd8' },
-  reveal: { name: 'Reveal the Future 3×', text: 'Show EVERYONE the top three cards of the draw pile.', order: 8, color: '#5b3fd8' },
-  heck: { name: 'Raising Heck', text: 'Take the bottom card. Keep it, or put it on top of the pile. Ends your turn.', order: 9, color: '#c2263a' },
-  armageddon: { name: 'Armageddon', text: 'Angel vs Demon! Only while the Angel Cat is on the playmat. Ends your turn.', order: 10, color: '#1b1446' },
-  godcat: { name: 'Angel Cat', text: 'Play as ANY card except a Nope — even a Defuse. Then it returns to the playmat.', order: 11, color: '#ffd23f' },
-  devilcat: { name: 'Demon Cat', text: 'Whoever ends Armageddon with me explodes. Discard a Defuse or die.', order: 12, color: '#b0122c' },
-  feral: { name: 'Feral Cat', text: 'Use as any cat card in a pair or a triple.', order: 13, color: '#ff4fd8' },
-  cat: { name: 'Cat', text: 'Powerless alone. Play two of a kind to steal a random card, three to name the card you want.', order: 14, color: '#ffb84a' },
+  kitten: { name: 'Kaboom Kitten', text: 'Show this immediately. Unless you have a Defuse, you explode and you are out.', short: 'Explode unless you Defuse.', order: 0, color: '#2a1f3d' },
+  defuse: { name: 'Defuse', text: 'Instead of exploding, secretly put the Kaboom Kitten back into the deck anywhere you like.', short: 'Saves you from a kitten.', order: 1, color: '#43c26b' },
+  nope: { name: 'Nope', text: 'Stop any action except a Kaboom Kitten or a Defuse. Play any time — even on another Nope.', short: 'Stop any action. Any time.', order: 2, color: '#e8334a' },
+  attack: { name: 'Attack 2×', text: 'End your turn without drawing. The next player takes two turns in a row.', short: 'Next player takes 2 turns.', order: 3, color: '#ff8c1a' },
+  targeted: { name: 'Targeted Attack 2×', text: 'End your turn without drawing. Choose ANY player to take two turns in a row.', short: 'Anyone you pick takes 2 turns.', order: 4, color: '#ff5a1a' },
+  skip: { name: 'Skip', text: 'End your turn without drawing a card.', short: 'End turn without drawing.', order: 5, color: '#3f8cff' },
+  favor: { name: 'Favor', text: 'One player must give you a card of their choice.', short: 'Someone gives you a card.', order: 6, color: '#ff6ad5' },
+  shuffle: { name: 'Shuffle', text: 'Shuffle the draw pile.', short: 'Shuffle the draw pile.', order: 7, color: '#9b4dff' },
+  future: { name: 'See the Future 3×', text: 'Privately look at the top three cards of the draw pile.', short: 'Peek at the top 3.', order: 8, color: '#5b3fd8' },
+  reveal: { name: 'Reveal the Future 3×', text: 'Show EVERYONE the top three cards of the draw pile.', short: 'Show all the top 3.', order: 8, color: '#5b3fd8' },
+  heck: { name: 'Raising Heck', text: 'Take the bottom card. Keep it, or put it on top of the pile. Ends your turn.', short: 'Take the bottom card.', order: 9, color: '#c2263a' },
+  armageddon: { name: 'Armageddon', text: 'Angel vs Demon! Only while the Angel Cat is on the playmat. Ends your turn.', short: 'Angel vs Demon duel.', order: 10, color: '#1b1446' },
+  godcat: { name: 'Angel Cat', text: 'Play as ANY card except a Nope — even a Defuse. Then it returns to the playmat.', short: 'Play as any card but Nope.', order: 11, color: '#ffd23f' },
+  devilcat: { name: 'Demon Cat', text: 'Whoever ends Armageddon with me explodes. Discard a Defuse or die.', short: 'Get me and you explode.', order: 12, color: '#b0122c' },
+  feral: { name: 'Feral Cat', text: 'Use as any cat card in a pair or a triple.', short: 'Matches any cat card.', order: 13, color: '#ff4fd8' },
+  imploding: { name: 'Imploding Kitten', text: 'First time drawn: put it back FACE UP anywhere in the deck. Drawn face up: you implode. No Defuse can save you.', short: 'Face up: you are out.', order: 0, color: '#1a2a3d' },
+  reverse: { name: 'Reverse', text: 'Reverse the order of play and end your turn without drawing a card.', short: 'Flip turn order, no draw.', order: 5, color: '#2ab5a0' },
+  bottom: { name: 'Draw From the Bottom', text: 'End your turn by drawing the bottom card of the deck instead of the top one.', short: 'End turn, draw the bottom.', order: 9, color: '#7a5a3a' },
+  alter: { name: 'Alter the Future 3×', text: 'Privately look at the top three cards and put them back in any order.', short: 'See & reorder the top 3.', order: 8, color: '#5b3fd8' },
+  cat: { name: 'Cat', text: 'Powerless alone. Play two of a kind to steal a random card, three to name the card you want.', short: 'Pair up to steal a card.', order: 14, color: '#ffb84a' },
 };
 
 export const CAT_NAMES: Record<CatKind, string> = {
@@ -99,4 +111,14 @@ export const DECKS: Record<DeckId, { name: string; blurb: string; counts: Partia
 };
 
 /** Card types the Angel Cat may be played as (on your turn). */
-export const GODCAT_AS: CardType[] = ['attack', 'targeted', 'skip', 'favor', 'shuffle', 'future', 'reveal', 'heck'];
+export const GODCAT_AS: CardType[] = ['attack', 'targeted', 'skip', 'favor', 'shuffle', 'future', 'reveal', 'heck', 'reverse', 'bottom', 'alter'];
+
+/** Imploding Kittens pack: added on top of either deck (one Imploding Kitten replaces one Kaboom Kitten). */
+export const IMPLODING_PACK: { counts: Partial<Record<CardType, number>>; feral: number } = { counts: { reverse: 4, bottom: 4, alter: 4, targeted: 3 }, feral: 4 };
+
+/** Which action card types exist in a game (for Angel Cat choices and triple naming). */
+export function typesInPlay(deck: DeckId, imploding: boolean): CardType[] {
+  const t = Object.keys(DECKS[deck].counts) as CardType[];
+  if (imploding) for (const k of Object.keys(IMPLODING_PACK.counts) as CardType[]) if (!t.includes(k)) t.push(k);
+  return t;
+}

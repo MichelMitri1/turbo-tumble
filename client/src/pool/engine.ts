@@ -1,4 +1,4 @@
-import { FOOT_SPOT_X, HEAD_STRING_X, POCKETS, R, Sim, rack, spotFree, BOUNDS, type BallRest, type ShotInput, type SimEvent } from './physics';
+import { ESCAPED, FOOT_SPOT_X, HEAD_STRING_X, ON_TABLE, POCKETS, R, Sim, rack, spotFree, BOUNDS, type BallRest, type ShotInput, type SimEvent } from './physics';
 
 /**
  * 8-ball rules (WPA-style, as in the popular online game):
@@ -6,7 +6,8 @@ import { FOOT_SPOT_X, HEAD_STRING_X, POCKETS, R, Sim, rack, spotFree, BOUNDS, ty
  *  - first legally pocketed ball after the break picks your group (solids 1–7 / stripes 9–15)
  *  - pot one of yours (and no foul) to keep shooting
  *  - fouls → opponent gets ball in hand anywhere: scratch, hitting nothing, hitting
- *    the wrong ball first, no ball reaching a cushion after contact, running out of time
+ *    the wrong ball first, no ball reaching a cushion after contact, knocking a ball
+ *    off the table (it's respotted), running out of time
  *  - clear your group, then call a pocket and sink the 8. The 8 early, in the wrong
  *    pocket, or with a foul loses the game. 8 on the break is re-spotted.
  */
@@ -27,13 +28,18 @@ export interface Rules {
   /** Seconds per shot (0 = unlimited). */
   shotTime: number;
 }
+/** Extra seconds the engine's clock runs beyond shotTime: clients start their ring after the shot replay (strike pre-roll + network). */
+export const CLOCK_GRACE = 0.8;
+/** Real seconds between the table stopping and the next turn. */
+const REST_PAD = 0.15;
 
 export type Action = { t: 'shoot'; shot: ShotInput; cue?: { x: number; y: number }; call?: number };
 
 export type GameEvent =
   | { k: 'start'; breaker: string }
   | { k: 'shot'; by: string; seq: number; start: BallRest[]; shot: ShotInput; call: number }
-  | { k: 'result'; by: string; pocketed: number[]; foul: string | null; assigned: Group | null; keep: boolean; respot8: boolean }
+  /** foul is a predicate ("hit a stripe first") so the UI can prefix the player; firstHit / scratch say which ball / pocket to highlight. */
+  | { k: 'result'; by: string; pocketed: number[]; foul: string | null; firstHit: number; scratch: number; assigned: Group | null; keep: boolean; respot8: boolean }
   | { k: 'turn'; player: string; ballInHand: boolean }
   | { k: 'timeout'; by: string }
   | { k: 'left'; by: string }
@@ -96,13 +102,13 @@ export class PoolEngine {
 
   /** Object balls of a group still on the table. */
   remaining(g: Group): number[] {
-    return this.balls.filter((b) => b.pocket < 0 && groupOf(b.id) === g).map((b) => b.id);
+    return this.balls.filter((b) => b.pocket === ON_TABLE && groupOf(b.id) === g).map((b) => b.id);
   }
 
   /** What the current player must hit first: their group, the 8, or anything (open). */
   targets(p: Player = this.current): number[] {
     if (!p.group) {
-      const open = this.balls.filter((b) => b.pocket < 0 && b.id !== 0 && b.id !== 8).map((b) => b.id);
+      const open = this.balls.filter((b) => b.pocket === ON_TABLE && b.id !== 0 && b.id !== 8).map((b) => b.id);
       return open.length ? open : [8];
     }
     const mine = this.remaining(p.group);
@@ -119,7 +125,7 @@ export class PoolEngine {
   private beginTurn(ballInHand: boolean): void {
     this.phase = 'aim';
     this.ballInHand = ballInHand;
-    this.shotLeft = this.rules.shotTime;
+    this.shotLeft = this.rules.shotTime ? this.rules.shotTime + CLOCK_GRACE : 0;
     this.events.push({ k: 'turn', player: this.current.id, ballInHand });
   }
 
@@ -144,7 +150,7 @@ export class PoolEngine {
       const cue = this.balls.find((b) => b.id === 0)!;
       cue.x = a.cue.x;
       cue.y = a.cue.y;
-      cue.pocket = -1;
+      cue.pocket = ON_TABLE;
     }
     const call = this.onEight() ? (a.call ?? -1) : -1;
     if (this.onEight() && (call < 0 || call >= POCKETS.length)) return 'Call a pocket for the 8-ball.';
@@ -165,7 +171,7 @@ export class PoolEngine {
     sim.runToRest();
     this.balls = sim.rest();
     this.phase = 'rolling';
-    this.rollLeft = sim.t + 0.4;
+    this.rollLeft = sim.t + REST_PAD;
     this.judge(sim, call, targets, onEight);
   }
 
@@ -177,11 +183,19 @@ export class PoolEngine {
     const pocketed = pots.map((e) => e.a);
     const cueIn = pocketed.includes(0);
     const objects = pocketed.filter((id) => id !== 0);
+    // A ball knocked off the table comes back to the foot spot; the cue ball is ball in hand anyway.
+    const escaped = this.balls.filter((b) => b.pocket === ESCAPED);
+    for (const b of escaped) if (b.id !== 0) this.respot(b.id);
     let foul: string | null = null;
-    if (cueIn) foul = 'Scratch! The cue ball went in.';
-    else if (sim.firstHit < 0) foul = 'Foul: the cue ball hit nothing.';
-    else if (!wasBreak && !targets.has(sim.firstHit)) foul = sim.firstHit === 8 ? 'Foul: hit the 8-ball first.' : `Foul: hit the ${groupOf(sim.firstHit) ?? ''} ball first.`.replace('  ', ' ');
-    else if (!wasBreak && !objects.length && !sim.railAfterHit) foul = 'Foul: no ball reached a cushion.';
+    if (cueIn) foul = 'potted the cue ball';
+    else if (escaped.some((b) => b.id === 0)) foul = 'knocked the cue ball off the table';
+    else if (sim.firstHit < 0) foul = 'hit nothing';
+    else if (!wasBreak && !targets.has(sim.firstHit)) foul = sim.firstHit === 8 ? 'hit the 8-ball first' : `hit a ${groupOf(sim.firstHit) === 'solids' ? 'solid' : 'stripe'} first`;
+    else if (escaped.length) foul = 'knocked a ball off the table';
+    else if (!wasBreak && !objects.length && !sim.railAfterHit) foul = 'drove no ball to a cushion';
+    const scratch = pots.find((e) => e.a === 0)?.pocket ?? -1;
+    const result = (assigned: Group | null, keep: boolean, respot8: boolean) =>
+      this.events.push({ k: 'result', by: p.id, pocketed: objects, foul, firstHit: sim.firstHit, scratch, assigned, keep, respot8 });
     this.isBreak = false;
     this.kitchen = false;
     // The 8-ball.
@@ -190,12 +204,12 @@ export class PoolEngine {
     if (eight) {
       if (wasBreak) {
         respot8 = true;
-        this.respotEight();
+        this.respot(8);
       } else if (onEight && !foul && eight.pocket === call) {
-        this.result(p, objects, foul, null, false, respot8);
+        result(null, false, respot8);
         return this.finish(p.id, 'potted the 8-ball');
       } else {
-        this.result(p, objects, foul, null, false, respot8);
+        result(null, false, respot8);
         const why = !onEight ? 'potted the 8-ball too early' : foul ? 'fouled on the 8-ball' : 'potted the 8 in the wrong pocket';
         return this.finish(this.other.id, `${p.name} ${why}`);
       }
@@ -212,13 +226,13 @@ export class PoolEngine {
     }
     const mine = objects.filter((id) => (wasBreak ? id !== 8 : p.group ? groupOf(id) === p.group : id !== 8));
     const keep = !foul && mine.length > 0;
-    this.result(p, objects, foul, assigned, keep, respot8);
+    result(assigned, keep, respot8);
     this.lastFoul = foul;
     if (foul) {
       const cue = this.balls.find((b) => b.id === 0)!;
-      if (cue.pocket >= 0) {
+      if (cue.pocket !== ON_TABLE) {
         // Put it back somewhere legal (the next player can move it anyway).
-        cue.pocket = -1;
+        cue.pocket = ON_TABLE;
         this.placeDefaultCue();
       }
       this.cur = 1 - this.cur;
@@ -234,10 +248,6 @@ export class PoolEngine {
     this.pendingTurn = ballInHand;
   }
 
-  private result(p: Player, pocketed: number[], foul: string | null, assigned: Group | null, keep: boolean, respot8: boolean): void {
-    this.events.push({ k: 'result', by: p.id, pocketed, foul, assigned, keep, respot8 });
-  }
-
   private finish(winner: string, reason: string): void {
     this.phase = 'over';
     this.winner = winner;
@@ -246,23 +256,27 @@ export class PoolEngine {
     this.events.push({ k: 'over', winner, reason });
   }
 
-  private respotEight(): void {
-    const b8 = this.balls.find((b) => b.id === 8)!;
-    b8.pocket = -1;
-    for (let dx = 0; dx < 1; dx += 0.01) {
-      if (spotFree(this.balls, FOOT_SPOT_X + dx, 0, 8)) {
-        b8.x = FOOT_SPOT_X + dx;
-        b8.y = 0;
+  /** Back on the foot spot, or the nearest free point on the long string (toward the foot rail first). */
+  private respot(id: number): void {
+    const b = this.balls.find((x) => x.id === id)!;
+    b.pocket = ON_TABLE;
+    for (let k = 0; k < 200; k++) {
+      const x = FOOT_SPOT_X + (k < 100 ? k * 0.01 : -(k - 100) * 0.01);
+      if (x < -BOUNDS.HL + R || x > BOUNDS.HL - R) continue;
+      if (spotFree(this.balls, x, 0, id)) {
+        b.x = x;
+        b.y = 0;
         return;
       }
     }
   }
 
+  /** The cue ball's resting place after a scratch: just behind the head string, in the middle. */
   private placeDefaultCue(): void {
     const cue = this.balls.find((b) => b.id === 0)!;
     for (let k = 0; k < 400; k++) {
-      const x = HEAD_STRING_X - (k % 20) * 0.02 * (k % 2 ? 1 : -1);
-      const y = (Math.floor(k / 20) - 10) * 0.05;
+      const x = HEAD_STRING_X - 0.1 - Math.floor(k / 20) * 0.03;
+      const y = Math.ceil((k % 20) / 2) * 0.05 * (k % 2 ? 1 : -1);
       if (spotFree(this.balls, x, y, 0)) {
         cue.x = x;
         cue.y = y;
@@ -284,11 +298,9 @@ export class PoolEngine {
     if (this.phase !== 'aim' || !this.rules.shotTime) return;
     this.shotLeft -= dt;
     if (this.shotLeft > 0) return;
-    // Out of time: foul, ball in hand for the opponent.
+    // Out of time: foul, ball in hand for the opponent (who breaks instead if the rack is still intact).
     this.events.push({ k: 'timeout', by: this.current.id });
-    this.lastFoul = 'Out of time!';
-    this.isBreak = false;
-    this.kitchen = false;
+    this.lastFoul = 'ran out of time';
     this.cur = 1 - this.cur;
     this.beginTurn(true);
   }

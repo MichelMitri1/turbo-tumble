@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Car } from '../sim/car';
-import { BODIES, BALL_RADIUS, BOOST_PADS, STEER_ANGLE_CURVE, POWERSLIDE_STEER_CURVE, curve, type CarBody } from '../sim/constants';
+import { BALL_RADIUS, BOOST_PADS, CARS, STEER_ANGLE_CURVE, POWERSLIDE_STEER_CURVE, carBody, carInfo, curve, type CarBody, type CarId } from '../sim/constants';
 import { S, toThree } from './arenaMesh';
 import { TEAM_COLORS } from './colors';
 
@@ -17,7 +17,8 @@ interface Template {
   wheel: THREE.Mesh;
   bodyBox: THREE.Box3;
 }
-const templates = new Map<CarBody['id'], Template>();
+/** Loaded models by file name. */
+const templates = new Map<string, Template>();
 let palette: THREE.Texture | null = null;
 
 /** Team paint cells in Kenney's 8×8 colormap (column, rows 2–3). */
@@ -50,9 +51,10 @@ function teamPalette(src: THREE.Texture): THREE.Texture {
 
 export async function loadCars(): Promise<void> {
   const loader = new GLTFLoader();
+  const models = [...new Set(Object.values(CARS).map((c) => c.model))];
   await Promise.all(
-    Object.values(BODIES).map(async (b) => {
-      const gltf = await loader.loadAsync(`/assets/rocket/${b.model}.glb`);
+    models.map(async (model) => {
+      const gltf = await loader.loadAsync(`/assets/rocket/${model}.glb`);
       let body: THREE.Object3D | null = null;
       let wheel: THREE.Mesh | null = null;
       gltf.scene.traverse((o) => {
@@ -61,18 +63,34 @@ export async function loadCars(): Promise<void> {
         const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
         if (m?.map && !palette) palette = teamPalette(m.map);
       });
-      if (!body || !wheel) throw new Error(`model ${b.model}: missing body/wheel`);
+      if (!body || !wheel) throw new Error(`model ${model}: missing body/wheel`);
       const bodyObj = body as THREE.Object3D;
       bodyObj.position.set(0, 0, 0);
       bodyObj.updateMatrixWorld(true);
-      templates.set(b.id, { body: bodyObj, wheel, bodyBox: new THREE.Box3().setFromObject(bodyObj) });
+      templates.set(model, { body: bodyObj, wheel, bodyBox: new THREE.Box3().setFromObject(bodyObj) });
     }),
   );
 }
 
-/** Clone a model part with the team paint (UVs of paint cells moved to the team column). */
-function paintClone(src: THREE.Object3D, team: 0 | 1): THREE.Object3D {
+/**
+ * Car materials are shared by every car (the team paint is a UV shift into the
+ * shared palette): one satin clear-coat body material and one rubber wheel
+ * material, compiled once at init.
+ */
+let shared: { body: THREE.MeshPhysicalMaterial; wheel: THREE.MeshStandardMaterial } | null = null;
+function carMaterials(): NonNullable<typeof shared> {
+  // Body: satin car paint with a light clear coat (no mirror shine). Wheels: rubber.
+  shared ??= {
+    body: new THREE.MeshPhysicalMaterial({ map: palette, roughness: 0.52, metalness: 0.08, clearcoat: 0.3, clearcoatRoughness: 0.4, envMapIntensity: 0.65 }),
+    wheel: new THREE.MeshStandardMaterial({ map: palette, roughness: 0.62, metalness: 0.15, envMapIntensity: 0.9 }),
+  };
+  return shared;
+}
+
+/** Clone a model part with the team paint (UVs of paint cells moved to the team column). Geometries are per clone (disposed with the view). */
+function paintClone(src: THREE.Object3D, team: 0 | 1, glossy = false): THREE.Object3D {
   const o = src.clone(true);
+  const mats = carMaterials();
   o.traverse((n) => {
     const mesh = n as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -86,12 +104,7 @@ function paintClone(src: THREE.Object3D, team: 0 | 1): THREE.Object3D {
       if ((row === 2 || row === 3) && col >= 3 && col <= 7) uv.setX(i, u + (PAINT_COL[team] - col) / 8);
     }
     mesh.geometry = g;
-    const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-    if (palette) mat.map = palette;
-    mat.roughness = 0.38;
-    mat.metalness = 0.35;
-    mat.envMapIntensity = 1.1;
-    mesh.material = mat;
+    mesh.material = glossy ? mats.body : mats.wheel;
     mesh.castShadow = true;
   });
   return o;
@@ -101,6 +114,8 @@ const flameGeo = new THREE.ConeGeometry(1, 1, 14, 1, true).rotateZ(Math.PI / 2).
 
 export class CarView {
   readonly root = new THREE.Group();
+  /** Pooled views are re-assigned to a new car. */
+  carId: number;
   private readonly wheels: Array<{ pivot: THREE.Group; steer: THREE.Group; spin: THREE.Group; front: boolean }> = [];
   private readonly flame: THREE.Group;
   private readonly flameOuter: THREE.Mesh;
@@ -115,18 +130,19 @@ export class CarView {
   readonly wheelWorld = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
 
   constructor(
-    readonly carId: number,
+    carId: number,
     readonly team: 0 | 1,
-    bodyId: CarBody['id'],
+    readonly carModel: CarId,
   ) {
-    this.body = BODIES[bodyId];
-    const t = templates.get(bodyId)!;
+    this.carId = carId;
+    this.body = carBody(carModel);
+    const t = templates.get(carInfo(carModel).model)!;
     const b = this.body;
     // Body: forward (+z model) → +x car; scaled to the hitbox length, a bit wider than the stock model.
     const size = t.bodyBox.getSize(new THREE.Vector3());
     const s = (b.hitbox[0] * S) / size.z;
     const model = new THREE.Group();
-    const body = paintClone(t.body, this.team);
+    const body = paintClone(t.body, this.team, true);
     const center = t.bodyBox.getCenter(new THREE.Vector3());
     body.position.set(-center.x, -t.bodyBox.min.y, -center.z);
     model.add(body);
@@ -210,9 +226,47 @@ export class CarView {
     }
   }
 
+  /** Free the cloned geometries and the flame materials (car materials and the palette are shared). */
   dispose(): void {
     this.root.removeFromParent();
+    this.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.geometry === flameGeo) return;
+      m.geometry.dispose();
+    });
+    (this.flameOuter.material as THREE.Material).dispose();
+    (this.flameInner.material as THREE.Material).dispose();
   }
+}
+
+/**
+ * Views are pooled per (model, team): building one clones ~10 geometries, so
+ * re-using them keeps match start free of allocation hitches.
+ */
+const pool = new Map<string, CarView[]>();
+export function acquireCarView(carId: number, team: 0 | 1, model: CarId): CarView {
+  const list = pool.get(`${model}:${team}`);
+  const v = list?.pop();
+  if (v) {
+    pooled--;
+    v.carId = carId;
+    v.errPos.set(0, 0, 0);
+    v.errQuat.identity();
+    v.root.visible = true;
+    return v;
+  }
+  return new CarView(carId, team, model);
+}
+let pooled = 0;
+export function releaseCarView(v: CarView): void {
+  v.root.removeFromParent();
+  const key = `${v.carModel}:${v.team}`;
+  const list = pool.get(key) ?? [];
+  // Bounded: a couple per (model, team), a dozen overall; the rest are freed.
+  if (list.length >= 2 || pooled >= 12) return v.dispose();
+  list.push(v);
+  pool.set(key, list);
+  pooled++;
 }
 
 // ---------------------------------------------------------------- ball
@@ -257,6 +311,11 @@ export class BallView {
     this.mesh.castShadow = true;
   }
 
+  /** Ball-size mutator. */
+  setScale(s: number): void {
+    this.mesh.scale.setScalar(s);
+  }
+
   /** Flash the seams in a team colour after a hit. */
   flash(team: 0 | 1, power: number): void {
     this.uniforms.glow.value.set(TEAM_COLORS[team].glow).multiplyScalar(Math.min(1, power / 2500) * 1.2);
@@ -284,6 +343,10 @@ export class PadsView {
   readonly group = new THREE.Group();
   private readonly orbs: THREE.Object3D[] = [];
   private readonly rings: THREE.MeshBasicMaterial[] = [];
+  private readonly pads: THREE.Group[] = [];
+  /** Orb size 0..1 (implodes on pickup, pops back on respawn). */
+  private readonly orbK: number[] = [];
+  private scale = 1;
   private t = 0;
 
   constructor() {
@@ -293,31 +356,40 @@ export class PadsView {
     for (const p of BOOST_PADS) {
       const g = new THREE.Group();
       toThree(p.x, p.y, 0, g.position);
-      const r = p.big ? 150 : 72;
+      const r = p.big ? 104 : 46;
       const base = new THREE.Mesh(new THREE.CylinderGeometry(r * S, (r + 10) * S, 6 * S, 28), baseMat);
       base.position.y = 3 * S;
       base.receiveShadow = true;
       g.add(base);
       const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.55, 0.1).multiplyScalar(2.5), toneMapped: false });
       this.rings.push(ringMat);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry((r - 10) * S, (p.big ? 7 : 5) * S, 6, 32), ringMat);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry((r - 8) * S, (p.big ? 6 : 4) * S, 6, 32), ringMat);
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 7 * S;
       g.add(ring);
       const orb = new THREE.Group();
       if (p.big) {
-        orb.add(new THREE.Mesh(new THREE.SphereGeometry(55 * S, 24, 16), orbMat));
-        const core = new THREE.Mesh(new THREE.SphereGeometry(30 * S, 16, 12), orbCore);
+        orb.add(new THREE.Mesh(new THREE.SphereGeometry(40 * S, 24, 16), orbMat));
+        const core = new THREE.Mesh(new THREE.SphereGeometry(22 * S, 16, 12), orbCore);
         orb.add(core);
-        orb.position.y = 95 * S;
+        orb.position.y = 72 * S;
       } else {
-        orb.add(new THREE.Mesh(new THREE.CylinderGeometry(32 * S, 32 * S, 14 * S, 20), orbMat));
-        orb.position.y = 24 * S;
+        orb.add(new THREE.Mesh(new THREE.CylinderGeometry(21 * S, 21 * S, 10 * S, 20), orbMat));
+        orb.position.y = 18 * S;
       }
       g.add(orb);
       this.orbs.push(orb);
+      this.orbK.push(1);
+      this.pads.push(g);
       this.group.add(g);
     }
+  }
+
+  /** Boost-pad size mutator. */
+  setScale(s: number): void {
+    if (s === this.scale) return;
+    this.scale = s;
+    for (const g of this.pads) g.scale.setScalar(s);
   }
 
   update(timers: ArrayLike<number>, dt: number): void {
@@ -325,12 +397,51 @@ export class PadsView {
     for (let i = 0; i < this.orbs.length; i++) {
       const active = timers[i]! <= 0;
       const o = this.orbs[i]!;
-      o.visible = active;
-      if (active) {
+      // Implode over 0.15 s when taken; grow back when the pad respawns.
+      const k = (this.orbK[i] = Math.max(0, Math.min(1, this.orbK[i]! + (active ? dt / 0.15 : -dt / 0.15))));
+      o.visible = k > 0;
+      if (k > 0) {
+        o.scale.setScalar(k);
         o.rotation.y = this.t * 1.5;
-        if (BOOST_PADS[i]!.big) o.position.y = (95 + Math.sin(this.t * 2 + i) * 8) * S;
+        if (BOOST_PADS[i]!.big) o.position.y = (72 + Math.sin(this.t * 2 + i) * 6) * S;
       }
       this.rings[i]!.color.setRGB(1, 0.55, 0.1).multiplyScalar(active ? 2.5 : 0.35);
     }
   }
+}
+
+// ---------------------------------------------------------------- garage thumbnails
+
+/** Render a 3/4 studio shot of every car (data URLs), for the garage. */
+export function renderCarThumbs(team: 0 | 1, env: THREE.Texture | null): Map<CarId, string> {
+  const out = new Map<CarId, string>();
+  const W = 480;
+  const H = 266;
+  const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  r.setSize(W, H);
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.outputColorSpace = THREE.SRGBColorSpace;
+  const scene = new THREE.Scene();
+  scene.environment = env;
+  scene.environmentIntensity = 0.7;
+  scene.add(new THREE.HemisphereLight(0xc8d6ff, 0x30304a, 1.1));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  key.position.set(2, 4, 3);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x8fb0ff, 1.2);
+  rim.position.set(-3, 2, -3);
+  scene.add(rim);
+  const cam = new THREE.PerspectiveCamera(30, W / H, 0.05, 50);
+  cam.position.set(2.1, 1.05, 2.5);
+  cam.lookAt(0.05, 0.22, 0);
+  for (const id of Object.keys(CARS) as CarId[]) {
+    const v = new CarView(0, team, id);
+    scene.add(v.root);
+    r.render(scene, cam);
+    out.set(id, r.domElement.toDataURL('image/png'));
+    v.dispose();
+  }
+  r.dispose();
+  r.forceContextLoss();
+  return out;
 }

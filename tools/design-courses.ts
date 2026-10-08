@@ -41,7 +41,7 @@ function pieces(rng: SeededRandom, recipe: Recipe, piece: Piece, dir: 1 | -1): P
       return [turn(rng.range(80, 140), r(minR, minR + 10), dir)];
     case 'hairpin': {
       const [a, b] = HAIRPIN_R[d];
-      return [str(rng.range(45, 90), 'hpIn'), turn(rng.range(165, 195), r(a, b), dir, 'hairpin'), str(rng.range(45, 90), 'hpOut')];
+      return [str(rng.range(40, 70), 'hpIn'), turn(rng.range(165, 195), r(a, b), dir, 'hairpin'), str(rng.range(40, 70), 'hpOut')];
     }
     case 'esses': {
       const a1 = rng.range(35, 85);
@@ -122,8 +122,8 @@ function close(ps: P[]): number | null {
     total += Math.abs(delta);
   }
   for (const s of strs) {
-    const min = s.p === ps[0] ? 170 : s.p.tag === 'long' ? 145 : s.p.tag ? 40 : 18;
-    if (s.p.len < min || s.p.len > 300) return null;
+    const min = s.p === ps[0] ? 150 : s.p.tag === 'long' ? 118 : s.p.tag === 'mid' ? 62 : s.p.tag ? 35 : 18;
+    if (s.p.len < min || s.p.len > 240) return null;
   }
   return total;
 }
@@ -159,7 +159,7 @@ function closePairs(pts: Layout['pts'], clearance: number, length: number): Arra
 
 function generate(recipe: Recipe, rng: SeededRandom): Layout | null {
   const dir: 1 | -1 = rng.next() < 0.5 ? 1 : -1;
-  const ps: P[] = [{ t: 'str', len: Math.round(rng.range(180, 230)) }];
+  const ps: P[] = [{ t: 'str', len: Math.round(rng.range(160, 185)) }];
   const mix = Object.entries(recipe.mix).filter(([, w]) => (w ?? 0) > 0) as Array<[Piece, number]>;
   const total = mix.reduce((a, [, w]) => a + w, 0);
   const pick = (): Piece => {
@@ -175,19 +175,25 @@ function generate(recipe: Recipe, rng: SeededRandom): Layout | null {
   let hairpins = 0;
   const f = recipe.features;
   // Long straights for jumps / streams / tunnels and hairpins for shortcuts are guaranteed.
-  let longs = (f.gapJumps ?? 0) + (f.jumps ?? 0) + (f.streams?.n ?? 0) + (f.tunnels ?? 0);
+  let longs = (f.gapJumps ?? 0) + (f.jumps ?? 0) + (f.tunnels ?? 0) + 1;
+  // Kickers and trick bumps need a medium straight each.
+  let mediums = (f.kickers ?? 0) + (f.bumps ?? 0) + (f.streams?.n ?? 0);
   const forced: Piece[] = Array.from({ length: f.shortcuts ?? 0 }, () => 'hairpin' as const);
   while (len < L * 0.88) {
     if (!lastWasStraight && rng.next() < 0.55) {
-      const long = longs > 0 && rng.next() < 0.45;
-      const s = Math.round(long ? rng.range(150, 190) : rng.range(25, 120));
+      // Feature straights get likelier as the lap fills up (short laps have few slots).
+      const left = Math.max(1, L * 0.88 - len);
+      const long = longs > 0 && rng.next() < Math.max(0.45, (longs * 260) / left);
+      const medium = !long && mediums > 0 && rng.next() < Math.max(0.4, (mediums * 200) / left);
+      const s = Math.round(long ? rng.range(130, 165) : medium ? rng.range(70, 95) : rng.range(25, 90));
       if (long) longs--;
-      ps.push({ t: 'str', len: s, ...(long ? { tag: 'long' } : {}) });
+      if (medium) mediums--;
+      ps.push({ t: 'str', len: s, ...(long ? { tag: 'long' } : medium ? { tag: 'mid' } : {}) });
       len += s;
       lastWasStraight = true;
       continue;
     }
-    let piece = forced.length && rng.next() < 0.3 ? forced.pop()! : pick();
+    let piece = forced.length && rng.next() < Math.max(0.3, (forced.length * 400) / Math.max(1, L * 0.88 - len)) ? forced.pop()! : pick();
     if (piece === 'hairpin' && hairpins >= 3) piece = 'corner';
     // Choose the direction that keeps the heading near the target (mostly).
     const fr = len / L;
@@ -204,7 +210,7 @@ function generate(recipe: Recipe, rng: SeededRandom): Layout | null {
     lastWasStraight = add[add.length - 1]!.t === 'str';
     if (Math.abs(heading - target(len / L)) > 230) return null;
   }
-  if (longs > 0 || forced.length) return null;
+  if (longs > 0 || mediums > 0 || forced.length) return null;
   // Final corner brings the total turn to ±360 (or 0 for a figure-8).
   const goal = recipe.figure8 ? 0 : 360 * dir;
   const rest = goal - heading;
@@ -257,8 +263,9 @@ function score(l: Layout, recipe: Recipe): number {
 
 type Seg = Record<string, unknown>;
 
-function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; shortcuts: Seg[]; log: string[] } {
+function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; shortcuts: Seg[]; log: string[]; missing: number } {
   const log: string[] = [];
+  let missing = 0;
   const segs: Seg[] = l.ps.map((p) => (p.t === 'str' ? { s: p.len } : p.dir > 0 ? { R: p.deg, r: p.r } : { L: p.deg, r: p.r }));
   const used = new Set<number>([0, segs.length - 1]);
   const lenOf = (i: number): number => {
@@ -267,20 +274,24 @@ function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; sh
   };
   const isStr = (i: number): boolean => l.ps[i]!.t === 'str';
   const free = (i: number): boolean => !used.has(i) && !used.has(i - 1) && !used.has(i + 1);
-  const moverAt = new Set<number>();
-  const choose = (ok: (i: number) => boolean, n: number, what: string, apply: (i: number, k: number) => void, spread = true, mover = false): void => {
-    // Movers may neighbour other movers (an obstacle gauntlet), never jumps / shortcuts.
-    const avail = (i: number): boolean => (mover ? !used.has(i) && [i - 1, i + 1].every((j) => !used.has(j) || moverAt.has(j)) : free(i));
+  // Jumps and shortcut mouths need a clean run-up (CPUs centre up for ramps and skip
+  // obstacle planning there); anything else may follow a feature directly.
+  const critical = new Set<number>();
+  const soft = (i: number): boolean => !used.has(i) && !critical.has(i + 1) && !critical.has(i - 1) && i < segs.length - 1;
+  type Mode = 'free' | 'soft';
+  const choose = (ok: (i: number) => boolean, n: number, what: string, apply: (i: number, k: number) => void, mode: Mode = 'free', mark = false): void => {
+    const avail = mode === 'free' ? free : soft;
     let cands = segs.map((_, i) => i).filter((i) => avail(i) && ok(i));
     for (let k = 0; k < n; k++) {
       cands = cands.filter((i) => avail(i));
       if (!cands.length) {
         log.push(`${recipe.id}: only ${k}/${n} ${what}`);
+        missing += n - k;
         return;
       }
-      const i = spread ? cands[Math.floor(rng.next() * cands.length)]! : cands[0]!;
+      const i = cands[Math.floor(rng.next() * cands.length)]!;
       used.add(i);
-      if (mover) moverAt.add(i);
+      if (mark) critical.add(i);
       apply(i, k);
     }
   };
@@ -293,7 +304,7 @@ function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; sh
 
   // Shortcuts first (they need specific hairpin shapes).
   const shortcuts: Seg[] = [];
-  if (f.shortcuts && !recipe.space) {
+  if (f.shortcuts) {
     let n = 0;
     for (let i = 1; i + 2 < l.ps.length && n < f.shortcuts; i++) {
       const p = l.ps[i]!;
@@ -303,45 +314,56 @@ function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; sh
       const to = `cut${n}Out`;
       segs[i - 1]!.mark = from;
       segs[i + 2]!.mark = to;
-      [i - 1, i, i + 1, i + 2].forEach((k) => used.add(k));
+      [i - 1, i, i + 1, i + 2].forEach((k) => {
+        used.add(k);
+        critical.add(k);
+      });
       shortcuts.push({ from, to, side: p.dir > 0 ? 'right' : 'left', halfWidth: 4 });
       n++;
     }
-    if (n < f.shortcuts) log.push(`${recipe.id}: only ${n}/${f.shortcuts} shortcuts`);
+    if (n < f.shortcuts) {
+      log.push(`${recipe.id}: only ${n}/${f.shortcuts} shortcuts`);
+      missing += f.shortcuts - n;
+    }
   }
-  choose((i) => isStr(i) && lenOf(i) >= 140, f.gapJumps ?? 0, 'gap jumps', (i) => {
-    segs[i]!.jump = { gap: recipe.difficulty === 'hard' ? 18 : 15 };
+  choose((i) => isStr(i) && lenOf(i) >= 118, f.gapJumps ?? 0, 'gap jumps', (i, k) => {
+    const big = Boolean(f.bigGap) && k === 0;
+    segs[i]!.jump = big ? { gap: 20, type: 'big' } : { gap: recipe.difficulty === 'hard' ? 17 : 15 };
     segs[i]!.kind = 'void';
-  });
-  choose((i) => isStr(i) && lenOf(i) >= 100, f.jumps ?? 0, 'jumps', (i) => (segs[i]!.jump = {}));
+    if (f.wetGaps) segs[i]!.lake = { r: 26 };
+  }, 'free', true);
+  choose((i) => isStr(i) && lenOf(i) >= 100, f.jumps ?? 0, 'jumps', (i) => (segs[i]!.jump = {}), 'free', true);
   choose((i) => isStr(i) && lenOf(i) >= 90, f.tunnels ?? 0, 'tunnels', (i) => (segs[i]!.kind = 'tunnel'));
+  // Kickers and trick bumps may follow another jump (a hop sequence).
+  const medium = (i: number): boolean => isStr(i) && lenOf(i) >= 62;
+  choose(medium, f.kickers ?? 0, 'kickers', (i) => (segs[i]!.jump = { type: 'kicker' }), 'soft', true);
+  choose(medium, f.bumps ?? 0, 'trick bumps', (i) => (segs[i]!.jump = { type: 'bump' }), 'soft', true);
+  if (f.streams) {
+    const style = f.streams.style;
+    choose((i) => (isStr(i) && lenOf(i) >= 60) || (gentle(i) && lenOf(i) >= 50), f.streams.n, 'streams', (i, k) => {
+      const lateral = [0, -0.35, 0.35][k % 3]! * hw;
+      segs[i]!.stream = { lateral: Math.round(lateral * 10) / 10, width: recipe.difficulty === 'easy' ? 7 : 6, strength: 7, style };
+    }, 'soft');
+  }
   choose((i) => (isStr(i) && lenOf(i) >= 50 && lenOf(i) < 145) || gentle(i), f.void ?? 0, 'void', (i) => {
     segs[i]!.kind = 'void';
     segs[i]!.w = Math.round((hw - 0.6) * 10) / 10;
     // Restore the width after the void stretch.
     if (i + 1 < segs.length && segs[i + 1]!.w === undefined) segs[i + 1]!.w = hw;
-  });
-  if (f.streams) {
-    const style = f.streams.style;
-    choose((i) => isStr(i) && lenOf(i) >= 80, f.streams.n, 'streams', (_i, k) => {
-      const i = _i;
-      const lateral = [0, -0.35, 0.35][k % 3]! * hw;
-      segs[i]!.stream = { lateral: Math.round(lateral * 10) / 10, width: recipe.difficulty === 'easy' ? 7 : 6, strength: 7, style };
-    });
-  }
+  }, 'soft');
   for (const [kind, n] of Object.entries(f.movers ?? {})) {
     const ok = (i: number): boolean => {
       const L = lenOf(i);
       const p = l.ps[i]!;
-      const roomy = p.t === 'turn' && p.r >= 38 && L >= 40;
-      if (kind === 'stomper' || kind === 'pendulum') return (isStr(i) && L >= 38 && L <= 190) || roomy;
-      if (kind === 'roller' || kind === 'sweeper') return (isStr(i) && L >= 38) || roomy;
-      return (isStr(i) && L >= 35) || (p.t === 'turn' && p.r >= 25 && L >= 30);
+      const roomy = p.t === 'turn' && p.r >= 30 && L >= 32;
+      if (kind === 'stomper' || kind === 'pendulum') return (isStr(i) && L >= 36 && L <= 190) || roomy;
+      if (kind === 'roller' || kind === 'sweeper') return (isStr(i) && L >= 36) || roomy;
+      return (isStr(i) && L >= 32) || (p.t === 'turn' && p.r >= 25 && L >= 28);
     };
-    choose(ok, n ?? 0, `${kind} sets`, (i) => (segs[i]!.movers = kind), true, true);
+    choose(ok, n ?? 0, `${kind} sets`, (i) => (segs[i]!.movers = kind), 'soft');
   }
-  choose((i) => isStr(i) && lenOf(i) >= 50, f.hazards ?? 0, 'hazard sets', (i) => (segs[i]!.hazards = 2));
-  choose((i) => isStr(i) && lenOf(i) >= 70, f.boosts ?? 0, 'boosts', (i) => (segs[i]!.boost = true));
+  choose((i) => (isStr(i) && lenOf(i) >= 45) || (gentle(i) && lenOf(i) >= 45), f.hazards ?? 0, 'hazard sets', (i) => (segs[i]!.hazards = 2), 'soft');
+  choose((i) => isStr(i) && lenOf(i) >= 55, f.boosts ?? 0, 'boosts', (i) => (segs[i]!.boost = true), 'soft');
 
   // Hills: smooth periodic altitude profile, grade-limited per segment.
   const total = l.length;
@@ -361,7 +383,7 @@ function toSegs(l: Layout, recipe: Recipe, rng: SeededRandom): { segs: Seg[]; sh
     s += L;
   });
   if (recipe.figure8) figure8Bridge(l, segs, lenOf);
-  return { segs, shortcuts, log };
+  return { segs, shortcuts, log, missing };
 }
 
 /** Raise the segment over the crossing (a level overpass with ramps either side). */
@@ -419,11 +441,12 @@ for (const recipe of RECIPES) {
   let best: Layout | null = null;
   let bestScore = Infinity;
   let found = 0;
-  for (let tries = 0; tries < 60000 && found < 40; tries++) {
+  for (let tries = 0; tries < 400000 && found < 120; tries++) {
     const l = generate(recipe, rng);
     if (!l) continue;
     found++;
-    const sc = score(l, recipe);
+    // Layouts that can't carry every feature of the recipe score badly.
+    const sc = score(l, recipe) + toSegs(l, recipe, new SeededRandom(recipe.seed)).missing * 6;
     if (sc < bestScore) {
       best = l;
       bestScore = sc;

@@ -1,7 +1,7 @@
 /** Crownfall online protocol (shared by the browser and the game server). */
 export const CF_ROOM = 'crownfall';
 /** Bumped whenever the wire format changes; mismatched clients are refused. */
-export const CF_VERSION = 1;
+export const CF_VERSION = 2;
 export const CF_RECONNECT_SECONDS = 20;
 
 export const CfMsg = {
@@ -17,6 +17,8 @@ export const CfMsg = {
   Snap: 'cf:snap',
   /** server → client: a card play was refused. */
   Nope: 'cf:nope',
+  /** client → server: { emote: 0..3 } — a taunt, echoed to both players as an 'emote' event. */
+  Emote: 'cf:emote',
 } as const;
 
 export interface CfJoinOptions {
