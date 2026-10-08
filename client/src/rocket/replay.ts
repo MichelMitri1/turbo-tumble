@@ -3,6 +3,7 @@ import { World, type WorldEvent } from './sim/world';
 import { TICK } from './sim/constants';
 import { readSnapshot, writeSnapshot } from './sim/snapshot';
 import { ARENA } from './sim/arena';
+import { REPLAY_TIMING } from './sim/rules';
 import { savePrev } from './session';
 import type { Pose } from './render/scene';
 
@@ -105,14 +106,14 @@ export class GoalReplay {
   /** Playback rate: slow motion just before and after the ball crosses the line. */
   private rate(): number {
     const d = this.t - this.preGoal;
-    return d > -0.55 && d < 0.35 ? 0.4 : 1;
+    return d > -REPLAY_TIMING.slowBefore && d < REPLAY_TIMING.slowAfter ? REPLAY_TIMING.slowRate : 1;
   }
 
   /** Advance by real time; returns events crossed (touches, bounces, the goal…). */
   update(dt: number): WorldEvent[] {
     if (this.done) return [];
     this.t += dt * this.rate();
-    if (this.t >= this.preGoal + 1.6) this.done = true;
+    if (this.t >= this.preGoal + REPLAY_TIMING.after) this.done = true;
     return this.seek();
   }
 
@@ -154,6 +155,6 @@ export class GoalReplay {
 
   /** Seconds left (real time, roughly). */
   get remaining(): number {
-    return Math.max(0, this.preGoal + 1.6 - this.t);
+    return Math.max(0, this.preGoal + REPLAY_TIMING.after - this.t);
   }
 }

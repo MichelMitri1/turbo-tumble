@@ -1,7 +1,39 @@
 import { Vector3 } from 'three';
-import { arenaDistance, arenaNormal } from './arena';
+import { ARENA, arenaDistance, arenaNormal } from './arena';
 import * as C from './constants';
 import { DEFAULT_RULES, type Rules } from './rules';
+
+export interface BallSample {
+  t: number;
+  pos: Vector3;
+  vel: Vector3;
+}
+
+/**
+ * Simulate a copy of the ball forward (no cars), one sample every `step`
+ * seconds; shared by the bots and the shot / save statistics. The copy keeps
+ * the ball's rules, so mutators (size, gravity, bounce…) are predicted too.
+ */
+export function predictBall(ball: Ball, seconds: number, step = 1 / 30, out: BallSample[] = []): BallSample[] {
+  const sim = new Ball();
+  sim.rules = ball.rules;
+  sim.pos.copy(ball.pos);
+  sim.vel.copy(ball.vel);
+  sim.angVel.copy(ball.angVel);
+  const sub = Math.max(1, Math.round(step / C.TICK));
+  out.length = 0;
+  for (let t = 0; t <= seconds + 1e-6; t += step) {
+    out.push({ t, pos: sim.pos.clone(), vel: sim.vel.clone() });
+    for (let k = 0; k < sub; k++) sim.tick(step / sub);
+  }
+  return out;
+}
+
+/** The team that scores if the ball follows `path` (first goal-line crossing), or -1. */
+export function predictedGoal(path: ReadonlyArray<BallSample>, radius: number): 0 | 1 | -1 {
+  for (const p of path) if (Math.abs(p.pos.y) >= ARENA.goalLineY + radius) return p.pos.y > 0 ? 0 : 1;
+  return -1;
+}
 
 /** The ball: a solid sphere with spin, drag and the arena's bounce/friction. */
 export class Ball {

@@ -5,7 +5,8 @@ import type { Aim } from '../link';
 
 /** Corner Pocket online protocol (shared by browser and server). */
 export const PL_ROOM = 'pool';
-export const PL_VERSION = 1;
+/** Bumped whenever the physics or the event format changes: every client must replay shots exactly like the server. */
+export const PL_VERSION = 2;
 
 export const PlMsg = {
   Act: 'pl:act', // client → server: Action

@@ -153,6 +153,53 @@ export function noise(c: SynthCtx, o: NoiseOpts): number {
   return start + o.dur;
 }
 
+export interface VowelOpts {
+  at?: number;
+  dur: number;
+  gain: number;
+  /** Voice pitch (Hz) and its glide target. */
+  f0: number;
+  to?: number;
+  /** First two formants (Hz) at the start and the end of the syllable. */
+  from: [number, number];
+  end?: [number, number];
+  out?: AudioNode;
+}
+
+/**
+ * One sung/voiced syllable: a buzzy source through two swept band-pass formants —
+ * enough to read as a cartoon "wa", "oo" or "yeah" without samples.
+ */
+export function vowel(c: SynthCtx, o: VowelOpts): number {
+  const start = c.t + (o.at ?? 0);
+  const ctx = c.ctx;
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(o.f0 * c.pitch, start);
+  if (o.to !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(30, o.to * c.pitch), start + o.dur);
+  const env = envelope(c, start, o.dur, o.gain, 0.012, o.dur * 0.55);
+  // Formants follow head size a little (higher voices → slightly higher formants).
+  const size = Math.sqrt(c.pitch);
+  const nodes: AudioNode[] = [osc, env];
+  [0, 1].forEach((i) => {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = i === 0 ? 5 : 8;
+    const f0 = o.from[i]! * size;
+    bp.frequency.setValueAtTime(f0, start);
+    if (o.end) bp.frequency.exponentialRampToValueAtTime(o.end[i]! * size, start + o.dur);
+    const g = ctx.createGain();
+    g.gain.value = i === 0 ? 1 : 0.55;
+    osc.connect(bp).connect(g).connect(env);
+    nodes.push(bp, g);
+  });
+  env.connect(o.out ?? c.out);
+  osc.start(start);
+  osc.stop(start + o.dur + 0.02);
+  cleanup(osc, nodes);
+  return start + o.dur;
+}
+
 /** Quick arpeggio / melody of tones (stingers, chimes). */
 export function notes(c: SynthCtx, seq: Array<[note: string, at: number, dur: number]>, o: Omit<ToneOpts, 'freq' | 'dur' | 'at'>): number {
   let end = c.t;

@@ -5,6 +5,7 @@ import type { TerrainField } from '@shared/track/TerrainField';
 import type { PhysicsWorld } from '@shared/physics/PhysicsWorld';
 import type { AssetLoader } from '../assets/AssetLoader';
 import type { GraphicsSettings } from '../config/graphics';
+import type { KitLibrary } from './kits';
 
 /** Anything on the track that animates each frame (windmills, crowds, water...). */
 export interface Updatable {
@@ -25,6 +26,8 @@ export interface BuildContext {
   path: TrackPath;
   terrain: TerrainField;
   assets: AssetLoader;
+  /** Kenney kit models for set pieces (loaded per track from landmark needs). */
+  kits: KitLibrary;
   physics: PhysicsWorld;
   graphics: GraphicsSettings;
   root: Group;

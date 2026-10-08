@@ -17,6 +17,8 @@ export interface ChaseTarget {
   boost: number;
   /** -1..1 drift direction amount (Phase 2). */
   drift: number;
+  /** Visual kart size (Giant Gummy grows it): the camera backs off to keep it framed. */
+  size?: number;
 }
 
 const UP = new Vector3(0, 1, 0);
@@ -34,6 +36,7 @@ export class ChaseCamera {
   private distance: number;
   private fov: number;
   private roll = 0;
+  private grown = 0;
   private readonly pos = new Vector3();
   private readonly look = new Vector3();
   private readonly desired = new Vector3();
@@ -113,7 +116,9 @@ export class ChaseCamera {
 
     // Speed sensation: pull back + widen FOV.
     const sp = clamp(t.speed01, 0, 1.3);
-    const chaseDistance = k.distance + k.speedDistance * sp + t.boost * 0.6;
+    const grown = Math.max(0, (t.size ?? 1) - 1);
+    const chaseDistance = k.distance + k.speedDistance * sp + t.boost * 0.6 + grown * 2.2;
+    this.grown = damp(this.grown, grown, 3, dt);
     this.distance = damp(this.distance, chaseDistance + (8 - chaseDistance) * this.finish, 3, dt);
     this.fov = damp(this.fov, k.fov + (k.speedFov * sp + k.boostFov * t.boost) * (1 - this.finish), 4, dt);
 
@@ -150,7 +155,7 @@ export class ChaseCamera {
       // Finish shot: aim right of the kart so it sits in the left third (results panel on the right).
       .addScaledVector(this.tmp.set(-cosY, 0, sinY), 2.6 * f);
 
-    this.desired.copy(anchor).addScaledVector(this.dir, this.distance).addScaledVector(UP, k.height + (2.2 - k.height) * f + this.landOffset * 0.35);
+    this.desired.copy(anchor).addScaledVector(this.dir, this.distance).addScaledVector(UP, k.height + (2.2 - k.height) * f + this.landOffset * 0.35 + this.grown * 1.4);
     this.avoidObstacles(anchor);
   }
 

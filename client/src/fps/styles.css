@@ -176,15 +176,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
 .zh-score__mid { display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.45); padding: 4px 12px 2px; }
 .zh-score__mid span { font-family: var(--head); font-size: 30px; line-height: 0.9; }
 .zh-score__mid small { font-size: 11px; letter-spacing: 0.2em; color: var(--muted); font-weight: 700; }
-.zh-flags { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+.zh-flags { position: absolute; top: 104px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
 .zh-flags span { width: 34px; height: 34px; display: grid; place-items: center; font-family: var(--head); font-size: 26px; background: rgba(0,0,0,0.5); border: 2px solid #ddd; }
 .zh-flags span.ally { border-color: var(--ally); color: var(--ally); }
 .zh-flags span.enemy { border-color: var(--enemy); color: var(--enemy); }
 .zh-flags span.cap { animation: zh-blink 0.4s infinite alternate; }
 @keyframes zh-blink { to { background: rgba(255,210,63,0.4); } }
 .zh-feed { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 3px; align-items: flex-end; }
-.zh-feed__item { background: rgba(0,0,0,0.45); padding: 3px 10px; font-size: 16px; font-weight: 700; transition: opacity 0.4s; }
-.zh-feed__item i { color: var(--muted); font-style: normal; font-weight: 600; font-size: 13px; }
+.zh-feed__item { background: rgba(0,0,0,0.45); padding: 3px 10px; font-size: 16px; font-weight: 700; transition: opacity 0.4s; display: flex; align-items: center; gap: 6px; }
+.zh-feed__item.mine { background: rgba(255, 210, 63, 0.16); box-shadow: inset 2px 0 0 #ffd23f; }
+.zh-feed__item b.you { color: #ffd23f; }
+.zh-feed__ico { width: 30px; height: 18px; color: #e6e9e3; flex: none; }
+.zh-feed__ico.head { width: 16px; height: 16px; color: #ff6a4a; }
 .ally { color: var(--ally); }
 .enemy { color: var(--enemy); }
 .neutral { color: #fff; }
@@ -201,10 +204,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
 .zh-hit i:nth-child(2) { transform: translate(4px, -12px) rotate(-45deg); }
 .zh-hit i:nth-child(3) { transform: translate(-16px, 10px) rotate(-45deg); }
 .zh-hit i:nth-child(4) { transform: translate(4px, 10px) rotate(45deg); }
-.zh-hit.kill i { background: #ff2a2a; width: 16px; }
+.zh-hit.kill i { background: #ff2a2a; width: 16px; box-shadow: 0 0 4px rgba(255, 30, 20, 0.9); }
 .zh-hit.head i { background: #ffd23f; }
 .zh-hit.kill.head i { background: #ff2a2a; }
-.zh-pops { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.zh-pops { position: absolute; left: calc(50% + 150px); top: 38%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .zh-pop { font-weight: 700; font-size: 17px; letter-spacing: 0.1em; color: #fff; animation: zh-pop 0.25s ease; transition: opacity 0.4s; }
 .zh-pop b { color: var(--accent); }
 .zh-pop.big { font-family: var(--head); font-size: 30px; font-weight: 400; color: #ffd23f; }
@@ -216,17 +219,35 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
 .zh-ammo__count b.low { color: var(--enemy); }
 .zh-ammo__count span { font-family: var(--head); font-size: 30px; color: var(--muted); margin-left: 6px; }
 .zh-ammo__nades { color: #9fdc5a; letter-spacing: 0.2em; }
-.zh-ammo__reload { position: fixed; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); font-weight: 700; letter-spacing: 0.2em; color: #ffd23f; opacity: 0; }
+.zh-ammo__reload { position: fixed; left: 50%; top: calc(50% + 46px); transform: translateX(-50%); font-weight: 700; letter-spacing: 0.2em; color: #ffd23f; opacity: 0; }
 .zh-ammo__reload.show { opacity: 1; }
-.zh-streaks { position: absolute; right: 24px; bottom: 130px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
-.zh-streak { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.4); padding: 3px 8px; font-weight: 700; font-size: 12px; letter-spacing: 0.12em; opacity: 0.55; }
-.zh-streak span { font-size: 18px; }
-.zh-streak.ready { opacity: 1; background: rgba(196, 242, 74, 0.25); outline: 1px solid var(--accent); animation: zh-blink2 0.6s infinite alternate; }
-.zh-streak.used { opacity: 0.25; }
-@keyframes zh-blink2 { to { background: rgba(196, 242, 74, 0.45); } }
+.zh-streaks { position: absolute; right: 24px; bottom: 132px; display: flex; flex-direction: column; gap: 5px; align-items: stretch; background: rgba(0,0,0,0.38); padding: 6px 8px; }
+.zh-streaks__pips { display: flex; gap: 3px; align-items: flex-end; }
+.zh-streaks__pips i { flex: 1; height: 5px; min-width: 12px; background: rgba(255,255,255,0.16); }
+.zh-streaks__pips i.mark { height: 9px; background: rgba(255,255,255,0.3); }
+.zh-streaks__pips i.on { background: var(--accent); }
+.zh-streaks__row { display: flex; gap: 6px; justify-content: space-between; }
+.zh-streak { display: flex; align-items: center; gap: 4px; padding: 2px 5px; font-weight: 700; font-size: 12px; letter-spacing: 0.1em; opacity: 0.5; }
+.zh-streak__ico { width: 22px; height: 22px; color: currentColor; }
+.zh-streak.ready { opacity: 1; color: #101408; background: var(--accent); animation: zh-blink2 0.6s infinite alternate; }
+.zh-streak.used { opacity: 0.22; }
+@keyframes zh-blink2 { to { background: #e2ff8a; } }
+.zh-compass { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); width: 440px; height: 36px; }
+.zh-nums { position: absolute; inset: 0; overflow: hidden; }
+.zh-num { position: absolute; left: 0; top: 0; font-family: var(--head); font-size: 26px; line-height: 1; color: #fff; text-shadow: 0 1px 2px #000, 0 0 6px rgba(0,0,0,0.6); will-change: transform, opacity; }
+.zh-num.head { color: #ffd23f; font-size: 30px; }
+.zh-num.kill { font-size: 32px; }
+.zh-shield { position: absolute; left: 50%; bottom: 23%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; color: #8fd0ff; font-weight: 700; font-size: 12px; letter-spacing: 0.25em; animation: zh-blink3 0.5s infinite alternate; }
+.zh-shield__ico { width: 26px; height: 26px; color: #8fd0ff; }
+@keyframes zh-blink3 { to { opacity: 0.55; } }
+.zh-adsvig { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse 60% 62% at center, transparent 58%, rgba(0, 0, 0, 0.5) 100%); }
+.zh-hud.board-open .zh-center, .zh-hud.board-open .zh-pops, .zh-hud.board-open .zh-nums, .zh-hud.board-open .zh-shield { visibility: hidden; }
+.zh-board td.ping { color: var(--muted); }
 .zh-dmg { position: absolute; left: 50%; top: 50%; }
-.zh-dmg__arc { position: absolute; left: -90px; top: -90px; width: 180px; height: 180px; border-radius: 50%; border-top: 6px solid rgba(255, 40, 30, 0.85); filter: blur(1px); }
-.zh-blood { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(140, 0, 0, 0.55) 80%, rgba(90, 0, 0, 0.85)); transition: opacity 0.2s; }
+/* Hit direction: a soft red wedge out at the screen edge (placed by hud.ts; never near the crosshair). */
+.zh-dmg__arc { position: absolute; left: 0; top: 0; width: 34vmin; height: 5vmin; margin: -2.5vmin 0 0 -17vmin; border-radius: 50%; background: radial-gradient(ellipse at center, rgba(220, 24, 12, 0.85), rgba(200, 16, 8, 0.4) 45%, rgba(200, 16, 8, 0) 72%); }
+/* Low health: blood hugging the edges; the middle ~55% of the screen stays clear. Max edge alpha ≈ 0.55 (opacity 1). */
+.zh-blood { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse 50% 50% at center, transparent 55%, rgba(130, 0, 0, 0.2) 78%, rgba(110, 0, 0, 0.55) 100%); transition: opacity 0.15s; }
 .zh-scope { position: absolute; inset: 0; background: radial-gradient(circle at center, transparent 0 min(36vh, 36vw), #000 calc(min(36vh, 36vw) + 2px)); }
 .zh-scope__ret { position: absolute; left: 50%; top: 50%; width: min(72vh, 72vw); height: min(72vh, 72vw); transform: translate(-50%, -50%); background: linear-gradient(#000, #000) center / 2px 100% no-repeat, linear-gradient(#000, #000) center / 100% 2px no-repeat; }
 .zh-scope__chev { display: none; }
@@ -240,6 +261,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
 .zh-dead__card b { font-family: var(--head); font-size: 40px; font-weight: 400; color: var(--enemy); line-height: 1; letter-spacing: 0.05em; }
 .zh-dead__card span { color: #ddd; font-weight: 600; }
 .zh-dead__spawn { font-family: var(--head); font-size: 28px; letter-spacing: 0.1em; }
+.zh-dead__spawn b { font-weight: 400; color: var(--accent); }
 .zh-dead__tip { color: var(--muted); font-size: 13px; letter-spacing: 0.15em; }
 .zh-board { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(820px, 94vw); display: flex; flex-direction: column; gap: 10px; }
 .zh-board.end { position: static; transform: none; width: 100%; margin-top: 10px; }
@@ -265,6 +287,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
   .zh-mini { width: 120px; height: 120px; }
   .zh-score__team { width: 70px; }
   .zh-ammo__count b { font-size: 44px; }
+  .zh-compass { width: 300px; top: 56px; }
+  .zh-pops { left: calc(50% + 70px); }
 }
 
 /* ---------------------------------------------------------------- previews */

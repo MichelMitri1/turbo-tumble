@@ -41,8 +41,24 @@ export interface Rules {
   replayTime: number;
 }
 
-/** Extra goal-phase time a replay needs beyond `replayTime` (slow motion + the explosion). */
-export const REPLAY_EXTRA = 2.4;
+/**
+ * Goal replay timing (replay.ts plays it, world.ts reserves the time): slow
+ * motion from `slowBefore` s before the goal to `slowAfter` s after it at
+ * `slowRate`, then the finish shot until `after` s past the goal.
+ */
+export const REPLAY_TIMING = { slowBefore: 0.55, slowAfter: 0.35, slowRate: 0.4, after: 1.6 } as const;
+
+/** Real seconds a replay of `seconds` of play takes (slow motion included). */
+export function replayDuration(seconds: number): number {
+  const R = REPLAY_TIMING;
+  const slow = Math.min(seconds, R.slowBefore) + R.slowAfter;
+  return seconds - Math.min(seconds, R.slowBefore) + slow / R.slowRate + (R.after - R.slowAfter);
+}
+
+/** Goal-phase slack after the replay (frame granularity; the client cuts it short when the replay ends). */
+export const REPLAY_SLACK = 0.3;
+/** Extra goal-phase time a replay needs beyond `replayTime` (slow motion + slack); the client starts the replay once phaseTimer ≤ replayTime + this. */
+export const REPLAY_EXTRA = replayDuration(1) - 1 + REPLAY_SLACK;
 
 export const DEFAULT_RULES: Readonly<Rules> = Object.freeze({
   gameSpeed: 1,

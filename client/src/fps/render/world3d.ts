@@ -1,15 +1,16 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Box, Material } from '../sim/level';
-import type { MapDef } from '../sim/maps';
+import type { MapDef, PropPlacement } from '../sim/maps';
 import { TILE, texture } from './textures';
 import { cloneModel } from './assets';
 
-const SKY: Record<MapDef['theme']['sky'], { top: string; mid: string; bottom: string; sun: string; sunI: number; hemi: number; exposure: number }> = {
-  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff4e0', sunI: 2.6, hemi: 1.0, exposure: 1.0 },
-  dusk: { top: '#2a3b6a', mid: '#d88a58', bottom: '#f2c48a', sun: '#ffc890', sunI: 2.4, hemi: 0.8, exposure: 1.05 },
-  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#e8eef4', sunI: 1.4, hemi: 1.25, exposure: 1.0 },
-  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.6, hemi: 0.45, exposure: 1.2 },
+/** Per-sky lighting: a slightly warm key, and enough sky/bounce fill that shaded sides still read at distance. */
+const SKY: Record<MapDef['theme']['sky'], { top: string; mid: string; bottom: string; sun: string; sunI: number; hemi: number; bounce: string; amb: number; exposure: number; lamps: boolean }> = {
+  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff0d8', sunI: 2.6, hemi: 1.45, bounce: '#7a6a56', amb: 0.3, exposure: 1.0, lamps: false },
+  dusk: { top: '#2a3b6a', mid: '#e0a07a', bottom: '#f2c48a', sun: '#ffc48a', sunI: 2.6, hemi: 1.9, bounce: '#9a7656', amb: 0.55, exposure: 1.1, lamps: true },
+  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#f2eee6', sunI: 1.5, hemi: 1.6, bounce: '#6a655e', amb: 0.35, exposure: 1.0, lamps: false },
+  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.6, hemi: 0.8, bounce: '#2a2a33', amb: 0.35, exposure: 1.2, lamps: true },
 };
 
 /** Geometry for one box with UVs in world metres (so textures tile at a fixed scale). */
@@ -47,11 +48,27 @@ export interface MapView {
   sun: THREE.DirectionalLight;
   barrels: THREE.Object3D[];
   flags: Array<{ group: THREE.Group; cloth: THREE.Mesh; ring: THREE.Mesh }>;
+  /** Free everything this map created (shared model geometry / cached textures stay). */
+  dispose(): void;
+}
+
+/** Dispose a self-built object tree (geometries + materials). Only for objects that don't share cached model geometry. */
+export function disposeTree(o: THREE.Object3D): void {
+  o.removeFromParent();
+  o.traverse((n) => {
+    const m = n as THREE.Mesh;
+    if (!m.isMesh && !(n as THREE.Line).isLine && !(n as THREE.Points).isPoints) return;
+    m.geometry?.dispose();
+    for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat?.dispose();
+  });
 }
 
 export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map: MapDef): MapView {
   const group = new THREE.Group();
   const sky = SKY[map.theme.sky];
+  // Everything created here (as opposed to shared model geometry / cached textures) is freed on dispose.
+  const own: Array<{ dispose(): void }> = [];
+  const keep = <T extends { dispose(): void }>(x: T): T => (own.push(x), x);
   renderer.toneMappingExposure = sky.exposure;
   // Sky dome.
   const skyMat = new THREE.ShaderMaterial({
@@ -64,13 +81,13 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
         float s = max(0.0, dot(normalize(vDir), sunDir)); c += sunCol * (pow(s, 600.0) * 3.0 + pow(s, 12.0) * 0.25);
         gl_FragColor = vec4(c, 1.0); }`,
   });
-  const skyMesh = new THREE.Mesh(new THREE.SphereGeometry(600, 32, 16), skyMat);
+  const skyMesh = new THREE.Mesh(keep(new THREE.SphereGeometry(600, 32, 16)), keep(skyMat));
   skyMesh.renderOrder = -1;
   group.add(skyMesh);
   scene.fog = new THREE.Fog(map.theme.fog[0], map.theme.fog[1], map.theme.fog[2]);
   scene.background = new THREE.Color(sky.bottom);
   // Lights.
-  group.add(new THREE.HemisphereLight(sky.mid, '#4a4036', sky.hemi));
+  group.add(new THREE.HemisphereLight(sky.mid, sky.bounce, sky.hemi), new THREE.AmbientLight(sky.sun, sky.amb));
   const sun = new THREE.DirectionalLight(sky.sun, sky.sunI);
   const sd = new THREE.Vector3(...map.theme.sun).normalize();
   sun.position.copy(sd.multiplyScalar(80));
@@ -81,20 +98,27 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   group.add(sun, sun.target);
-  // Ground.
-  const ground = texture(map.theme.ground);
-  const gt = ground.clone();
-  gt.repeat.set(400 / TILE[map.theme.ground], 400 / TILE[map.theme.ground]);
-  gt.needsUpdate = true;
-  const gm = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ map: gt, roughness: 0.95 }));
-  gm.rotation.x = -Math.PI / 2;
-  gm.receiveShadow = true;
-  group.add(gm);
+  // Ground: the playable area at full brightness, a darker out-of-bounds ring around it out to the fog.
+  const [hx, hz] = map.half;
+  const tile = TILE[map.theme.ground];
+  const ground = (w: number, d: number, y: number, color: string, offset: number) => {
+    const t = keep(texture(map.theme.ground).clone());
+    t.repeat.set(w / tile, d / tile);
+    t.offset.set(-w / 2 / tile, -d / 2 / tile);
+    t.needsUpdate = true;
+    const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, d)), keep(new THREE.MeshStandardMaterial({ map: t, color, roughness: 0.95, polygonOffset: offset !== 0, polygonOffsetFactor: offset, polygonOffsetUnits: offset })));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = y;
+    m.receiveShadow = true;
+    group.add(m);
+  };
+  ground(400, 400, 0, '#8e867a', 0);
+  ground(2 * hx + 1, 2 * hz + 1, 0.002, '#ffffff', -1);
   map.theme.patches.forEach(([x0, z0, x1, z1, mat], i) => {
-    const t = texture(mat).clone();
+    const t = keep(texture(mat).clone());
     t.repeat.set((x1 - x0) / TILE[mat], (z1 - z0) / TILE[mat]);
     t.needsUpdate = true;
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1 - i, polygonOffsetUnits: -1 - i }));
+    const p = new THREE.Mesh(keep(new THREE.PlaneGeometry(x1 - x0, z1 - z0)), keep(new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 - i, polygonOffsetUnits: -2 - i })));
     p.rotation.x = -Math.PI / 2;
     p.position.set((x0 + x1) / 2, 0.005 + i * 0.002, (z0 + z1) / 2);
     p.receiveShadow = true;
@@ -109,31 +133,77 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     l.push(boxGeometry(b, TILE[b.mat]));
   }
   for (const [mat, geos] of byMat) {
-    const geo = mergeGeometries(geos);
-    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: texture(mat), roughness: mat === 'metal' ? 0.6 : 0.9, metalness: mat === 'metal' ? 0.3 : 0 }));
+    const geo = keep(mergeGeometries(geos));
+    for (const g of geos) g.dispose();
+    const m = new THREE.Mesh(geo, keep(new THREE.MeshStandardMaterial({ map: texture(mat), roughness: mat === 'metal' ? 0.6 : 0.9, metalness: mat === 'metal' ? 0.3 : 0 })));
     m.castShadow = true;
     m.receiveShadow = true;
     group.add(m);
   }
   // Props.
   const barrels: THREE.Object3D[] = [];
+  const edges = new Map<string, PropPlacement[]>();
   for (const p of map.props) {
+    if (p.edge) {
+      const k = `${p.model}|${p.tint ?? ''}`;
+      edges.set(k, [...(edges.get(k) ?? []), p]);
+      continue;
+    }
+    // (Gritty clones always get their own materials; the geometry stays shared with the model cache.)
     const o = cloneModel(p.model, p.tint, 0.35);
+    o.traverse((n) => {
+      const m = n as THREE.Mesh;
+      if (m.isMesh) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) own.push(mat);
+    });
     o.position.set(p.x, p.y, p.z);
     o.rotation.y = (p.rot * Math.PI) / 2;
     o.scale.set(p.sx, p.sy, p.sz);
     group.add(o);
     if (p.explosive) barrels.push(o);
   }
+  // Boundary dressing: one instanced draw per model part (dozens of identical walls / fences).
+  const mtx = new THREE.Matrix4();
+  for (const list of edges.values()) {
+    const tpl = cloneModel(list[0]!.model, list[0]!.tint, 0.35);
+    tpl.updateMatrixWorld(true);
+    tpl.traverse((n) => {
+      const src = n as THREE.Mesh;
+      if (!src.isMesh) return;
+      const mat = keep(src.material as THREE.Material);
+      const inst = keep(new THREE.InstancedMesh(src.geometry, mat, list.length));
+      list.forEach((p, i) => {
+        mtx.compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (p.rot * Math.PI) / 2), new THREE.Vector3(p.sx, p.sy, p.sz));
+        inst.setMatrixAt(i, mtx.multiply(src.matrixWorld));
+      });
+      inst.receiveShadow = true;
+      group.add(inst);
+    });
+  }
+  // Dusk / night: warm lamps glow in the buildings (emissive only, no extra lights).
+  if (sky.lamps) {
+    const geo = keep(new THREE.BoxGeometry(0.5, 0.12, 0.5));
+    const mat = keep(new THREE.MeshStandardMaterial({ color: '#ffe2b0', emissive: '#ffb35a', emissiveIntensity: 3 }));
+    const halo = keep(new THREE.SpriteMaterial({ map: keep(glowTexture()), color: '#ffb060', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 }));
+    for (const b of map.boxes) {
+      // A lamp under every roof / slab big enough to be a room ceiling.
+      if (b.hidden || b.mat === 'invisible' || b.y0 < 2.5 || b.y1 - b.y0 > 0.5 || (b.x1 - b.x0) * (b.z1 - b.z0) < 30) continue;
+      const lamp = new THREE.Mesh(geo, mat);
+      lamp.position.set((b.x0 + b.x1) / 2, b.y0 - 0.06, (b.z0 + b.z1) / 2);
+      const s = new THREE.Sprite(halo);
+      s.scale.setScalar(2.2);
+      s.position.copy(lamp.position).y -= 0.15;
+      group.add(lamp, s);
+    }
+  }
   // Domination flags.
   const flags = map.flags.map((f, i) => {
     const g = new THREE.Group();
     g.position.set(f.x, f.y, f.z);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8), new THREE.MeshStandardMaterial({ color: '#d0d0d0', metalness: 0.8, roughness: 0.3 }));
+    const pole = new THREE.Mesh(keep(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8)), keep(new THREE.MeshStandardMaterial({ color: '#d0d0d0', metalness: 0.8, roughness: 0.3 })));
     pole.position.y = 1.6;
-    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.7, 8, 2), new THREE.MeshStandardMaterial({ color: '#dddddd', side: THREE.DoubleSide, emissive: '#000000' }));
+    const cloth = new THREE.Mesh(keep(new THREE.PlaneGeometry(1.1, 0.7, 8, 2)), keep(new THREE.MeshStandardMaterial({ color: '#dddddd', side: THREE.DoubleSide, emissive: '#000000' })));
     cloth.position.set(0.55, 2.75, 0);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(3.3, 3.5, 48), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+    const ring = new THREE.Mesh(keep(new THREE.RingGeometry(3.3, 3.5, 48)), keep(new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.04;
     g.add(pole, cloth, ring);
@@ -143,7 +213,26 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     return { group: g, cloth, ring };
   });
   scene.add(group);
-  return { group, sun, barrels, flags };
+  const dispose = () => {
+    group.removeFromParent();
+    for (const o of own) o.dispose();
+    own.length = 0;
+    sun.shadow.dispose();
+  };
+  return { group, sun, barrels, flags, dispose };
+}
+
+function glowTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.35)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
 }
 
 // ---------------------------------------------------------------- vehicles for killstreaks

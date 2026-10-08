@@ -4,8 +4,15 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
+  SRGBColorSpace,
+  Sprite,
+  SpriteMaterial,
+  Vector4,
+  type PerspectiveCamera,
+  type WebGLRenderer,
   Vector3,
   type Object3D,
   type Texture,
@@ -16,6 +23,7 @@ import type { KartState } from '@shared/vehicles/KartState';
 import type { KartRig } from './KartModelFactory';
 import { KART_MODEL_SCALE } from '../config/roster';
 import { createItemModel, type ModelKey } from '../items/ItemModels';
+import { GIANT_SCALE } from '@shared/race/RaceSimulation';
 import { DriverRig, type DriverGesture, type DriverMood } from './DriverRig';
 
 /** Where an active timed item is shown on the kart. */
@@ -39,6 +47,15 @@ export interface KartRenderState {
 }
 
 const WHEEL_RADIUS = 0.21 * KART_MODEL_SCALE;
+/** Name tags live on camera layers TAG_LAYER_FIRST + player slot (4 = spectator / TV camera). */
+export const TAG_LAYER_FIRST = 1;
+const TAG_FULL = 38;
+const TAG_FAR = 70;
+/** Tag height (m) at its natural size, and the most screen pixels it may cover (CSS px). */
+const TAG_WORLD_HEIGHT = 0.7;
+const TAG_MAX_PX = 24;
+const tagPos = new Vector3();
+const tagViewport = new Vector4();
 const DRIFT_YAW = 0.42;
 
 let blobTexture: Texture | null = null;
@@ -71,6 +88,7 @@ export class KartView {
   private readonly blob: Mesh;
   private readonly rocket: Object3D;
   private readonly baseEmissive: Color[];
+  private readonly extraMaterials: MeshStandardMaterial[] = [];
   private wheelSpin = 0;
   private prevSpeed = 0;
   private accel = 0;
@@ -82,6 +100,18 @@ export class KartView {
   private driftYaw = 0;
   private trickHeld = false;
   private trickTime = 0;
+  private trickCount = 0;
+  /** Set when a trick starts (the session adds a sparkle burst). */
+  private trickFx = false;
+  private giant = 1;
+  private ghostOn = false;
+  private ghostMats: Array<{ m: MeshStandardMaterial; transparent: boolean; opacity: number; depthWrite: boolean }> | null = null;
+  private readonly carrier: Object3D;
+  /** Seconds the carrier keeps flying off after letting go. */
+  private carrierAway = 0;
+  private lifting = false;
+  private tag: Sprite | null = null;
+  private tagKey = '';
   private shrink = 1;
   private flat = 0;
   private time = 0;
@@ -106,6 +136,10 @@ export class KartView {
     this.baseEmissive = rig.materials.map((m) => m.emissive.clone());
     this.driver = new DriverRig(rig.character, rig.characterId, rig.color);
 
+    this.carrier = createItemModel('carrier');
+    this.carrier.visible = false;
+    this.root.add(this.carrier);
+
     const blobMat = new MeshBasicMaterial({ map: getBlobTexture(), transparent: true, depthWrite: false });
     blobMat.polygonOffset = true;
     blobMat.polygonOffsetFactor = -2;
@@ -113,6 +147,41 @@ export class KartView {
     this.blob.rotation.x = -Math.PI / 2;
     this.blob.renderOrder = 1;
     this.blob.name = 'kart-contact-shadow';
+  }
+
+  /**
+   * Free what this kart owns on the GPU: its cloned materials, the driver's topper
+   * and scarf, the contact shadow. Shared model geometry and textures stay cached.
+   */
+  dispose(): void {
+    for (const m of this.rig.materials) m.dispose();
+    for (const m of this.extraMaterials) m.dispose();
+    if (this.tag) {
+      const mat = this.tag.material as SpriteMaterial;
+      mat.map?.dispose();
+      mat.dispose();
+    }
+    this.driver.dispose();
+    this.blob.geometry.dispose();
+    (this.blob.material as MeshBasicMaterial).dispose();
+    this.root.removeFromParent();
+    this.blob.removeFromParent();
+  }
+
+  /** Shader warm-up: a see-through copy beside the kart so the Phantom look is compiled too. */
+  warmupLooks(): void {
+    const copy = this.rig.root.clone(true);
+    copy.traverse((o) => {
+      const m = o as Mesh;
+      if (!m.isMesh || !(m.material instanceof MeshStandardMaterial)) return;
+      const ghost = m.material.clone();
+      ghost.transparent = true;
+      ghost.opacity = 0.3;
+      m.material = ghost;
+      this.extraMaterials.push(ghost);
+    });
+    copy.position.x = 3;
+    this.root.add(copy);
   }
 
   /** The contact shadow lives in world space (not tilted with the kart). */
@@ -200,13 +269,18 @@ export class KartView {
     this.suspension.rotation.set(this.pitch, this.driftYaw, this.roll);
     if (k.jumpTrick && !this.trickHeld) {
       this.trickTime = 0.45;
+      this.trickCount++;
+      this.trickFx = true;
       this.driver.gesture('boost');
     }
     this.trickHeld = k.jumpTrick;
     if (s.grounded) this.trickTime = 0;
     if (this.trickTime > 0) {
+      // Tricks alternate between a flat spin and a barrel roll.
       this.trickTime = Math.max(0, this.trickTime - dt);
-      this.suspension.rotation.y += easeOut(1 - this.trickTime / 0.45) * Math.PI * 2;
+      const turn = easeOut(1 - this.trickTime / 0.45) * Math.PI * 2;
+      if (this.trickCount % 2) this.suspension.rotation.y += turn;
+      else this.suspension.rotation.z += turn;
     }
     this.suspension.position.y = idle;
     this.suspension.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
@@ -235,8 +309,11 @@ export class KartView {
     });
 
     // Respawn blink.
-    const blinkOff = s.respawnTimer > 0 && Math.floor(s.respawnTimer * 12) % 2 === 1;
+    const blinkOff = s.respawnTimer > 0 && k.liftTimer <= 0 && Math.floor(s.respawnTimer * 12) % 2 === 1;
     this.status.visible = !blinkOff && k.rocketTimer <= 0;
+    this.updateCarrier(k, dt);
+    if (this.tag) this.tag.position.y = 1.5 + 2.2 * this.giant;
+    this.updateGhost(k);
 
     this.updateShadow(s);
   }
@@ -251,7 +328,9 @@ export class KartView {
     // Shrink / squish.
     this.shrink = damp(this.shrink, k.shrinkTimer > 0 ? 0.55 : 1, 6, dt);
     this.flat = damp(this.flat, k.squishTimer > 0 ? 1 : 0, k.squishTimer > 0 ? 25 : 4, dt);
-    this.status.scale.set(this.shrink * (1 + this.flat * 0.4), this.shrink * (1 - this.flat * 0.72), this.shrink * (1 + this.flat * 0.4));
+    this.giant = damp(this.giant, k.megaTimer > 0 ? GIANT_SCALE : 1, k.megaTimer > 0 ? 3.5 : 5, dt);
+    const size = this.shrink * this.giant;
+    this.status.scale.set(size * (1 + this.flat * 0.4), size * (1 - this.flat * 0.72), size * (1 + this.flat * 0.4));
 
     // Invincibility shimmer.
     const mats = this.rig.materials;
@@ -292,6 +371,139 @@ export class KartView {
     }
   }
 
+  /**
+   * Floating name / place tag over the kart. `hiddenLayer`: the camera layer of the
+   * player driving this kart (they never see their own tag); tags fade with distance.
+   */
+  setTag(name: string, place: number, color: string, hiddenLayer: number | null): void {
+    if (!this.tag) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 64;
+      const tex = new CanvasTexture(canvas);
+      tex.colorSpace = SRGBColorSpace;
+      const mat = new SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+      const tag = new Sprite(mat);
+      tag.name = 'kart-tag';
+      tag.scale.set(TAG_WORLD_HEIGHT * 4, TAG_WORLD_HEIGHT, 1);
+      tag.position.y = 3.7;
+      tag.renderOrder = 10;
+      tag.layers.disableAll();
+      for (let l = TAG_LAYER_FIRST; l <= TAG_LAYER_FIRST + 4; l++) if (l !== hiddenLayer) tag.layers.enable(l);
+      tag.onBeforeRender = (renderer, _s, camera) => this.fitTag(renderer, camera as PerspectiveCamera);
+      this.root.add(tag);
+      this.tag = tag;
+    }
+    const key = `${place}|${name}|${color}`;
+    if (key === this.tagKey) return;
+    this.tagKey = key;
+    const tex = (this.tag.material as SpriteMaterial).map as CanvasTexture;
+    const c = tex.image as HTMLCanvasElement;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, 256, 64);
+    g.font = '900 34px "Nunito", sans-serif';
+    const text = name.length > 11 ? `${name.slice(0, 10)}…` : name;
+    const w = Math.min(196, g.measureText(text).width) + 74;
+    const x0 = (256 - w) / 2;
+    g.fillStyle = 'rgba(27,20,70,0.78)';
+    g.beginPath();
+    g.roundRect(x0, 8, w, 48, 24);
+    g.fill();
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(x0 + 28, 32, 20, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#1b1446';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(String(place), x0 + 28, 34, 34);
+    g.fillStyle = '#ffffff';
+    g.textAlign = 'left';
+    g.fillText(text, x0 + 56, 34, 196);
+    tex.needsUpdate = true;
+  }
+
+  /**
+   * Per view, just before the tag draws: a fixed small on-screen size (shrinking
+   * with distance, never growing as karts close in), faded out when very close,
+   * near the screen edges or in the lane straight ahead of your own kart.
+   */
+  private fitTag(renderer: WebGLRenderer, camera: PerspectiveCamera): void {
+    const tag = this.tag!;
+    const mat = tag.material as SpriteMaterial;
+    const world = tag.getWorldPosition(tagPos);
+    const d = camera.position.distanceTo(world);
+    renderer.getCurrentViewport(tagViewport);
+    const viewH = Math.max(1, tagViewport.w);
+    const worldH = TAG_WORLD_HEIGHT;
+    // Pixels the tag would cover at its natural world size; cap it.
+    const span = 2 * d * Math.tan((camera.fov * Math.PI) / 360);
+    const px = (worldH / span) * viewH;
+    const cap = TAG_MAX_PX * renderer.getPixelRatio();
+    const k = px > cap ? cap / px : 1;
+    tag.scale.set(worldH * 4 * k, worldH * k, 1);
+    tag.updateMatrixWorld();
+    // Where it lands on screen.
+    const ndc = tagPos.project(camera);
+    let alpha = Math.min(1, (TAG_FAR - d) / (TAG_FAR - TAG_FULL), (d - 4) / 4);
+    if (ndc.z > 1 || Math.abs(ndc.x) > 0.86 || Math.abs(ndc.y) > 0.9) alpha = 0;
+    // Keep the lane right above your own kart clear.
+    if (ndc.y > -0.65 && ndc.y < 0.3) alpha *= Math.min(1, Math.max(0.12, (Math.abs(ndc.x) - 0.08) / 0.12));
+    mat.opacity = Math.max(0, alpha);
+  }
+
+  /** True once per trick start (consumed by the session for its sparkle burst). */
+  takeTrick(): boolean {
+    const t = this.trickFx;
+    this.trickFx = false;
+    return t;
+  }
+
+  /** Visual size multiplier (Giant Gummy) — the chase camera backs off to match. */
+  get size(): number {
+    return this.giant * this.shrink;
+  }
+
+  /** Pickup carrier: hangs over the kart while lowering it, then flies off. */
+  private updateCarrier(k: KartState, dt: number): void {
+    const lifting = k.liftTimer > 0;
+    if (this.lifting && !lifting) this.carrierAway = 0.9;
+    this.lifting = lifting;
+    this.carrierAway = Math.max(0, this.carrierAway - dt);
+    const c = this.carrier;
+    c.visible = lifting || this.carrierAway > 0;
+    if (!c.visible) return;
+    const away = 1 - this.carrierAway / 0.9;
+    c.position.set(Math.sin(this.time * 2.1) * 0.12, 3.9 + (lifting ? Math.sin(this.time * 3) * 0.08 : away * away * 9), 0);
+    c.rotation.set(0, lifting ? 0 : away * 2, Math.sin(this.time * 2.6) * 0.06);
+    c.scale.setScalar(1.3 * (lifting ? 1 : 1 - away * 0.6));
+    const rotor = c.getObjectByName('rotor');
+    if (rotor) rotor.rotation.y = this.time * 26;
+    const hookParts = ['cable', 'hook'].map((n) => c.getObjectByName(n));
+    for (const part of hookParts) if (part) part.visible = lifting;
+  }
+
+  /** Phantom: the kart turns see-through (flickering back just before it ends). */
+  private updateGhost(k: KartState): void {
+    const on = k.ghostTimer > 0;
+    if (!on && !this.ghostOn) return;
+    // Remember each material's own look the first time (some parts are already see-through).
+    const mats = (this.ghostMats ??= [...this.rig.materials, ...this.driver.materials].map((m) => ({ m, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite })));
+    if (on !== this.ghostOn) {
+      this.ghostOn = on;
+      for (const g of mats) {
+        g.m.transparent = on || g.transparent;
+        g.m.depthWrite = on ? false : g.depthWrite;
+        g.m.opacity = g.opacity;
+        g.m.needsUpdate = true;
+      }
+    }
+    if (on) {
+      const flicker = k.ghostTimer < 0.8 && Math.floor(k.ghostTimer * 14) % 2 === 0;
+      for (const g of mats) g.m.opacity = g.opacity * (flicker ? 0.75 : 0.3);
+    }
+  }
+
   private updateShadow(s: KartRenderState): void {
     if (s.groundY === null) {
       this.blob.visible = false;
@@ -303,7 +515,7 @@ export class KartView {
     const fwd = tmpV.set(0, 0, 1).applyQuaternion(s.quaternion);
     this.blob.rotation.set(-Math.PI / 2, 0, Math.atan2(fwd.x, fwd.z));
     const k = clamp(1 - h / 12, 0, 1);
-    this.blob.scale.setScalar((0.6 + 0.4 * k) * this.shrink);
+    this.blob.scale.setScalar((0.6 + 0.4 * k) * this.shrink * this.giant);
     (this.blob.material as MeshBasicMaterial).opacity = k;
   }
 }

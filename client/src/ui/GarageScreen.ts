@@ -146,7 +146,7 @@ export class GarageScreen {
   }
 
   private rebuild(): void {
-    if (this.view) this.scene.remove(this.view.root);
+    this.view?.dispose();
     const c = CHARACTERS[this.character]!;
     const k = KART_BODIES[this.kart]!;
     this.view = new KartView(buildKartRig(this.assets, getKartBody(k.id), getCharacter(c.id)));

@@ -11,6 +11,10 @@ export interface HudOptions {
   timer: boolean;
   /** Controls hint (single player only — split views are too small). */
   hint: boolean;
+  /** Split-screen: show only the places around this player (±2) in bigger type. */
+  compactStandings?: boolean;
+  /** Mirror mode: the minimap flips with the picture. */
+  mirror?: boolean;
 }
 
 export interface StandingRow {
@@ -46,8 +50,20 @@ export interface HudData {
   speedFx: number;
   slipstreamCharge: number;
   slipstreamActive: boolean;
-  jumpFlight: boolean;
+  /** Airborne off a ramp or a fast lip: a trick (drift press) is possible. */
+  trickable: boolean;
   jumpTrick: boolean;
+  /** Second item slot (double item slot) and its roulette. */
+  reserve: ItemId | null;
+  reserveRoulette: number;
+}
+
+/** A shot closing in on this player: its item icon, and which side (-1 left … 1 right). */
+export interface IncomingThreat {
+  icon: string;
+  side: number;
+  /** 0 (far) … 1 (about to hit). */
+  urgency: number;
 }
 
 export interface ResultRow {
@@ -55,6 +71,8 @@ export interface ResultRow {
   name: string;
   time: string;
   me: boolean;
+  /** Points earned this race (shown as +N when given). */
+  points?: number;
 }
 
 const ordinal = (n: number): string => {
@@ -73,6 +91,14 @@ export class Hud {
   private readonly itemImg: HTMLImageElement;
   private readonly itemUses: HTMLElement;
   private readonly itemTimer: HTMLElement;
+  private readonly reserveBox: HTMLElement;
+  private readonly reserveImg: HTMLImageElement;
+  private shownReserve: string | null = null;
+  private reserveTick = 0;
+  private reserveIndex = 0;
+  private readonly incoming: HTMLElement;
+  private readonly incomingImg: HTMLImageElement;
+  private readonly introCard = el('div', 'tt-intro');
   private readonly posNum: HTMLElement;
   private readonly posSuffix: HTMLElement;
   private readonly posWrap: HTMLElement;
@@ -94,7 +120,7 @@ export class Hud {
   private readonly minimap: Minimap | null;
   private speedLines!: SpeedLines;
   private lastSplitCount = -1;
-  private hintTimer = 10;
+  private hintTimer = 4;
   private rouletteTick = 0;
   private rouletteIndex = 0;
   private shownItem: string | null = null;
@@ -113,6 +139,13 @@ export class Hud {
     const timerFill = el('div');
     this.itemTimer = el('div', 'tt-item__timer', [timerFill]);
     this.itemBox = el('div', 'tt-item', [this.itemImg, this.itemUses, this.itemTimer]);
+    this.reserveImg = el('img');
+    this.reserveImg.alt = '';
+    this.reserveImg.style.visibility = 'hidden';
+    this.reserveBox = el('div', 'tt-item tt-item--reserve', [this.reserveImg]);
+    this.incomingImg = el('img');
+    this.incomingImg.alt = '';
+    this.incoming = el('div', 'tt-incoming', [el('div', 'tt-incoming__ring'), this.incomingImg, el('div', 'tt-incoming__label tt-display', '!')]);
 
     this.posNum = el('span', 'tt-position__num tt-display', '1');
     this.posSuffix = el('span', 'tt-position__suffix tt-display', 'st');
@@ -145,10 +178,13 @@ export class Hud {
     this.standings.style.display = options.standings ? '' : 'none';
 
     if (!options.hint) this.hint.style.display = 'none';
-    this.root = el('div', 'tt-hud', [this.ink, this.flashEl, this.itemBox, this.standings, stats, timer, this.posWrap, this.center, this.wrongWay, this.hint, this.results]);
+    if (options.compactStandings) this.standings.classList.add('is-compact');
+    this.root = el('div', 'tt-hud', [this.ink, this.flashEl, this.itemBox, this.reserveBox, this.incoming, this.standings, stats, timer, this.posWrap, this.center, this.wrongWay, this.hint, this.results]);
     parent.appendChild(this.root);
     this.root.appendChild(this.drivingHint);
+    this.root.appendChild(this.introCard);
     this.minimap = options.minimap ? new Minimap(this.root, track, track.def.minimap.rotation) : null;
+    if (this.minimap && options.mirror) this.minimap.root.style.transform = 'scaleX(-1)';
     this.speedLines = new SpeedLines(this.root);
     this.root.prepend(this.speedLines.canvas); // under every other HUD element
   }
@@ -164,8 +200,9 @@ export class Hud {
   update(dt: number, d: HudData): void {
     this.updateItem(dt, d);
     this.speedLines.draw(d.speedFx, dt);
-    this.drivingHint.hidden = !d.jumpFlight && !d.slipstreamActive && d.slipstreamCharge < 0.05;
-    this.drivingHint.textContent = d.jumpFlight ? (d.jumpTrick ? 'TRICK! Landing boost ready' : 'Hop / Drift to trick!') : d.slipstreamActive ? 'SLIPSTREAM BOOST!' : `SLIPSTREAM ${Math.round(d.slipstreamCharge * 100)}%`;
+    // The draft chip only appears once a slipstream is genuinely building (packs drift in and out of wakes).
+    this.drivingHint.hidden = !d.trickable && !d.slipstreamActive && d.slipstreamCharge < 0.6;
+    this.drivingHint.textContent = d.trickable ? (d.jumpTrick ? 'TRICK! Landing boost ready' : 'Hop / Drift to trick!') : d.slipstreamActive ? 'SLIPSTREAM BOOST!' : `SLIPSTREAM ${Math.round(d.slipstreamCharge * 100)}%`;
 
     if (d.position !== this.lastPosition) {
       this.posNum.textContent = String(d.position);
@@ -217,6 +254,39 @@ export class Hud {
     this.itemUses.textContent = d.item && d.roulette <= 0 && d.uses > 1 ? `×${d.uses}` : '';
     this.itemTimer.style.display = d.timed >= 0 ? 'block' : 'none';
     if (d.timed >= 0) (this.itemTimer.firstElementChild as HTMLElement).style.width = `${d.timed * 100}%`;
+
+    // Second slot: its own little roulette, then the held spare.
+    let spare: string | null = null;
+    if (d.reserveRoulette > 0) {
+      this.reserveTick -= dt;
+      if (this.reserveTick <= 0) {
+        this.reserveIndex = (this.reserveIndex + 2 + Math.floor(Math.random() * 3)) % ALL_ITEMS.length;
+        this.reserveTick = 0.07;
+      }
+      spare = `roll:${ALL_ITEMS[this.reserveIndex]}`;
+    } else if (d.reserve) spare = d.reserve;
+    if (spare !== this.shownReserve) {
+      const id = spare?.startsWith('roll:') ? spare.slice(5) : spare;
+      this.reserveImg.style.visibility = id ? 'visible' : 'hidden';
+      if (id) this.reserveImg.src = this.icons[id] ?? '';
+      this.reserveBox.classList.toggle('is-filled', spare !== null);
+      this.shownReserve = spare;
+    }
+  }
+
+  /** Flyover title card (track name + skip hint); null ends the intro look. */
+  setIntro(trackName: string | null): void {
+    this.root.classList.toggle('is-intro', trackName !== null);
+    this.introCard.replaceChildren(...(trackName ? [el('div', 'tt-intro__name tt-display', trackName), el('div', 'tt-intro__skip', 'Press any button to skip')] : []));
+  }
+
+  /** Edge warning for a shot homing in on this player (null hides it). */
+  setIncoming(threat: IncomingThreat | null): void {
+    this.incoming.classList.toggle('is-on', threat !== null);
+    if (!threat) return;
+    if (this.incomingImg.src !== threat.icon) this.incomingImg.src = threat.icon;
+    this.incoming.style.left = `${50 + threat.side * 30}%`;
+    this.incoming.style.setProperty('--urgency', threat.urgency.toFixed(2));
   }
 
   /** Race clock with completed lap splits, the live lap, and the Time Trial record. */
@@ -230,9 +300,15 @@ export class Hud {
     this.timerRecord.textContent = record !== null ? `Record ${formatTime(record)}` : '';
   }
 
-  /** Live position list; rows slide to their new slot when places change. */
+  /**
+   * Live position list; rows slide to their new slot when places change. Split
+   * views show a window of five places around the player.
+   */
   updateStandings(rows: readonly StandingRow[]): void {
     if (!this.options.standings) return;
+    const mine = rows.find((r) => r.me)?.position ?? 1;
+    const span = this.options.compactStandings ? 5 : rows.length;
+    const first = Math.max(1, Math.min(rows.length - span + 1, mine - 2));
     for (const r of rows) {
       let row = this.standingRows.get(r.id);
       if (!row) {
@@ -241,9 +317,19 @@ export class Hud {
         this.standings.appendChild(row);
         this.standingRows.set(r.id, row);
       }
-      row.children[0]!.textContent = String(r.position);
+      const pos = String(r.position);
+      if (row.children[0]!.textContent !== pos) {
+        if (row.children[0]!.textContent) {
+          row.classList.remove('is-moved');
+          void row.offsetWidth;
+          row.classList.add('is-moved');
+        }
+        row.children[0]!.textContent = pos;
+      }
       row.classList.toggle('is-me', r.me);
-      row.style.transform = `translateY(${(r.position - 1) * 100}%)`;
+      const slot = r.position - first;
+      row.hidden = slot < 0 || slot >= span;
+      row.style.transform = `translateY(${slot * 100}%)`;
     }
   }
 
@@ -289,7 +375,14 @@ export class Hud {
   showResults(rows: ResultRow[], hint: string): void {
     this.results.replaceChildren(
       el('h3', 'tt-display', 'RESULTS'),
-      ...rows.map((r) => el('div', `tt-results__row${r.me ? ' is-me' : ''}`, [el('span', '', r.position > 0 ? `${r.position}${ordinal(r.position)}` : ''), el('span', '', r.name), el('span', '', r.time)])),
+      ...rows.map((r) =>
+        el('div', `tt-results__row${r.me ? ' is-me' : ''}`, [
+          el('span', '', r.position > 0 ? `${r.position}${ordinal(r.position)}` : ''),
+          el('span', '', r.name),
+          el('span', '', r.time),
+          el('span', 'tt-results__pts', r.points !== undefined ? `+${r.points}` : ''),
+        ]),
+      ),
       el('div', 'tt-results__hint', hint),
     );
     this.results.classList.add('is-open');

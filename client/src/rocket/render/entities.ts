@@ -72,9 +72,25 @@ export async function loadCars(): Promise<void> {
   );
 }
 
-/** Clone a model part with the team paint (UVs of paint cells moved to the team column). */
+/**
+ * Car materials are shared by every car (the team paint is a UV shift into the
+ * shared palette): one satin clear-coat body material and one rubber wheel
+ * material, compiled once at init.
+ */
+let shared: { body: THREE.MeshPhysicalMaterial; wheel: THREE.MeshStandardMaterial } | null = null;
+function carMaterials(): NonNullable<typeof shared> {
+  // Body: satin car paint with a light clear coat (no mirror shine). Wheels: rubber.
+  shared ??= {
+    body: new THREE.MeshPhysicalMaterial({ map: palette, roughness: 0.52, metalness: 0.08, clearcoat: 0.3, clearcoatRoughness: 0.4, envMapIntensity: 0.65 }),
+    wheel: new THREE.MeshStandardMaterial({ map: palette, roughness: 0.62, metalness: 0.15, envMapIntensity: 0.9 }),
+  };
+  return shared;
+}
+
+/** Clone a model part with the team paint (UVs of paint cells moved to the team column). Geometries are per clone (disposed with the view). */
 function paintClone(src: THREE.Object3D, team: 0 | 1, glossy = false): THREE.Object3D {
   const o = src.clone(true);
+  const mats = carMaterials();
   o.traverse((n) => {
     const mesh = n as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -88,11 +104,7 @@ function paintClone(src: THREE.Object3D, team: 0 | 1, glossy = false): THREE.Obj
       if ((row === 2 || row === 3) && col >= 3 && col <= 7) uv.setX(i, u + (PAINT_COL[team] - col) / 8);
     }
     mesh.geometry = g;
-    const src = mesh.material as THREE.MeshStandardMaterial;
-    // Body: satin car paint with a light clear coat (no mirror shine). Wheels: rubber.
-    mesh.material = glossy
-      ? new THREE.MeshPhysicalMaterial({ map: palette ?? src.map, roughness: 0.52, metalness: 0.08, clearcoat: 0.3, clearcoatRoughness: 0.4, envMapIntensity: 0.65 })
-      : new THREE.MeshStandardMaterial({ map: palette ?? src.map, roughness: 0.62, metalness: 0.15, envMapIntensity: 0.9 });
+    mesh.material = glossy ? mats.body : mats.wheel;
     mesh.castShadow = true;
   });
   return o;
@@ -102,6 +114,8 @@ const flameGeo = new THREE.ConeGeometry(1, 1, 14, 1, true).rotateZ(Math.PI / 2).
 
 export class CarView {
   readonly root = new THREE.Group();
+  /** Pooled views are re-assigned to a new car. */
+  carId: number;
   private readonly wheels: Array<{ pivot: THREE.Group; steer: THREE.Group; spin: THREE.Group; front: boolean }> = [];
   private readonly flame: THREE.Group;
   private readonly flameOuter: THREE.Mesh;
@@ -116,10 +130,11 @@ export class CarView {
   readonly wheelWorld = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
 
   constructor(
-    readonly carId: number,
+    carId: number,
     readonly team: 0 | 1,
-    carModel: CarId,
+    readonly carModel: CarId,
   ) {
+    this.carId = carId;
     this.body = carBody(carModel);
     const t = templates.get(carInfo(carModel).model)!;
     const b = this.body;
@@ -211,9 +226,47 @@ export class CarView {
     }
   }
 
+  /** Free the cloned geometries and the flame materials (car materials and the palette are shared). */
   dispose(): void {
     this.root.removeFromParent();
+    this.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.geometry === flameGeo) return;
+      m.geometry.dispose();
+    });
+    (this.flameOuter.material as THREE.Material).dispose();
+    (this.flameInner.material as THREE.Material).dispose();
   }
+}
+
+/**
+ * Views are pooled per (model, team): building one clones ~10 geometries, so
+ * re-using them keeps match start free of allocation hitches.
+ */
+const pool = new Map<string, CarView[]>();
+export function acquireCarView(carId: number, team: 0 | 1, model: CarId): CarView {
+  const list = pool.get(`${model}:${team}`);
+  const v = list?.pop();
+  if (v) {
+    pooled--;
+    v.carId = carId;
+    v.errPos.set(0, 0, 0);
+    v.errQuat.identity();
+    v.root.visible = true;
+    return v;
+  }
+  return new CarView(carId, team, model);
+}
+let pooled = 0;
+export function releaseCarView(v: CarView): void {
+  v.root.removeFromParent();
+  const key = `${v.carModel}:${v.team}`;
+  const list = pool.get(key) ?? [];
+  // Bounded: a couple per (model, team), a dozen overall; the rest are freed.
+  if (list.length >= 2 || pooled >= 12) return v.dispose();
+  list.push(v);
+  pool.set(key, list);
+  pooled++;
 }
 
 // ---------------------------------------------------------------- ball
@@ -291,6 +344,8 @@ export class PadsView {
   private readonly orbs: THREE.Object3D[] = [];
   private readonly rings: THREE.MeshBasicMaterial[] = [];
   private readonly pads: THREE.Group[] = [];
+  /** Orb size 0..1 (implodes on pickup, pops back on respawn). */
+  private readonly orbK: number[] = [];
   private scale = 1;
   private t = 0;
 
@@ -324,6 +379,7 @@ export class PadsView {
       }
       g.add(orb);
       this.orbs.push(orb);
+      this.orbK.push(1);
       this.pads.push(g);
       this.group.add(g);
     }
@@ -341,8 +397,11 @@ export class PadsView {
     for (let i = 0; i < this.orbs.length; i++) {
       const active = timers[i]! <= 0;
       const o = this.orbs[i]!;
-      o.visible = active;
-      if (active) {
+      // Implode over 0.15 s when taken; grow back when the pad respawns.
+      const k = (this.orbK[i] = Math.max(0, Math.min(1, this.orbK[i]! + (active ? dt / 0.15 : -dt / 0.15))));
+      o.visible = k > 0;
+      if (k > 0) {
+        o.scale.setScalar(k);
         o.rotation.y = this.t * 1.5;
         if (BOOST_PADS[i]!.big) o.position.y = (72 + Math.sin(this.t * 2 + i) * 6) * S;
       }
@@ -356,8 +415,8 @@ export class PadsView {
 /** Render a 3/4 studio shot of every car (data URLs), for the garage. */
 export function renderCarThumbs(team: 0 | 1, env: THREE.Texture | null): Map<CarId, string> {
   const out = new Map<CarId, string>();
-  const W = 360;
-  const H = 200;
+  const W = 480;
+  const H = 266;
   const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   r.setSize(W, H);
   r.toneMapping = THREE.ACESFilmicToneMapping;

@@ -8,7 +8,7 @@ import type { LocalPlayer } from '../players/LocalPlayer';
 import type { KartEntity } from '../vehicles/KartEntity';
 import { EngineVoice } from './EngineVoice';
 import { getEngineProfile } from './EngineProfiles';
-import { getKartBody } from '../config/roster';
+import { getCharacter, getKartBody } from '../config/roster';
 import type { GameAudio } from './GameAudio';
 import { PODIUM, STING_FINAL_LAP, STING_FINISH, STING_INTRO, STING_LOSE, STING_WIN, trackSong } from './music/songs';
 import type { SfxName } from './sfx';
@@ -35,11 +35,19 @@ const ITEM_SOUND: Partial<Record<ItemId, SfxName>> = {
   octo: 'bubbles',
   coin: 'coin',
   quake: 'shockwave',
+  phantom: 'phantom',
+  giant: 'giant',
+  feather: 'feather',
   // zap / paint are voiced by their own race events.
 };
 
 const HIT_SOUND = { spin: 'hitSpin', tumble: 'hitTumble', squish: 'hitSquish' } as const;
 const CROWN_ALARM_EVERY = 0.5;
+/** A racer barks at most this often (s) — keeps the voices charming, not chatty. */
+const BARK_GAP = 1.6;
+const OVERTAKE_BARK_GAP = 6;
+type Bark = 'hit' | 'boost' | 'finish' | 'overtake';
+const BARK_STAGE: Record<Bark, number> = { hit: 0, boost: 1, finish: 2, overtake: 3 };
 
 export interface RaceAudioOptions {
   race: RaceSimulation;
@@ -51,6 +59,8 @@ export interface RaceAudioOptions {
   quiet: boolean;
   /** TrackDefinition.music id. */
   music: string;
+  /** Mirror mode: the picture is flipped, so stereo is too. */
+  mirror?: boolean;
 }
 
 /**
@@ -68,6 +78,11 @@ export class RaceAudio {
   private readonly finished = new Set<number>();
   private finalLapPlayed = false;
   private alarmTimer = 0;
+  private incomingTimer = 0;
+  private readonly lastBark = new Map<number, number>();
+  private readonly lastOvertake = new Map<number, number>();
+  private readonly lastPlace = new Map<number, number>();
+  private clock = 0;
   private paused = false;
   private readonly tmp = new Vector3();
   private readonly listenerPool: Array<{ position: Vector3; right: Vector3 }> = [];
@@ -138,10 +153,15 @@ export class RaceAudio {
         case 'itemUse': {
           const name = ITEM_SOUND[e.item];
           if (name) sfx.play(name, { at: this.at(e.racer), minGap: 0.02 });
+          if (this.local.has(e.racer) && (e.item === 'fizz' || e.item === 'fizz3' || e.item === 'giant' || e.item === 'jetRocket')) this.bark(e.racer, 'boost');
           break;
         }
         case 'hit':
           sfx.play(HIT_SOUND[e.kind], { at: this.at(e.racer), minGap: 0.02 });
+          this.bark(e.racer, 'hit');
+          break;
+        case 'steal':
+          if (this.local.has(e.racer) || this.local.has(e.from)) sfx.play('steal');
           break;
         case 'blocked':
           sfx.play('blocked', { at: this.v(e.position) });
@@ -208,6 +228,7 @@ export class RaceAudio {
   }
 
   private onLocalFinish(racer: number, position: number): void {
+    if (position <= 3) this.bark(racer, 'finish', true);
     const first = this.finished.size === 0;
     this.finished.add(racer);
     this.sfx.play('crowdCheer', { intensity: position <= 3 ? 1 : 0.5 });
@@ -221,11 +242,40 @@ export class RaceAudio {
     });
   }
 
+  /**
+   * A short voiced bark from a racer, pitched to their character. Own racers only,
+   * plus hits on rivals close enough to hear.
+   */
+  private bark(racer: number, kind: Bark, force = false): void {
+    const now = this.clock;
+    if (!force && now - (this.lastBark.get(racer) ?? -9) < BARK_GAP) return;
+    const mine = this.local.has(racer);
+    if (!mine && kind !== 'hit') return;
+    this.lastBark.set(racer, now);
+    const r = this.o.race.racers[racer];
+    if (!r) return;
+    this.sfx.play('voice', { at: this.at(racer), stage: BARK_STAGE[kind], pitch: getCharacter(r.characterId).voice, volume: mine ? 1 : 0.8, minGap: 0.15 });
+  }
+
+  /** Trick off a lip / ramp (own karts). */
+  trick(racer: number): void {
+    if (!this.o.quiet && this.local.has(racer)) this.sfx.play('trick', { minGap: 0.1 });
+  }
+
+  /** Radar ping for a shot homing on a local racer; faster as it closes. */
+  incoming(racer: number, urgency: number): void {
+    if (this.o.quiet || !this.local.has(racer) || this.incomingTimer > 0) return;
+    this.sfx.play('incoming', { intensity: urgency, minGap: 0.1 });
+    this.incomingTimer = 0.55 - urgency * 0.38;
+  }
+
   // ---------------------------------------------------------------- per frame
 
   /** Call every frame before kart frame events are cleared. */
   frame(dt: number): void {
     if (this.o.quiet) return;
+    this.clock += dt;
+    this.incomingTimer -= dt;
     this.updateListeners();
     const engine = this.audio.engine;
     const race = this.o.race;
@@ -270,6 +320,7 @@ export class RaceAudio {
       if (ev.wallHit > 3) this.sfx.play('wallHit', { at, intensity: Math.min(1, ev.wallHit / 18) });
       if (ev.driftStageUp && mine) this.sfx.play('driftStage', { stage: ev.driftStageUp, minGap: 0.01 });
       if (ev.miniTurbo) this.sfx.play('miniTurbo', { at, stage: ev.miniTurbo, volume: mine ? 1 : 0.7 });
+      if (ev.miniTurbo === 3 && mine) this.bark(i, 'boost');
       if (ev.respawned && mine) this.sfx.play('respawn');
     });
 
@@ -287,6 +338,13 @@ export class RaceAudio {
       if (wrong && !this.wrongWay.get(p.racerIndex)) this.sfx.play('wrongWay');
       this.wrongWay.set(p.racerIndex, wrong);
       if (r.progress.position === 1 && !r.progress.finished) leaderIsLocal = true;
+      // Overtakes (racing only): an occasional "see ya!".
+      const before = this.lastPlace.get(p.racerIndex) ?? r.progress.position;
+      this.lastPlace.set(p.racerIndex, r.progress.position);
+      if (race.phase === 'racing' && race.time > 5 && r.progress.position < before && !r.progress.finished && this.clock - (this.lastOvertake.get(p.racerIndex) ?? -99) > OVERTAKE_BARK_GAP) {
+        this.lastOvertake.set(p.racerIndex, this.clock);
+        this.bark(p.racerIndex, 'overtake');
+      }
     }
 
     // Crown Buster alarm while one is hunting a leader on this screen.
@@ -303,7 +361,7 @@ export class RaceAudio {
     cams.forEach((cam, i) => {
       const ear = (ears[i] ??= { position: new Vector3(), right: new Vector3() });
       ear.position.copy(cam.position);
-      ear.right.set(1, 0, 0).applyQuaternion(cam.quaternion);
+      ear.right.set(this.o.mirror ? -1 : 1, 0, 0).applyQuaternion(cam.quaternion);
     });
     this.audio.engine.listeners = ears.slice(0, cams.length);
   }

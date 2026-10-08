@@ -9,10 +9,12 @@ export function buildJumps(ctx: BuildContext): void {
   const tex = boostPadTexture().clone();
   tex.wrapS = tex.wrapT = RepeatWrapping;
   const mat = new MeshStandardMaterial({ map: tex, emissive: '#ffb52e', emissiveMap: tex, emissiveIntensity: 0.35, roughness: 0.65 });
+  // Kickers and trick bumps are cyan/violet so they read as "hop here" rather than "launch".
+  const trick = new MeshStandardMaterial({ map: tex, color: '#9ae8ff', emissive: '#3fd8ff', emissiveMap: tex, emissiveIntensity: 0.5, roughness: 0.6 });
   const edge = new MeshStandardMaterial({ color: '#fff3c0', emissive: '#3fd8ff', emissiveIntensity: 0.45, roughness: 0.6 });
   const sides = new MeshStandardMaterial({ color: '#344367', roughness: 0.8, side: DoubleSide });
   for (const jump of ctx.def.jumps) {
-    const ramp = new Mesh(toGeometry(buildJumpSurface(ctx.path, jump)), mat);
+    const ramp = new Mesh(toGeometry(buildJumpSurface(ctx.path, jump)), jump.launchSpeed < 14 ? trick : mat);
     ramp.name = 'jump-ramp';
     ramp.castShadow = ramp.receiveShadow = true;
     ctx.add(ramp);

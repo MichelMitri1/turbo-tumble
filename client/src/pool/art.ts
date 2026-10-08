@@ -1,4 +1,4 @@
-import { POCKETS, R, SEGMENTS, TABLE_L, TABLE_W, FOOT_SPOT_X, HEAD_STRING_X } from './physics';
+import { POCKETS, R, SEGMENTS, TABLE_L, TABLE_W, FOOT_SPOT_X, HEAD_STRING_X, type Pocket } from './physics';
 
 export const BALL_COLORS: Record<number, string> = {
   0: '#f8f6ee',
@@ -13,6 +13,12 @@ export const BALL_COLORS: Record<number, string> = {
 };
 export const ballColor = (id: number) => BALL_COLORS[id > 8 ? id - 8 : id]!;
 export const RAIL = 0.115;
+
+/** The visible hole of a pocket (a little larger than, and in front of, the physics capture circle so it reads at the mouth). */
+export function hole(p: Pocket): { x: number; y: number; r: number } {
+  if (p.side) return { x: p.x, y: p.y - p.my * 0.005, r: 0.062 };
+  return { x: p.x + p.mx * 0.012, y: p.y + p.my * 0.012, r: 0.07 };
+}
 
 // ---------------------------------------------------------------- view transform
 
@@ -139,10 +145,10 @@ export function renderTable(t: Transform, w: number, h: number, dpr: number): HT
   g.save();
   g.translate(t.cx, t.cy);
   if (t.rot) g.rotate(-Math.PI / 2);
-  g.font = `${Math.round(s * 0.085)}px 'Lilita One', 'Arial Black', sans-serif`;
+  g.font = `${Math.round(s * 0.045)}px 'Lilita One', 'Arial Black', sans-serif`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillStyle = 'rgba(255,255,255,0.06)';
+  g.fillStyle = 'rgba(255,255,255,0.045)';
   g.fillText('CORNER POCKET', 0, 0);
   g.restore();
   const fs = P(FOOT_SPOT_X, 0);
@@ -158,11 +164,11 @@ export function renderTable(t: Transform, w: number, h: number, dpr: number): HT
   g.moveTo(h1[0], h1[1]);
   g.lineTo(h2[0], h2[1]);
   g.stroke();
-  // Cushions: the rubber between the cushion nose and the rail.
-  g.fillStyle = '#0e6a37';
-  g.strokeStyle = 'rgba(0,0,0,0.35)';
-  g.lineWidth = 1;
+  // Cushions: the rubber between the cushion nose and the rail, filled as one
+  // shape (no seams where the rails meet the jaws), then the nose highlight.
+  const quads: Array<Array<[number, number]>> = [];
   for (const seg of SEGMENTS) {
+    if (seg.hidden) continue;
     const ex = seg.x2 - seg.x1;
     const ey = seg.y2 - seg.y1;
     const len = Math.sqrt(ex * ex + ey * ey);
@@ -175,54 +181,95 @@ export function renderTable(t: Transform, w: number, h: number, dpr: number): HT
       nx = -nx;
       ny = -ny;
     }
-    const d = seg.jaw ? 0.03 : 0.05;
+    const d = seg.jaw ? 0.035 : 0.05;
     const taper = seg.jaw ? 0 : 0.045;
     const ux = ex / len;
     const uy = ey / len;
-    const pts = [
+    quads.push([
       P(seg.x1, seg.y1),
       P(seg.x2, seg.y2),
       P(seg.x2 + nx * d + ux * taper, seg.y2 + ny * d + uy * taper),
       P(seg.x1 + nx * d - ux * taper, seg.y1 + ny * d - uy * taper),
-    ];
-    const grad = g.createLinearGradient(pts[0]![0], pts[0]![1], (pts[3]![0] + pts[2]![0]) / 2, (pts[3]![1] + pts[2]![1]) / 2);
-    grad.addColorStop(0, '#13824a');
-    grad.addColorStop(1, '#0a4d29');
-    g.fillStyle = grad;
+    ]);
+  }
+  // Same winding for every quad, so the nonzero fill is their union (overlaps don't cancel out).
+  for (const q of quads) {
+    let area = 0;
+    for (let i = 0; i < q.length; i++) area += q[i]![0] * q[(i + 1) % q.length]![1] - q[(i + 1) % q.length]![0] * q[i]![1];
+    if (area < 0) q.reverse();
+  }
+  const cushionPath = () => {
     g.beginPath();
-    pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
-    g.closePath();
-    g.fill();
+    for (const q of quads) q.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+  };
+  // Everything rubber stops at the wood (the jaw facings would otherwise poke onto the rail).
+  g.save();
+  const [kx, ky, kw, kh] = rect(-HL - 0.05, -HW - 0.05, HL + 0.05, HW + 0.05);
+  g.beginPath();
+  g.rect(kx, ky, kw, kh);
+  g.clip();
+  g.fillStyle = '#0d6636';
+  cushionPath();
+  g.fill('nonzero');
+  // Soft shade toward the rail.
+  g.save();
+  cushionPath();
+  g.clip('nonzero');
+  const [ix, iy, iw, ih] = rect(-HL, -HW, HL, HW);
+  g.strokeStyle = 'rgba(0,0,0,0.28)';
+  g.lineWidth = s * 0.05;
+  g.strokeRect(ix - s * 0.05, iy - s * 0.05, iw + s * 0.1, ih + s * 0.1);
+  g.restore();
+  // Nose highlight on the rails, dark edge on the jaws.
+  for (const seg of SEGMENTS) {
+    if (seg.hidden) continue;
+    const a = P(seg.x1, seg.y1);
+    const b = P(seg.x2, seg.y2);
+    g.strokeStyle = seg.jaw ? 'rgba(0,0,0,0.35)' : 'rgba(120,230,160,0.35)';
+    g.lineWidth = seg.jaw ? 1.2 : 1.5;
+    g.beginPath();
+    g.moveTo(a[0], a[1]);
+    g.lineTo(b[0], b[1]);
     g.stroke();
   }
-  // Pocket holes.
+  g.restore();
+  // Pocket holes: black depth with a lit lip on the far side, inside a leather liner.
   for (const p of POCKETS) {
-    const [px, py] = P(p.x, p.y);
-    const pr = p.r * s * 0.82;
-    const grad = g.createRadialGradient(px, py, pr * 0.2, px, py, pr);
+    const h = hole(p);
+    const [px, py] = P(h.x, h.y);
+    const pr = h.r * s;
+    const a0 = p.side ? Math.atan2(t.y(0, p.my) - t.y(0, 0), t.x(0, p.my) - t.x(0, 0)) : Math.atan2(t.y(p.x, p.y) - t.cy, t.x(p.x, p.y) - t.cx);
+    const span = p.side ? 1.72 : 1.75;
+    // Leather liner on the rail side only (away from the cloth).
+    const lw = Math.max(3, s * 0.018);
+    const leather = g.createRadialGradient(px, py, pr, px, py, pr + lw);
+    leather.addColorStop(0, '#2a1608');
+    leather.addColorStop(0.5, '#4a2a12');
+    leather.addColorStop(1, '#1a0c04');
+    g.strokeStyle = leather;
+    g.lineWidth = lw;
+    g.beginPath();
+    g.arc(px, py, pr + lw / 2, a0 - span, a0 + span);
+    g.stroke();
+    const grad = g.createRadialGradient(px - Math.cos(a0) * pr * 0.25, py - Math.sin(a0) * pr * 0.25, pr * 0.1, px, py, pr);
     grad.addColorStop(0, '#000');
-    grad.addColorStop(0.85, '#070707');
-    grad.addColorStop(1, '#1a1a1a');
+    grad.addColorStop(0.65, '#030303');
+    grad.addColorStop(0.9, '#0d0b09');
+    grad.addColorStop(1, '#231a12');
     g.fillStyle = grad;
     g.beginPath();
     g.arc(px, py, pr, 0, Math.PI * 2);
     g.fill();
-  }
-  // Leather pocket rims.
-  for (const p of POCKETS) {
-    const [px, py] = P(p.x, p.y);
-    const pr = p.r * s * 0.82;
-    // Leather liner on the rail side only (away from the cloth).
-    const a0 = Math.atan2(t.y(p.x, p.y) - t.cy, t.x(p.x, p.y) - t.cx);
-    g.lineWidth = Math.max(3, s * 0.016);
-    g.strokeStyle = '#140a04';
+    // Inner shadow cast by the near lip.
+    g.strokeStyle = 'rgba(0,0,0,0.6)';
+    g.lineWidth = Math.max(1.5, s * 0.006);
     g.beginPath();
-    g.arc(px, py, pr + g.lineWidth / 2, a0 - 1.75, a0 + 1.75);
+    g.arc(px, py, pr - g.lineWidth / 2, a0 + Math.PI - 1.4, a0 + Math.PI + 1.4);
     g.stroke();
     g.lineWidth = 1.2;
-    g.strokeStyle = 'rgba(255,200,140,0.25)';
+    g.strokeStyle = 'rgba(255,200,140,0.22)';
     g.beginPath();
-    g.arc(px, py, pr + Math.max(3, s * 0.016) + 1, a0 - 1.7, a0 + 1.7);
+    g.arc(px, py, pr + lw + 1, a0 - span + 0.1, a0 + span - 0.1);
     g.stroke();
   }
   // Diamonds (sights).

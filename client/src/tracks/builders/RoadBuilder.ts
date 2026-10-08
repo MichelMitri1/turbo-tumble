@@ -2,8 +2,7 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, Float32BufferAttrib
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { extrudeAlongPath, mergeMeshData, type MeshData } from '@shared/track/Extrude';
 import { loopRuns, wallRuns } from '@shared/track/TrackGeometry';
-import type { RoadStyle } from '@shared/types/track';
-import { roadTexture } from '../../rendering/ProceduralTextures';
+import { barrierGlow, barrierTextureFor, curbTextureFor, surfaceClock, surfaceFor, surfaceMaterial, type Surface } from '../surfaces';
 import { spawnSlotAnchor } from '@shared/track/spawnGrid';
 import type { TrackSample } from '@shared/track/TrackPath';
 import type { BuildContext } from '../BuildContext';
@@ -25,8 +24,8 @@ export function buildRoad(ctx: BuildContext): void {
   const cw = path.def.path.curbWidth;
 
   void loop;
-  const style = path.def.roadStyle ?? 'asphalt';
-  const tint = style === 'rainbow' ? rainbowTint(ctx) : roadOcclusion(ctx);
+  const surface = surfaceFor(path.def);
+  const tint = roadOcclusion(ctx);
   const runs = loopRuns(path, (i) => !path.samples[i]!.gap);
   const roadParts = runs.map((idx) => {
     const g = toGeometry(
@@ -35,7 +34,8 @@ export function buildRoad(ctx: BuildContext): void {
     applyOcclusion(g, idx.map((i) => tint[i]!), 2);
     return g;
   });
-  const road = new Mesh(roadParts.length === 1 ? roadParts[0]! : mergeGeometries(roadParts), roadMaterial(style));
+  const road = new Mesh(roadParts.length === 1 ? roadParts[0]! : mergeGeometries(roadParts), surfaceMaterial(surface));
+  if (surface === 'rainbow') ctx.updatables.push({ update: (_dt, time) => (surfaceClock.value = time) });
   road.name = 'road';
   road.receiveShadow = true;
   ctx.add(road);
@@ -57,7 +57,7 @@ export function buildRoad(ctx: BuildContext): void {
   lipMesh.receiveShadow = true;
   ctx.add(lipMesh);
 
-  buildFloatingDeck(ctx, style);
+  buildFloatingDeck(ctx, surface);
 
   // Raised curbs in corners.
   const curbs: MeshData[] = [];
@@ -89,9 +89,11 @@ export function buildRoad(ctx: BuildContext): void {
       ),
     );
   }
-  if (curbs.length) ctx.add(mesh(mergeMeshData(curbs), TrackMaterials.curb(), 'curbs'));
+  const curbTex = curbTextureFor(surface);
+  const curbMat = curbTex ? new MeshStandardMaterial({ map: curbTex, roughness: 0.7, ...(surface === 'neon' || surface === 'rainbow' || surface === 'starlight' || surface === 'comet' ? { emissive: new Color('#ffffff'), emissiveMap: curbTex, emissiveIntensity: 0.5 } : {}) }) : TrackMaterials.curb();
+  if (curbs.length) ctx.add(mesh(mergeMeshData(curbs), curbMat, 'curbs'));
 
-  buildBarriers(ctx);
+  buildBarriers(ctx, surface);
   buildStartLine(ctx);
 }
 
@@ -131,7 +133,7 @@ function applyOcclusion(geo: BufferGeometry, rings: Array<[number, number, numbe
 }
 
 /** Red/white crash barriers sitting on the terrain at the wall line (ground segments). */
-function buildBarriers(ctx: BuildContext): void {
+function buildBarriers(ctx: BuildContext, surface: Surface): void {
   const { path, terrain } = ctx;
   const parts: MeshData[] = [];
   const baseY = (s: TrackSample, side: 1 | -1): number => {
@@ -182,7 +184,11 @@ function buildBarriers(ctx: BuildContext): void {
     }
   }
   if (parts.length) {
-    const m = mesh(mergeMeshData(parts), TrackMaterials.barrier(), 'barriers', { cast: true, receive: true });
+    const tex = barrierTextureFor(surface);
+    const mat = tex
+      ? new MeshStandardMaterial({ map: tex, roughness: 0.75, ...(barrierGlow(surface) ? { emissive: new Color('#ffffff'), emissiveMap: tex, emissiveIntensity: 0.45 } : {}) })
+      : TrackMaterials.barrier();
+    const m = mesh(mergeMeshData(parts), mat, 'barriers', { cast: true, receive: true });
     ctx.add(m);
   }
 }
@@ -229,54 +235,14 @@ function buildStartLine(ctx: BuildContext): void {
 
 // ------------------------------------------------------------------ road styles & floating decks
 
-const STYLE_TINT: Record<Exclude<RoadStyle, 'asphalt' | 'rainbow'>, string> = {
-  sand: '#e6cb94',
-  cobble: '#c9b8a8',
-  wood: '#c08a55',
-  neon: '#3a3458',
-  ice: '#d6ecff',
-};
-const styled = new Map<RoadStyle, Mesh['material']>();
-
-function roadMaterial(style: RoadStyle): Mesh['material'] {
-  if (style === 'asphalt') return TrackMaterials.road();
-  let m = styled.get(style);
-  if (!m) {
-    if (style === 'rainbow') {
-      // Unlit and bright: the hue sweep is the light source.
-      m = new MeshBasicMaterial({ map: roadTexture(), vertexColors: true });
-    } else {
-      m = new MeshStandardMaterial({
-        map: roadTexture(),
-        color: new Color(STYLE_TINT[style]),
-        roughness: style === 'ice' ? 0.25 : 0.85,
-        metalness: 0,
-        vertexColors: true,
-        ...(style === 'neon' ? { emissive: new Color('#2a1a60'), emissiveIntensity: 0.6 } : {}),
-      });
-    }
-    styled.set(style, m);
-  }
-  return m;
-}
-
-/** Rainbow road: hue sweeps along the lap (with a little brightness ripple). */
-function rainbowTint(ctx: BuildContext): Array<[number, number, number]> {
-  const c = new Color();
-  const n = ctx.path.samples.length;
-  return ctx.path.samples.map((_, i) => {
-    c.setHSL((i / n) * 6 % 1, 0.85, 0.62);
-    return [c.r, c.g, c.b];
-  });
-}
-
-const EDGE_COLORS: Partial<Record<RoadStyle, string>> = { rainbow: '#ffffff', neon: '#3fe8ff' };
+const EDGE_COLORS: Partial<Record<Surface, string>> = { rainbow: '#ffffff', neon: '#3fe8ff', starlight: '#8af0ff', comet: '#5affd8', cloud: '#ffd84a', basalt: '#ff7a2a', ice: '#bff0ff' };
+const DECK_COLORS: Partial<Record<Surface, string>> = { cloud: '#e8ecf6', rainbow: '#3a2a6a', starlight: '#1a1a4a', comet: '#0a2a2a', neon: '#22203a', beachSand: '#8a6a48', flagstone: '#5a5a50', boardwalk: '#4a3626' };
 
 /**
  * Over the void (and everywhere on floating courses) the road is a slab: an underside
  * plus glowing edge lines so the drop reads clearly.
  */
-function buildFloatingDeck(ctx: BuildContext, style: RoadStyle): void {
+function buildFloatingDeck(ctx: BuildContext, surface: Surface): void {
   const { path } = ctx;
   const floating = Boolean(path.def.space);
   const runs = loopRuns(path, (i) => (floating || path.samples[i]!.open) && !path.samples[i]!.gap);
@@ -304,9 +270,9 @@ function buildFloatingDeck(ctx: BuildContext, style: RoadStyle): void {
       );
     }
   }
-  const deck = mesh(mergeMeshData(under), new MeshStandardMaterial({ color: '#2c2f3c', roughness: 0.95, side: DoubleSide }), 'road-deck');
+  const deck = mesh(mergeMeshData(under), new MeshStandardMaterial({ color: DECK_COLORS[surface] ?? '#2c2f3c', roughness: 0.95, side: DoubleSide }), 'road-deck');
   ctx.add(deck);
-  const edgeColor = EDGE_COLORS[style] ?? '#ffd23f';
+  const edgeColor = EDGE_COLORS[surface] ?? '#ffd23f';
   const glow = new Mesh(toGeometry(mergeMeshData(edges)), new MeshBasicMaterial({ color: new Color(edgeColor).multiplyScalar(1.4) }));
   glow.name = 'void-edges';
   ctx.add(glow);

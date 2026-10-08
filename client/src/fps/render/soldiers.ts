@@ -23,6 +23,11 @@ export interface Pose {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+const X = new THREE.Vector3(1, 0, 0);
+const tq = new THREE.Quaternion();
+const tv = new THREE.Vector3();
+/** At most this many bones get a hand tweak per frame (torso, chest, four leg bones). */
+const MAX_TWEAKS = 6;
 
 /** A third-person soldier: SWAT rig, team colours, the real weapon in hand. */
 export class SoldierView {
@@ -107,17 +112,19 @@ export class SoldierView {
     this.needsMount = false;
   }
 
-  /** Bones we tweak by hand get their animated pose back before each mixer update. */
-  private saved: Array<[THREE.Bone, THREE.Quaternion]> = [];
+  /** Bones we tweak by hand get their animated pose back before each mixer update (preallocated: no garbage per frame). */
+  private savedBones: THREE.Bone[] = [];
+  private savedQ = Array.from({ length: MAX_TWEAKS }, () => new THREE.Quaternion());
   private tweak(bone: THREE.Bone | undefined, axis: THREE.Vector3, angle: number): void {
-    if (!bone || !angle) return;
-    this.saved.push([bone, bone.quaternion.clone()]);
-    bone.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(axis, angle));
+    if (!bone || !angle || this.savedBones.length >= MAX_TWEAKS) return;
+    this.savedQ[this.savedBones.length]!.copy(bone.quaternion);
+    this.savedBones.push(bone);
+    bone.quaternion.multiply(tq.setFromAxisAngle(axis, angle));
   }
 
   update(p: Pose, dt: number): void {
-    for (const [bone, q] of this.saved) bone.quaternion.copy(q);
-    this.saved.length = 0;
+    this.savedBones.forEach((bone, i) => bone.quaternion.copy(this.savedQ[i]!));
+    this.savedBones.length = 0;
     this.root.position.set(p.x, p.y, p.z);
     this.root.rotation.y = p.yaw + Math.PI;
     // Animation choice.
@@ -156,7 +163,6 @@ export class SoldierView {
     }
     // Aim pitch through the upper body; crouch by bending the legs.
     const b = this.rig.bones;
-    const X = new THREE.Vector3(1, 0, 0);
     this.tweak(b.Torso, X, -p.pitch * 0.5);
     this.tweak(b.Chest, X, -p.pitch * 0.35);
     if (p.crouch || p.slide) {
@@ -173,13 +179,15 @@ export class SoldierView {
     if (this.gun) {
       this.muzzle.set(0, 0, 0);
       this.gun.localToWorld(this.muzzle);
-      const d = new THREE.Vector3(-Math.sin(p.yaw), Math.sin(p.pitch), -Math.cos(p.yaw)).normalize();
-      this.muzzle.addScaledVector(d, 0.6);
+      this.muzzle.addScaledVector(tv.set(-Math.sin(p.yaw), Math.sin(p.pitch), -Math.cos(p.yaw)).normalize(), 0.6);
     } else this.muzzle.set(p.x, p.y + 1.4, p.z);
-    void UP;
   }
 
   dispose(): void {
     this.root.removeFromParent();
+    this.rig.mixer.stopAllAction();
+    // The rig's materials and skeletons (bone textures) are per-soldier; geometry is shared with the model cache.
+    for (const m of this.rig.materials) m.dispose();
+    this.rig.root.traverse((n) => (n as THREE.SkinnedMesh).skeleton?.dispose());
   }
 }

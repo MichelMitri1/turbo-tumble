@@ -16,6 +16,8 @@ import { toThree } from './render/arenaMesh';
 import type { BotLevel } from './sim/bot';
 import type { WorldEvent } from './sim/world';
 import type { RbBegin, RbLobby } from './net/protocol';
+import { ARENAS, ARENA_IDS, isArenaId, pickArena, type ArenaId } from './arenas';
+import { THEMES } from './render/themes';
 import { bindFullscreenButton, installFullscreenKey } from '../ui/fullscreen';
 
 // ============================================================================ settings
@@ -37,10 +39,16 @@ interface Settings {
   fx: ExplosionFx;
   /** Bindings, air roll mode, sensitivities. */
   input: InputPrefs;
+  /** Arena for exhibition / free play. */
+  arena: ArenaId | 'random';
+  /** Background music. */
+  music: boolean;
+  /** Camera shake and punch-in. */
+  motion: boolean;
 }
 const KEY = 'boostball:settings';
 const settings: Settings = (() => {
-  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: 'high', volume: 0.7, mode: 2, level: 'pro', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined) };
+  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: 'high', volume: 0.7, mode: 2, level: 'pro', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined), arena: 'dome', music: true, motion: true };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
     return {
@@ -51,6 +59,9 @@ const settings: Settings = (() => {
       rules: sanitizeRules(s.rules),
       fx: { ...d.fx, ...(s.fx ?? {}) },
       input: sanitizePrefs(s.input),
+      arena: s.arena === 'random' || isArenaId(s.arena) ? s.arena : 'dome',
+      music: s.music !== false,
+      motion: s.motion !== false,
     };
   } catch {
     return d;
@@ -66,6 +77,10 @@ const save = () => {
 
 
 // ============================================================================ DOM
+
+/** Arena picker buttons (setup + online lobby). */
+const ARENA_SHORT: Record<ArenaId, string> = { dome: 'DOME', mannfield: 'MANNFIELD', urban: 'URBAN', badlands: 'BADLANDS', frosty: 'FROSTY', starbase: 'STARBASE' };
+const ARENA_SEG = [...ARENA_IDS.map((id) => `<button data-v="${id}" title="${ARENAS[id].name}">${ARENA_SHORT[id]}</button>`), '<button data-v="random">🎲 RANDOM</button>'].join('');
 
 const app = document.getElementById('game')!;
 app.innerHTML = `
@@ -95,6 +110,7 @@ app.innerHTML = `
     <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="s-level"><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button></div></div>
     <div class="rk-field"><span>TEAM</span><div class="rk-seg" id="s-team"><button data-v="0" class="blue">BLUE</button><button data-v="1" class="orange">ORANGE</button></div></div>
     <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="s-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
+    <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="s-arena">${ARENA_SEG}</div><small class="rk-arena-desc" id="s-arena-desc"></small></div>
     <div class="rk-field"><span>MUTATORS</span><button class="rk-btn small" id="s-rules">⚙ PHYSICS &amp; GOALS <small id="s-rules-sum"></small></button></div>
     <div class="rk-row end"><button class="rk-btn small ghost" data-back>BACK</button><button class="rk-btn primary" id="s-start">START MATCH</button></div>
   </div>
@@ -134,6 +150,8 @@ app.innerHTML = `
     <div class="rk-pane" data-pane="video">
       <div class="rk-field"><span>QUALITY</span><div class="rk-seg" id="c-quality"><button data-v="low">LOW</button><button data-v="medium">MEDIUM</button><button data-v="high">HIGH</button></div></div>
       <label class="rk-slider"><span>VOLUME</span><input type="range" min="0" max="1" step="0.05" id="c-volume" /><b id="c-volume-v"></b></label>
+      <label class="rk-check"><input type="checkbox" id="c-music" /> Music</label>
+      <label class="rk-check"><input type="checkbox" id="c-motion" /> Motion effects (camera shake &amp; punch)</label>
     </div>
     <div class="rk-row end"><button class="rk-btn small ghost" data-back>DONE</button></div>
   </div>
@@ -176,6 +194,7 @@ app.innerHTML = `
         <div class="rk-field"><span>SIZE</span><div class="rk-seg" id="o-size"><button data-v="1">1v1</button><button data-v="2">2v2</button><button data-v="3">3v3</button></div></div>
         <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="o-bots"><button data-v="off">NONE</button><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button></div></div>
         <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="o-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
+        <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="o-arena">${ARENA_SEG}</div></div>
       </div>
       <p class="rk-sub" id="o-wait"></p>
       <div class="rk-row end"><button class="rk-btn primary" id="o-start">START MATCH</button></div>
@@ -195,6 +214,7 @@ app.innerHTML = `
       <button class="rk-btn" id="p-controls">CONTROLS</button>
       <button class="rk-btn ghost" id="p-leave">LEAVE MATCH</button>
     </div>
+    <div class="rk-quick"><label class="rk-check"><input type="checkbox" id="p-ballcam" /> Ball cam</label><label class="rk-check"><input type="checkbox" id="p-invert" /> Invert camera swivel</label></div>
   </div>
 </div>
 
@@ -221,8 +241,10 @@ const input = new Input($('#view'));
 const audio = new RocketAudio();
 const hud = new Hud(app);
 renderer.cam.settings = settings.cam;
+renderer.cam.motion = settings.motion;
 renderer.fx.explosion = settings.fx;
 audio.setVolume(settings.volume);
+audio.setMusicEnabled(settings.music);
 addEventListener('pointerdown', () => audio.unlock(), { capture: true });
 addEventListener('keydown', () => audio.unlock(), { capture: true });
 
@@ -238,7 +260,8 @@ function show(id: ScreenId, push = true): void {
   screen = id;
   for (const s of ['menu', 'setup', 'garage', 'settings', 'controls', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
   input.active = id === 'game';
-  hud.show(!replay && !!session && session !== attract && (id === 'game' || id === 'pause'));
+  hud.show(!!session && session !== attract && (id === 'game' || id === 'pause'));
+  audio.music(id === 'game' && session && session !== attract ? 'match' : id === 'pause' ? 'match' : 'menu');
   if (id !== 'game') queueMicrotask(() => app.querySelector<HTMLElement>(`#${id} button.primary, #${id} button`)?.focus());
   audio.ui();
 }
@@ -276,6 +299,13 @@ seg('#s-mode', String(settings.mode), (v) => ((settings.mode = Number(v) as 1 | 
 seg('#s-level', settings.level, (v) => ((settings.level = v as BotLevel), save()));
 seg('#s-team', String(settings.team), (v) => ((settings.team = Number(v) as 0 | 1), save()));
 seg('#s-length', String(settings.length), (v) => ((settings.length = Number(v)), save()));
+const arenaDesc = (v: ArenaId | 'random') => (v === 'random' ? 'A different arena every match.' : `${ARENAS[v].name} — ${ARENAS[v].desc}`);
+$('#s-arena-desc').textContent = arenaDesc(settings.arena);
+seg('#s-arena', settings.arena, (v) => {
+  settings.arena = v as ArenaId | 'random';
+  $('#s-arena-desc').textContent = arenaDesc(settings.arena);
+  save();
+});
 
 // Garage.
 let thumbs: Map<CarId, string> | null = null;
@@ -460,7 +490,7 @@ $('#goal-preview').addEventListener('click', () => {
   // Fade the panel out for a moment and blow up the ball on screen.
   const at = toThree(renderer.ballPos.x, renderer.ballPos.y, renderer.ballPos.z);
   renderer.fx.goal(at, settings.team, 3000);
-  audio.goal();
+  audio.goal(settings.team);
   if (settings.fx.shake > 0 && settings.cam.shake) renderer.cam.shake(1.2 * settings.fx.shake);
   $('#settings').classList.add('peek');
   setTimeout(() => $('#settings').classList.remove('peek'), 2600);
@@ -475,6 +505,8 @@ renderRulesSummary();
 
 function renderSettings(): void {
   $<HTMLInputElement>('#c-ballcam').checked = settings.ballCam;
+  $<HTMLInputElement>('#c-music').checked = settings.music;
+  $<HTMLInputElement>('#c-motion').checked = settings.motion;
   $<HTMLInputElement>('#c-volume').value = String(settings.volume);
   $('#c-volume-v').textContent = `${Math.round(settings.volume * 100)}%`;
   setSeg('#c-quality', settings.quality);
@@ -489,6 +521,24 @@ $('#c-volume').addEventListener('input', (e) => {
   settings.volume = Number((e.target as HTMLInputElement).value);
   audio.setVolume(settings.volume);
   $('#c-volume-v').textContent = `${Math.round(settings.volume * 100)}%`;
+  save();
+});
+$('#c-music').addEventListener('change', (e) => {
+  settings.music = (e.target as HTMLInputElement).checked;
+  audio.setMusicEnabled(settings.music);
+  save();
+});
+$('#c-motion').addEventListener('change', (e) => {
+  settings.motion = (e.target as HTMLInputElement).checked;
+  renderer.cam.motion = settings.motion;
+  save();
+});
+$('#p-ballcam').addEventListener('change', (e) => {
+  settings.ballCam = renderer.cam.ballCam = (e.target as HTMLInputElement).checked;
+  save();
+});
+$('#p-invert').addEventListener('change', (e) => {
+  settings.cam.invertX = settings.cam.invertY = (e.target as HTMLInputElement).checked;
   save();
 });
 seg('#c-quality', settings.quality, (v) => {
@@ -604,20 +654,20 @@ function openControls(): void {
 }
 
 $('#m-play').addEventListener('click', () => show('setup'));
-$('#m-free').addEventListener('click', () => startLocal(true));
+$('#m-free').addEventListener('click', () => void startLocal(true));
 $('#m-garage').addEventListener('click', () => (renderGarage(), show('garage')));
 $('#m-settings').addEventListener('click', () => openSettings());
 $('#m-controls').addEventListener('click', () => openControls());
 $('#s-rules').addEventListener('click', () => openSettings('physics'));
 $('#m-online').addEventListener('click', () => void openOnline());
-$('#s-start').addEventListener('click', () => startLocal(false));
+$('#s-start').addEventListener('click', () => void startLocal(false));
 $('#p-resume').addEventListener('click', () => resume());
-$('#p-restart').addEventListener('click', () => (session?.online ? undefined : startLocal(lastFree)));
+$('#p-restart').addEventListener('click', () => (session?.online ? undefined : void startLocal(lastFree)));
 $('#p-settings').addEventListener('click', () => openSettings());
 $('#p-controls').addEventListener('click', () => openControls());
 $('#p-leave').addEventListener('click', () => leaveMatch());
 $('#e-menu').addEventListener('click', () => leaveMatch());
-$('#e-again').addEventListener('click', () => (session?.online ? backToLobby() : startLocal(lastFree)));
+$('#e-again').addEventListener('click', () => (session?.online ? backToLobby() : void startLocal(lastFree)));
 
 // ============================================================================ game
 
@@ -648,7 +698,31 @@ function startAttract(): void {
   setSession(attract);
 }
 
-function startLocal(free: boolean): void {
+/** Build the arena behind the loading overlay (≈ 0.5 s for a new one; instant when it's already up). */
+let building: Promise<void> | null = null;
+async function ensureArena(id: ArenaId): Promise<void> {
+  audio.setAmbience(THEMES[id].ambience);
+  if (renderer.currentArena === id) return;
+  const loading = $('#loading');
+  loading.classList.remove('hidden');
+  await renderer.setArena(id);
+  renderer.warm();
+  loading.classList.add('hidden');
+}
+/** Run one arena build at a time (double clicks, quick restarts). */
+async function withArena(id: ArenaId): Promise<boolean> {
+  if (building) return false;
+  building = ensureArena(id);
+  try {
+    await building;
+  } finally {
+    building = null;
+  }
+  return true;
+}
+
+async function startLocal(free: boolean): Promise<void> {
+  if (!(await withArena(pickArena(settings.arena)))) return;
   lastFree = free;
   stack.length = 0;
   setSession(
@@ -674,6 +748,8 @@ function pause(): void {
   if (!session) return;
   if (!session.online) session.paused = true;
   $('#p-restart').classList.toggle('hidden', session.online);
+  $<HTMLInputElement>('#p-ballcam').checked = renderer.cam.ballCam;
+  $<HTMLInputElement>('#p-invert').checked = settings.cam.invertX && settings.cam.invertY;
   show('pause');
 }
 
@@ -696,6 +772,8 @@ function onEvent(e: WorldEvent): void {
     case 'go':
       hud.big('<span class="cd">GO!</span>', 0.8, 'count go');
       audio.countdown(0);
+      audio.roar();
+      renderer.cam.punch(0.04);
       break;
     case 'touch':
       audio.hit(e.power, nearFactor(e.x, e.y, e.z));
@@ -711,7 +789,10 @@ function onEvent(e: WorldEvent): void {
       if (e.car === s.myId) audio.dodge();
       break;
     case 'pad':
-      if (e.car === s.myId) audio.pad(e.big);
+      if (e.car === s.myId) {
+        audio.pad(e.big);
+        hud.pad(e.big);
+      }
       break;
     case 'bump':
       if (e.car === s.myId || e.other === s.myId) {
@@ -732,7 +813,7 @@ function onEvent(e: WorldEvent): void {
       break;
     }
     case 'goal': {
-      audio.goal();
+      audio.goal(e.team);
       if (settings.fx.shake > 0) renderer.cam.shake(1.2 * settings.fx.shake);
       input.rumble(1, 1, 600);
       const kph = Math.round(e.speed * 0.036);
@@ -768,7 +849,22 @@ function showEnd(): void {
     <div class="rk-result-score"><span class="t0">${w.score[0]}</span> – <span class="t1">${w.score[1]}</span></div>`;
   const stats = netStats ?? w.stats;
   const mvp = [...w.players].filter((p) => p.team === w.winner).sort((a, b) => (stats.get(b.id)?.score ?? 0) - (stats.get(a.id)?.score ?? 0))[0];
-  $('#e-board').innerHTML = scoreboardHtml(w, s.myId, stats) + (mvp ? `<div class="rk-mvp">⭐ MVP: ${esc(mvp.name)}</div>` : '');
+  // Match titles: the best at each stat (ties go to the higher score).
+  const best = (k: 'saves' | 'assists' | 'demos') => {
+    const p = [...w.players].sort((a, b) => (stats.get(b.id)?.[k] ?? 0) - (stats.get(a.id)?.[k] ?? 0) || (stats.get(b.id)?.score ?? 0) - (stats.get(a.id)?.score ?? 0))[0];
+    return p && (stats.get(p.id)?.[k] ?? 0) > 0 ? p : undefined;
+  };
+  const titles: Array<[string, string, (typeof w.players)[number] | undefined]> = [
+    ['⭐', 'MVP', mvp],
+    ['🧤', 'SAVIOUR', best('saves')],
+    ['🎯', 'PLAYMAKER', best('assists')],
+    ['💥', 'DEMOLISHER', best('demos')],
+  ];
+  const titleHtml = titles
+    .filter(([, , p]) => p)
+    .map(([icon, name, p]) => `<div class="rk-title t${p!.team}"><i>${icon}</i><small>${name}</small><b>${esc(p!.name)}</b></div>`)
+    .join('');
+  $('#e-board').innerHTML = scoreboardHtml(w, s.myId, stats) + (titleHtml ? `<div class="rk-titles">${titleHtml}</div>` : '');
   $('#e-again').textContent = s.online ? 'BACK TO LOBBY' : 'PLAY AGAIN';
   show('end');
 }
@@ -796,7 +892,8 @@ function maybeStartReplay(s: Session): void {
   renderer.cam.swivelX = renderer.cam.swivelY = 0;
   renderer.cam.reset();
   replayJumpHeld = true;
-  hud.show(false);
+  renderer.resetTracking();
+  hud.replay(true);
   const by = lastGoal.name ? `<b class="t${lastGoal.team}">${esc(lastGoal.name)}</b>` : `<b class="t${lastGoal.team}">${TEAM_COLORS[lastGoal.team].name}</b>`;
   $('#replay-by').innerHTML = `GOAL BY ${by} · ${lastGoal.kph} KPH`;
   const b = settings.input.binds;
@@ -810,7 +907,9 @@ function endReplay(): void {
   replay = null;
   renderer.cam.ballCam = ballCamBeforeReplay;
   renderer.cam.reset();
+  renderer.resetTracking();
   $('#replay').classList.add('hidden');
+  hud.replay(false);
   hud.show(!!session && session !== attract && (screen === 'game' || screen === 'pause'));
 }
 
@@ -829,7 +928,9 @@ function onReplayEvent(e: WorldEvent): void {
       audio.demo(nearFactor(e.x, e.y, e.z));
       break;
     case 'goal':
-      audio.goal();
+      // Slow-motion sting as the ball crosses the line.
+      audio.sting();
+      audio.roar();
       if (settings.fx.shake > 0) renderer.cam.shake(1.2 * settings.fx.shake);
       break;
   }
@@ -907,7 +1008,7 @@ async function connect(how: (n: RocketNet) => Promise<void>): Promise<void> {
     renderLobby();
     if (l.phase === 'lobby' && screen === 'end' && session?.online) $('#e-again').removeAttribute('disabled');
   };
-  n.onBegin = (b) => startOnline(n, b);
+  n.onBegin = (b) => void startOnline(n, b);
   n.onStats = (s) => {
     netStats = new Map(s);
     if (session?.online) for (const [id, st] of s) session.world.stats.set(id, st);
@@ -948,14 +1049,19 @@ function renderLobby(): void {
   setSeg('#o-size', String(l.config.size));
   setSeg('#o-bots', l.config.bots ? l.config.botLevel : 'off');
   setSeg('#o-length', String(l.config.length));
-  $('#o-wait').textContent = l.phase === 'playing' ? 'Match in progress…' : l.phase === 'over' ? 'Match finished — back to the lobby shortly…' : host ? 'Pick teams, then start.' : 'Waiting for the host to start…';
+  setSeg('#o-arena', l.config.arena ?? 'random');
+  const arena = l.config.arena && l.config.arena !== 'random' ? ARENAS[l.config.arena].name : 'Random arena';
+  $('#o-wait').textContent = `${l.phase === 'playing' ? 'Match in progress…' : l.phase === 'over' ? 'Match finished — back to the lobby shortly…' : host ? 'Pick teams, then start.' : 'Waiting for the host to start…'} · ${arena}`;
   $('#o-start').classList.toggle('hidden', !host || l.phase !== 'lobby');
 }
 
-function startOnline(n: RocketNet, b: RbBegin): void {
+async function startOnline(n: RocketNet, b: RbBegin): Promise<void> {
+  // The session starts buffering snapshots right away; the arena builds behind the overlay.
   const s = new OnlineSession(n, b);
   s.views = () => renderer.cars;
   s.ballErr = renderer.ball.errPos;
+  await ensureArena(isArenaId(b.arena) ? b.arena : 'dome');
+  if (net !== n) return s.dispose();
   stack.length = 0;
   setSession(s);
   hud.hint('');
@@ -1004,6 +1110,10 @@ $('#o-length').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
   if (b) net?.config({ length: Number(b.dataset.v) });
 });
+$('#o-arena').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+  if (b?.dataset.v) net?.config({ arena: b.dataset.v as ArenaId | 'random' });
+});
 $('#o-start').addEventListener('click', () => net?.start());
 $('#o-copy').addEventListener('click', () => {
   const url = `${lanUrl ?? location.origin + location.pathname}?room=${net?.code ?? ''}`;
@@ -1014,9 +1124,21 @@ $('#o-copy').addEventListener('click', () => {
 });
 $('#o-back').addEventListener('click', () => void leaveOnline());
 
+// Sounds for effects the renderer detects (landings, flip resets).
+renderer.onFx = (e) => {
+  const s = session;
+  if (!s || s === attract || screen !== 'game') return;
+  const w = replay?.world ?? s.world;
+  const car = w.car(e.car);
+  if (!car) return;
+  if (e.k === 'land') audio.land(e.strength, nearFactor(car.pos.x, car.pos.y, car.pos.z));
+  else if (e.car === s.myId || (replay && e.car === replay.scorer)) audio.ping();
+};
+
 // ============================================================================ loop
 
 let lastT = performance.now();
+const v3 = new THREE.Vector3();
 let padShown = '';
 let wasAirborne = false;
 let autoRollShown = 0;
@@ -1056,8 +1178,18 @@ function loop(now: number): void {
   // Free play: no clock / no end.
   renderer.frame(s.world, s.prev, s.prevBall, s.alpha, dt, s === attract ? null : s.myId);
   if (s !== attract) {
-    hud.update(dt, s.world, s.myId, renderer, { scoreboard: ui.scoreboard && inMatch, chatGroup: ui.chatGroup, device: ui.device });
+    hud.update(dt, s.world, s.myId, renderer, { scoreboard: ui.scoreboard && inMatch, chatGroup: ui.chatGroup, device: ui.device, ballCam: renderer.cam.ballCam });
     const me = s.world.car(s.myId);
+    // Everyone else's engines and boost, by distance; my tyres screech in a powerslide.
+    const camPos = renderer.cam.camera.position;
+    audio.others(
+      playing
+        ? s.world.cars
+            .filter((c) => c.id !== s.myId && !c.demolished)
+            .map((c) => ({ id: c.id, speed: c.speed, boosting: c.isBoosting, near: Math.min(1, 12 / Math.max(1, camPos.distanceTo(v3.set(c.pos.x / 100, c.pos.z / 100, -c.pos.y / 100)))) }))
+        : [],
+    );
+    audio.slide(playing && me && me.onGround && !me.demolished && me.handbrakeVal > 0.5 && me.speed > 500 ? Math.min(1, me.speed / 1800) : 0);
     // Automatic air roll switches off when you land.
     const grounded = !me || me.onGround || me.demolished;
     if (grounded && wasAirborne) input.resetAutoRoll();
@@ -1086,13 +1218,18 @@ function loop(now: number): void {
 (async () => {
   await renderer.init();
   renderer.setQuality(settings.quality);
+  const q = new URLSearchParams(location.search);
+  // The menu background shows a random arena; a direct ?play / ?free link builds the chosen one.
+  const first = q.has('play') || q.has('free') ? pickArena(settings.arena) : pickArena('random');
+  await renderer.setArena(first);
+  audio.setAmbience(THEMES[first].ambience);
   startAttract();
+  renderer.warm();
   $('#loading').classList.add('hidden');
   show('menu', false);
-  const q = new URLSearchParams(location.search);
   if (q.get('room')) void openOnline(q.get('room')!);
-  else if (q.has('play')) startLocal(false);
-  else if (q.has('free')) startLocal(true);
+  else if (q.has('play')) void startLocal(false);
+  else if (q.has('free')) void startLocal(true);
   requestAnimationFrame(loop);
 })();
 
@@ -1102,4 +1239,5 @@ function loop(now: number): void {
   },
   renderer,
   settings,
+  audio,
 };

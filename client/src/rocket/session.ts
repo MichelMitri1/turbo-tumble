@@ -108,7 +108,7 @@ export class LocalSession implements Session {
 
 // ------------------------------------------------------------------ online
 
-const SERVER_EVENTS = new Set<WorldEvent['k']>(['goal', 'demo', 'over', 'overtime']);
+const SERVER_EVENTS = new Set<WorldEvent['k']>(['goal', 'demo', 'over', 'overtime', 'kickoff']);
 const HISTORY = 360;
 
 /**

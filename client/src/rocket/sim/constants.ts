@@ -95,6 +95,8 @@ export function curve(points: ReadonlyArray<readonly [number, number]>, x: numbe
 
 export const STEER_ANGLE_CURVE = [[0, 0.53356], [500, 0.3193], [1000, 0.18203], [1500, 0.1057], [1750, 0.08507], [3000, 0.03454]] as const;
 export const POWERSLIDE_STEER_CURVE = [[0, 0.39235], [2500, 0.1261]] as const;
+/** Measured turning curvature (1 / turn radius, per uu) vs speed; yaw rate = curvature × speed. */
+export const CURVATURE_CURVE = [[0, 0.0069], [500, 0.00398], [1000, 0.00235], [1500, 0.001375], [1750, 0.0011], [2300, 0.00088]] as const;
 export const DRIVE_TORQUE_CURVE = [[0, 1], [1400, 0.1], [1410, 0]] as const;
 export const LAT_FRICTION_CURVE = [[0, 1], [1, 0.2]] as const;
 export const NON_STICKY_FRICTION_CURVE = [[0, 0.1], [0.7075, 0.5], [1, 1]] as const;

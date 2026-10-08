@@ -52,15 +52,15 @@ function fourColorOval(): string {
 export function cardSvg(c: Pick<Card, 'kind' | 'color' | 'n'>): string {
   const wild = c.kind === 'wild' || c.kind === 'wild4';
   const col = wild ? INK : COLOR_INFO[c.color!].hex;
-  const dark = wild ? '#000' : COLOR_INFO[c.color!].dark;
   const sym = symbolText(c);
   const under = c.kind === 'num' && (c.n === 6 || c.n === 9);
   const corner = (x: number, y: number, rot: number) => {
     let inner = '';
-    if (sym) inner = `<text x="0" y="0" font-family="${FONT}" font-size="${sym.length > 1 ? 15 : 19}" text-anchor="middle" dominant-baseline="central" fill="#fff" stroke="${INK}" stroke-width="2.2" paint-order="stroke" font-style="italic">${sym}</text>${under ? `<rect x="-5" y="9" width="10" height="2" fill="#fff" stroke="${INK}" stroke-width="0.6"/>` : ''}`;
-    else if (c.kind === 'skip') inner = skipIcon(0, 0, 6, '#fff', INK, 1.6);
-    else if (c.kind === 'rev') inner = reverseIcon(0, 0, 9, '#fff', INK, 1.6);
-    else if (c.kind === 'wild') inner = `<g transform="scale(0.24) translate(-50 -70)">${fourColorOval()}</g>`;
+    // Big, bold indices: in a tight fan the top-left corner is all you see of a card.
+    if (sym) inner = `<text x="0" y="0" font-family="${FONT}" font-size="${sym.length > 1 ? 21 : 27}" text-anchor="middle" dominant-baseline="central" fill="#fff" stroke="${INK}" stroke-width="3" paint-order="stroke" font-style="italic">${sym}</text>${under ? `<rect x="-6" y="12" width="12" height="2.6" fill="#fff" stroke="${INK}" stroke-width="0.7"/>` : ''}`;
+    else if (c.kind === 'skip') inner = skipIcon(0, 0, 8, '#fff', INK, 2);
+    else if (c.kind === 'rev') inner = reverseIcon(0, 0, 12, '#fff', INK, 2);
+    else if (c.kind === 'wild') inner = `<g transform="scale(0.32) translate(-50 -70)">${fourColorOval()}</g>`;
     return `<g transform="translate(${x} ${y}) rotate(${rot})">${inner}</g>`;
   };
   let center = '';
@@ -75,25 +75,52 @@ export function cardSvg(c: Pick<Card, 'kind' | 'color' | 'n'>): string {
     else if (c.kind === 'rev') center += reverseIcon(50, 70, 30, col, INK, 4);
     else if (c.kind === 'draw2') center += miniCards(50, 70, [col, col], 1.5);
   }
-  const gid = `lc-sheen-${c.color ?? 'w'}`;
   return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
     <rect x="1" y="1" width="98" height="138" rx="10" fill="#fff"/>
     <rect x="6" y="6" width="88" height="128" rx="7" fill="${col}"/>
-    <rect x="6" y="6" width="88" height="128" rx="7" fill="url(#${gid})" opacity="0.5"/>
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="${dark}" stop-opacity="0.5"/></linearGradient></defs>
+    <rect x="6" y="6" width="88" height="128" rx="7" fill="url(#lc-sheen-${c.color ?? 'w'})" opacity="0.5"/>
     ${center}
-    ${corner(17, 19, 0)}${corner(83, 121, 180)}
+    ${corner(19, 22, 0)}${corner(81, 118, 180)}
   </svg>`;
 }
 
-export function backSvg(): string {
-  return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1" y="1" width="98" height="138" rx="10" fill="#fff"/>
+/**
+ * Gradients and patterns the cards share, put into the page ONCE (and never inside a
+ * display:none subtree — Chrome won't paint a gradient defined in one).
+ */
+export function svgDefs(): string {
+  const sheen = (c: Color | 'w') =>
+    `<linearGradient id="lc-sheen-${c}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="${c === 'w' ? '#000' : COLOR_INFO[c].dark}" stop-opacity="0.5"/></linearGradient>`;
+  return `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${[...COLORS, 'w' as const].map(sheen).join('')}
+    <pattern id="lc-back-stripes" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><rect width="12" height="12" fill="#16306b"/><rect width="6" height="12" fill="#1f4a9c"/></pattern>
+    <linearGradient id="lc-back-sunset" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a3d"/><stop offset="0.55" stop-color="#e8264f"/><stop offset="1" stop-color="#5b1a7a"/></linearGradient>
+  </defs></svg>`;
+}
+
+export const BACK_COUNT = 3;
+/** Card backs: 0 classic, 1 midnight stripes, 2 sunset diamonds. */
+export function backSvg(style = 0): string {
+  const frame = `<rect x="1" y="1" width="98" height="138" rx="10" fill="#fff"/>`;
+  const logo = (fill: string, size = 25) => `<g transform="rotate(-24 50 70)" font-family="${FONT}" font-style="italic" text-anchor="middle" fill="${fill}" stroke="${INK}" stroke-width="3" paint-order="stroke">
+      <text x="50" y="${70 - size * 0.16}" font-size="${size}">LAST</text><text x="50" y="${70 + size * 0.8}" font-size="${size}">CARD</text>
+    </g>`;
+  if (style === 1)
+    return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">${frame}
+    <rect x="6" y="6" width="88" height="128" rx="7" fill="url(#lc-back-stripes)"/>
+    <rect x="11" y="11" width="78" height="118" rx="5" fill="none" stroke="${COLOR_INFO.y.hex}" stroke-width="2.5"/>
+    <circle cx="50" cy="70" r="27" fill="${INK}" stroke="${COLOR_INFO.y.hex}" stroke-width="3"/>
+    <path d="M50 49 L55.5 63.5 L71 64 L59 73.5 L63 88.5 L50 80 L37 88.5 L41 73.5 L29 64 L44.5 63.5 Z" fill="${COLOR_INFO.y.hex}" stroke="${INK}" stroke-width="1.5"/>
+  </svg>`;
+  if (style === 2)
+    return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">${frame}
+    <rect x="6" y="6" width="88" height="128" rx="7" fill="url(#lc-back-sunset)"/>
+    ${[46, 34, 22].map((r, i) => `<path d="M50 ${70 - r * 1.3} L${50 + r} 70 L50 ${70 + r * 1.3} L${50 - r} 70 Z" fill="none" stroke="#fff" stroke-opacity="${0.35 + i * 0.25}" stroke-width="3"/>`).join('')}
+    ${logo('#fff', 21)}
+  </svg>`;
+  return `<svg viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg">${frame}
     <rect x="6" y="6" width="88" height="128" rx="7" fill="${INK}"/>
     <ellipse cx="50" cy="70" rx="33" ry="49" fill="${COLOR_INFO.r.hex}" transform="rotate(28 50 70)"/>
-    <g transform="rotate(-24 50 70)" font-family="${FONT}" font-style="italic" text-anchor="middle" fill="${COLOR_INFO.y.hex}" stroke="${INK}" stroke-width="3" paint-order="stroke">
-      <text x="50" y="66" font-size="25">LAST</text><text x="50" y="90" font-size="25">CARD</text>
-    </g>
+    ${logo(COLOR_INFO.y.hex)}
   </svg>`;
 }
 

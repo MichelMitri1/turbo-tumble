@@ -121,10 +121,10 @@ export class ItemViews {
   render(alpha: number, dt: number): void {
     this.time += dt;
     const t = this.time;
-    const entities = new Map(this.race.items.entities.list.map((e) => [e.id, e]));
-    for (const [id, v] of this.views) {
-      const e = entities.get(id);
-      if (!e) continue;
+    for (const e of this.race.items.entities.list) {
+      const id = e.id;
+      const v = this.views.get(id);
+      if (!v || e.dead) continue;
       const o = v.object;
       o.position.lerpVectors(v.prev, v.cur, alpha);
       const trail = e.attach === 'none' ? TRAILS[e.kind] : undefined;

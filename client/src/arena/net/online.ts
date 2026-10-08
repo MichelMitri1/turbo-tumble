@@ -90,6 +90,10 @@ export class CrownfallNet {
     this.room?.send(CfMsg.Rematch, { deck });
   }
 
+  emote(n: number): void {
+    this.room?.send(CfMsg.Emote, { emote: n });
+  }
+
   async leave(): Promise<void> {
     clearInterval(this.pingTimer);
     const r = this.room;

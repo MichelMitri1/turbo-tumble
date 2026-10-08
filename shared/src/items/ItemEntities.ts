@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { GRAVITY } from '../constants/simulation';
-import { dampFactor } from '../math/scalar';
+import { clamp, dampFactor } from '../math/scalar';
 import type { MoveResult } from '../physics/PhysicsWorld';
 import type { RaceContext, Racer } from '../race/RaceTypes';
 import { v3 } from '../race/RaceTypes';
@@ -116,7 +116,9 @@ export class ItemEntities {
     if (poof && e.kind !== 'explosion') this.ctx.emit({ type: 'entityGone', kind: e.kind, position: v3(e.position) });
   }
 
-  explode(at: Vector3, owner: number, radius: number): void {
+  /** `breaksGiant`: a Crown Buster blast also cuts a Giant down to size (then hits normally). */
+  explode(at: Vector3, owner: number, radius: number, breaksGiant = false): void {
+    if (breaksGiant) for (const r of this.ctx.racers) if (r.state.position.distanceTo(at) <= radius + KART_HIT_RADIUS) r.state.megaTimer = 0;
     this.spawn('explosion', owner, at, new Vector3(), { life: EXPLOSION_LIFE, radius });
     this.ctx.emit({ type: 'explosion', position: v3(at), radius, owner });
   }
@@ -141,6 +143,10 @@ export class ItemEntities {
         e.life = 14;
         const ahead = this.ctx.standings()[racer.progress.position - 2];
         e.target = backward || !ahead ? -1 : ahead.index;
+        // Thrown backwards: flies straight. Forwards: rides the road (homing once close).
+        e.phase = backward ? 1 : 0;
+        const loc = this.ctx.track.locate(e.position, s.trackIndex, 10);
+        e.splineDistance = loc.splineDistance;
         break;
       }
       case 'boom':
@@ -187,7 +193,7 @@ export class ItemEntities {
         break;
       case 'seeker':
         this.steerSeeker(e, dt);
-        this.groundProjectile(e, dt, 0, true);
+        this.groundProjectile(e, dt, 0, e.phase === 1);
         break;
       case 'crown':
         this.updateCrown(e, dt);
@@ -214,6 +220,15 @@ export class ItemEntities {
     for (const c of res.contacts) {
       const vn = e.velocity.dot(c.normal);
       if (vn >= 0) continue;
+      if (e.kind === 'seeker' && !breakOnWall) {
+        // Homing drones glance off walls along the road; only a head-on hit breaks them.
+        if (-vn > speed * 0.8) {
+          this.kill(e);
+          return;
+        }
+        e.velocity.addScaledVector(c.normal, -vn);
+        continue;
+      }
       if (breakOnWall || ++e.bounces > maxBounces) {
         this.kill(e);
         return;
@@ -236,24 +251,30 @@ export class ItemEntities {
     return true;
   }
 
+  /**
+   * Drones ride the road: they follow the centreline ahead (easing onto the target's
+   * line) and only home in directly once the target is close — so they round corners
+   * instead of flying into the first wall.
+   */
   private steerSeeker(e: ItemEntity, dt: number): void {
+    if (e.phase === 1) return;
     const target = e.target >= 0 ? this.ctx.racers[e.target] : undefined;
-    if (!target || target.progress.finished) return;
     const track = this.ctx.track;
-    const tLoc = track.locate(target.state.position, target.state.trackIndex, 6);
-    const ahead = track.wrapDistance(tLoc.splineDistance - e.splineDistance);
-    const straight = this.t1.copy(target.state.position).sub(e.position);
+    const live = target && !target.progress.finished ? target : undefined;
+    const tLoc = live ? track.locate(live.state.position, live.state.trackIndex, 6) : null;
+    const ahead = tLoc ? track.wrapDistance(tLoc.splineDistance - e.splineDistance) : Infinity;
+    const close = live && (ahead < 30 || this.t1.copy(live.state.position).sub(e.position).length() < 16);
     let aim: Vector3;
-    if (ahead < 35 || straight.length() < 22) {
-      aim = this.t1.copy(target.state.position).addScaledVector(UP, 0.5);
+    if (live && close) {
+      aim = this.t1.copy(live.state.position).addScaledVector(UP, 0.5);
     } else {
-      // Follow the road towards the target, drifting onto its line.
-      const f = track.frameAtSplineDistance(e.splineDistance + 14);
-      aim = this.t1.copy(f.position).addScaledVector(f.right, tLoc.lateral * 0.6);
+      const f = track.frameAtSplineDistance(e.splineDistance + 12);
+      const lateral = tLoc ? clamp(tLoc.lateral * 0.6, -f.halfWidth + 1.5, f.halfWidth - 1.5) : 0;
+      aim = this.t1.copy(f.position).addScaledVector(f.right, lateral);
     }
     const dir = aim.sub(e.position).setY(0).normalize();
     const speed = SEEKER_SPEED;
-    e.velocity.lerp(dir.multiplyScalar(speed), dampFactor(7, dt));
+    e.velocity.lerp(dir.multiplyScalar(speed), dampFactor(close ? 7 : 10, dt));
   }
 
   private updateCrown(e: ItemEntity, dt: number): void {
@@ -280,7 +301,7 @@ export class ItemEntities {
       const goal = this.t1.copy(leader.state.position).addScaledVector(UP, 0.6);
       const to = goal.sub(e.position);
       if (to.length() < 2.6 || e.phaseTime > 1.1) {
-        this.explode(leader.state.position, e.owner, 7);
+        this.explode(leader.state.position, e.owner, 7, true);
         this.kill(e, false);
         return;
       }
@@ -398,6 +419,8 @@ export class ItemEntities {
         }
         if (e.kind === 'crown' && e.phase === 0) continue;
         if (e.kind === 'octo') continue;
+        // Phantoms are see-through; a Sky Feather hop sails over everything.
+        if (r.state.ghostTimer > 0 || (r.state.featherTimer > 0 && !r.state.grounded)) continue;
         const dy = r.state.position.y + 0.8 - e.position.y;
         const dx = r.state.position.x - e.position.x;
         const dz = r.state.position.z - e.position.z;
@@ -410,7 +433,7 @@ export class ItemEntities {
           continue;
         }
         if (e.kind === 'boom' || e.kind === 'crown') {
-          this.explode(e.position, e.owner, e.kind === 'boom' ? 8 : 7);
+          this.explode(e.position, e.owner, e.kind === 'boom' ? 8 : 7, e.kind === 'crown');
           this.kill(e, false);
           continue;
         }
@@ -423,13 +446,15 @@ export class ItemEntities {
   }
 
   private explosionHit(e: ItemEntity, r: Racer): void {
-    if (e.age > 0.25 || e.hits.includes(r.index)) return;
+    if (e.age > 0.25 || e.hits.includes(r.index) || r.state.ghostTimer > 0) return;
     if (r.state.position.distanceTo(e.position) > e.radius + KART_HIT_RADIUS) return;
     e.hits.push(r.index);
     this.hitRacer(r, 'tumble', e.owner, 'explosion');
   }
 
   hitRacer(r: Racer, kind: HitKind, by: number, source: string): boolean {
+    // Phantoms shrug off anything a racer did to them (track hazards still hit).
+    if (by >= 0 && r.state.ghostTimer > 0) return false;
     if (!r.sim.applyHit(kind)) return false;
     this.ctx.emit({ type: 'hit', racer: r.index, kind, by, source });
     this.dropAttached(r);

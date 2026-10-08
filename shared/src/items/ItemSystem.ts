@@ -11,6 +11,12 @@ export const ROULETTE_TIME = 2.0;
 const HORN_RADIUS = 13;
 const QUAKE_PULSES = [0, 0.55, 1.1];
 const ZAP_COOLDOWN = 15;
+/** Crown Busters are spaced out like Zap Storms: one per this many seconds at most. */
+const CROWN_COOLDOWN = 25;
+const ZAP_SHRINK_MAX = 5;
+const PHANTOM_TIME = 3;
+const GIANT_TIME = 8;
+const FEATHER_LIFT = 13;
 const UP = new Vector3(0, 1, 0);
 
 /** Entity spawned when a hold-style item is readied behind the kart. */
@@ -30,7 +36,11 @@ export class ItemSystem {
   readonly entities: ItemEntities;
   private readonly quakes: Quake[] = [];
   private lastZap = -ZAP_COOLDOWN;
+  private lastCrown = -CROWN_COOLDOWN;
+  /** Item taken by a Phantom this tick (handed over after the Phantom is consumed). */
+  private stolen: { item: ItemId; uses: number } | null = null;
   private readonly t1 = new Vector3();
+  private readonly t2 = new Vector3();
 
   constructor(private readonly ctx: RaceContext) {
     this.entities = new ItemEntities(ctx);
@@ -44,21 +54,40 @@ export class ItemSystem {
 
   private blockedItems(): Set<ItemId> {
     const blocked = new Set<ItemId>();
+    const holds = (id: ItemId): boolean => this.ctx.racers.some((r) => r.slot.item === id || r.slot.pending === id || r.slot.reserve === id || r.slot.reservePending === id);
     const crownLive = this.entities.list.some((e) => e.kind === 'crown' && !e.dead);
-    const crownHeld = this.ctx.racers.some((r) => r.slot.item === 'crownBuster' || r.slot.pending === 'crownBuster');
-    if (crownLive || crownHeld) blocked.add('crownBuster');
-    const zapHeld = this.ctx.racers.some((r) => r.slot.item === 'zap' || r.slot.pending === 'zap');
-    if (zapHeld || this.ctx.time - this.lastZap < ZAP_COOLDOWN) blocked.add('zap');
+    if (crownLive || holds('crownBuster') || this.ctx.time - this.lastCrown < CROWN_COOLDOWN) blocked.add('crownBuster');
+    if (holds('zap') || this.ctx.time - this.lastZap < ZAP_COOLDOWN) blocked.add('zap');
     return blocked;
   }
 
-  /** Start the roulette after an item box. Returns false if the slot is busy. */
+  /**
+   * Start the roulette after an item box: into the front slot, or — while the front
+   * is busy — into the second slot. Returns false if both are taken.
+   */
   grantRoll(r: Racer): boolean {
     const slot = r.slot;
-    if (slot.item || slot.roulette > 0) return false;
-    slot.pending = rollItem({ position: r.progress.position, racerCount: this.ctx.racers.length, blocked: this.blockedItems() }, this.ctx.rng);
-    slot.roulette = ROULETTE_TIME;
+    const front = !slot.item && slot.roulette <= 0;
+    if (!front && (slot.reserve || slot.reserveRoulette > 0)) return false;
+    const item = rollItem({ position: r.progress.position, racerCount: this.ctx.racers.length, blocked: this.blockedItems() }, this.ctx.rng);
+    if (front) {
+      slot.pending = item;
+      slot.roulette = ROULETTE_TIME;
+    } else {
+      slot.reservePending = item;
+      slot.reserveRoulette = ROULETTE_TIME;
+    }
     return true;
+  }
+
+  /** The second slot moves up once the front item is completely used up. */
+  private promote(r: Racer): void {
+    const slot = r.slot;
+    if (slot.item || slot.roulette > 0 || !slot.reserve || slot.reserveRoulette > 0) return;
+    if (slot.heldEntity >= 0 || slot.orbit.length || slot.timer > 0) return;
+    slot.item = slot.reserve;
+    slot.uses = ITEMS[slot.item].uses;
+    slot.reserve = null;
   }
 
   // ------------------------------------------------------------------ per-racer slot
@@ -69,6 +98,16 @@ export class ItemSystem {
     const pressed = input.item && !slot.pressed;
     const released = !input.item && slot.pressed;
     slot.pressed = input.item;
+
+    if (slot.reserveRoulette > 0) {
+      slot.reserveRoulette = Math.max(0, slot.reserveRoulette - dt);
+      if (slot.reserveRoulette === 0 && slot.reservePending) {
+        slot.reserve = slot.reservePending;
+        slot.reservePending = null;
+        this.ctx.emit({ type: 'itemReady', racer: r.index, item: slot.reserve });
+      }
+    }
+    this.promote(r);
 
     if (slot.roulette > 0) {
       slot.roulette = Math.max(0, slot.roulette - dt);
@@ -93,7 +132,10 @@ export class ItemSystem {
 
     switch (def.use) {
       case 'instant':
-        if (pressed && this.useInstant(r, item)) this.consume(r, item);
+        if (pressed && this.useInstant(r, item)) {
+          this.consume(r, item);
+          this.handOverStolen(r);
+        }
         break;
       case 'hold':
         if (pressed && slot.heldEntity < 0) {
@@ -135,6 +177,46 @@ export class ItemSystem {
       slot.item = null;
       slot.uses = 0;
     }
+  }
+
+  /** Phantom: the swiped item lands in the thief's (now empty) front slot. */
+  private handOverStolen(r: Racer): void {
+    const loot = this.stolen;
+    if (!loot) return;
+    this.stolen = null;
+    const slot = r.slot;
+    if (!slot.item && slot.roulette <= 0) {
+      slot.item = loot.item;
+      slot.uses = loot.uses;
+    } else if (!slot.reserve && slot.reserveRoulette <= 0) {
+      slot.reserve = loot.item;
+    }
+  }
+
+  /** Phantom target: a random racer ahead holding an idle item (front slot, else the spare). */
+  private steal(r: Racer): void {
+    const victims = this.ctx.racers.filter((o) => {
+      if (o === r || o.progress.position >= r.progress.position || o.state.ghostTimer > 0) return false;
+      const idle = o.slot.item && o.slot.roulette <= 0 && o.slot.heldEntity < 0 && !o.slot.orbit.length && o.slot.timer <= 0;
+      return idle || o.slot.reserve !== null;
+    });
+    if (!victims.length) return;
+    const o = victims[Math.floor(this.ctx.rng.next() * victims.length)]!;
+    const slot = o.slot;
+    let item: ItemId;
+    let uses: number;
+    if (slot.item && slot.roulette <= 0 && slot.heldEntity < 0 && !slot.orbit.length && slot.timer <= 0) {
+      item = slot.item;
+      uses = slot.uses;
+      slot.item = null;
+      slot.uses = 0;
+    } else {
+      item = slot.reserve!;
+      uses = ITEMS[item].uses;
+      slot.reserve = null;
+    }
+    this.stolen = { item, uses };
+    this.ctx.emit({ type: 'steal', racer: r.index, from: o.index, item });
   }
 
   private deploy(r: Racer, item: ItemId): void {
@@ -232,7 +314,7 @@ export class ItemSystem {
     let bestD = range;
     for (const o of this.ctx.racers) {
       if (o === r || isInvulnerable(o.state)) continue;
-      const to = o.state.position.clone().sub(s.position);
+      const to = this.t2.copy(o.state.position).sub(s.position);
       const d = to.length();
       if (d < bestD && to.setY(0).normalize().dot(fwd) > 0.25) {
         bestD = d;
@@ -280,6 +362,7 @@ export class ItemSystem {
         this.entities.dropAttached(r);
         return true;
       case 'crownBuster': {
+        this.lastCrown = this.ctx.time;
         const pos = s.position.clone().addScaledVector(UP, 3);
         const loc = this.ctx.track.locate(s.position, s.trackIndex, 6);
         this.entities.spawn('crown', r.index, pos, new Vector3(), { splineDistance: loc.splineDistance, life: 40 });
@@ -302,7 +385,7 @@ export class ItemSystem {
       }
       case 'paint':
         for (const o of this.ctx.racers) {
-          if (o === r || o.progress.position > r.progress.position || isInvulnerable(o.state)) continue;
+          if (o === r || o.progress.position > r.progress.position || isInvulnerable(o.state) || o.state.ghostTimer > 0) continue;
           o.state.inkTimer = 4.5;
           this.ctx.emit({ type: 'paint', racer: o.index, by: r.index });
         }
@@ -311,20 +394,37 @@ export class ItemSystem {
         this.lastZap = this.ctx.time;
         const n = this.ctx.racers.length;
         for (const o of this.ctx.racers) {
-          if (o === r || isInvulnerable(o.state)) continue;
+          if (o === r) continue;
+          o.state.megaTimer = 0; // lightning cuts a Giant down to size
+          if (isInvulnerable(o.state) || o.state.ghostTimer > 0) continue;
           const frac = n <= 1 ? 0 : (o.progress.position - 1) / (n - 1);
           this.entities.hitRacer(o, 'spin', r.index, 'zap');
-          o.state.shrinkTimer = 3 + 4 * (1 - frac);
-          o.slot.item = null;
-          o.slot.uses = 0;
-          o.slot.roulette = 0;
-          o.slot.pending = null;
+          o.state.shrinkTimer = Math.min(ZAP_SHRINK_MAX, 3 + 4 * (1 - frac));
+          Object.assign(o.slot, { item: null, uses: 0, roulette: 0, pending: null, reserve: null, reserveRoulette: 0, reservePending: null });
         }
         this.ctx.emit({ type: 'zap', racer: r.index });
         return true;
       }
       case 'quake':
         this.quakes.push({ owner: r.index, t: 0, pulse: 0 });
+        return true;
+      case 'phantom':
+        s.ghostTimer = PHANTOM_TIME;
+        this.steal(r);
+        return true;
+      case 'giant':
+        s.megaTimer = GIANT_TIME;
+        s.spinTimer = s.tumbleTimer = s.squishTimer = s.shrinkTimer = 0;
+        return true;
+      case 'feather':
+        if (!s.grounded || s.liftTimer > 0) return false;
+        s.velocity.y = Math.max(0, s.velocity.y) + FEATHER_LIFT;
+        s.grounded = false;
+        s.airTime = 0;
+        s.jumpFlight = true;
+        s.jumpTrick = false;
+        s.lipSpeed = 0;
+        s.featherTimer = 1.1;
         return true;
       default:
         return false;
@@ -350,7 +450,7 @@ export class ItemSystem {
         const order = r.slot.orbit.indexOf(e.id);
         const a = time * 4.2 + (order * Math.PI * 2) / count;
         const rad = e.kind === 'octo' ? 2.9 : 2.5;
-        e.position.copy(s.position).add(new Vector3(Math.sin(a) * rad, 0.8, Math.cos(a) * rad));
+        e.position.copy(s.position).add(this.t2.set(Math.sin(a) * rad, 0.8, Math.cos(a) * rad));
       }
     }
   }

@@ -8,6 +8,10 @@
  *   q/ugun/OBJ/*.obj|mtl      — Ultimate Gun Pack (realistic low-poly guns + accessories)
  *   q/modchars/Swat.gltf      — Ultimate Modular Characters: the SWAT operator (gun animations)
  *   q/shooter/{Environment,Guns}/glTF — Toon Shooter Game Kit (military props, grenade, knife)
+ *
+ * The menu's map shots (client/public/assets/fps/thumbs/<map>.jpg) are baked from the
+ * running game instead (rendering a whole map in the menu froze it): open /zero-hour/,
+ * run `await __zh.bakeMapThumbs()` in the console and save each data URL as <map>.jpg.
  */
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

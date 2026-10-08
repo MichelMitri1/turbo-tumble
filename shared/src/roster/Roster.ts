@@ -12,27 +12,32 @@ export interface RosterEntry {
   stats: Partial<KartStats>;
 }
 
+/*
+ * Stat deltas are deliberately wide (light/medium/heavy archetypes) but balanced:
+ * in "points" (0.5 m/s top speed = 0.07 accel = 0.07 turn = 1 pt; 0.2 weight or
+ * 0.6 grip = ½ pt) every entry nets out to about zero.
+ */
 export const CHARACTER_ROSTER: readonly RosterEntry[] = [
   { id: 'bix', name: 'Bix', stats: {} },
-  { id: 'pip', name: 'Pip', stats: { turnRate: 0.07 } },
-  { id: 'zuzu', name: 'Zuzu', stats: { maxSpeed: 0.5 } },
-  { id: 'tuko', name: 'Tuko', stats: { grip: -0.5 } },
-  { id: 'mox', name: 'Mox', stats: { weight: 0.3 } },
-  { id: 'nova', name: 'Nova', stats: { accelRate: 0.06 } },
-  { id: 'rumble', name: 'Rumble', stats: { weight: 0.35, accelRate: -0.05 } },
-  { id: 'kiki', name: 'Kiki', stats: { turnRate: 0.08, maxSpeed: -0.2 } },
-  { id: 'juno', name: 'Juno', stats: { maxSpeed: 0.3 } },
-  { id: 'sprig', name: 'Sprig', stats: { grip: 0.4 } },
-  { id: 'blaze', name: 'Blaze', stats: { grip: -0.6, turnRate: 0.05 } },
-  { id: 'pearl', name: 'Pearl', stats: { weight: 0.15, maxSpeed: 0.2 } },
+  { id: 'pip', name: 'Pip', stats: { maxSpeed: -1.0, accelRate: 0.07, turnRate: 0.14, weight: -0.4 } },
+  { id: 'zuzu', name: 'Zuzu', stats: { maxSpeed: 1.0, accelRate: -0.07, turnRate: -0.07 } },
+  { id: 'tuko', name: 'Tuko', stats: { grip: -1.5, turnRate: 0.17, maxSpeed: -0.6 } },
+  { id: 'mox', name: 'Mox', stats: { weight: 0.8, maxSpeed: 0.5, accelRate: -0.14, turnRate: -0.07 } },
+  { id: 'nova', name: 'Nova', stats: { accelRate: 0.21, maxSpeed: -0.9, turnRate: -0.05, weight: -0.2 } },
+  { id: 'rumble', name: 'Rumble', stats: { weight: 1.0, maxSpeed: 1.0, accelRate: -0.17, turnRate: -0.15 } },
+  { id: 'kiki', name: 'Kiki', stats: { turnRate: 0.21, accelRate: 0.07, maxSpeed: -1.4, weight: -0.5 } },
+  { id: 'juno', name: 'Juno', stats: { maxSpeed: 0.9, turnRate: -0.1, weight: 0.3, accelRate: -0.07 } },
+  { id: 'sprig', name: 'Sprig', stats: { grip: 1.2, accelRate: 0.07, maxSpeed: -0.6, weight: -0.3 } },
+  { id: 'blaze', name: 'Blaze', stats: { grip: -1.8, turnRate: 0.14, accelRate: -0.04 } },
+  { id: 'pearl', name: 'Pearl', stats: { weight: 0.5, maxSpeed: 0.3, accelRate: -0.08, grip: -0.6 } },
 ];
 
 export const KART_ROSTER: readonly RosterEntry[] = [
   { id: 'comet', name: 'Comet', stats: {} },
-  { id: 'bubblegum', name: 'Bubblegum', stats: { accelRate: 0.1 } },
-  { id: 'sunburst', name: 'Sunburst', stats: { maxSpeed: 0.5, accelRate: -0.05 } },
-  { id: 'lagoon', name: 'Lagoon', stats: { turnRate: 0.1 } },
-  { id: 'mocha', name: 'Mocha', stats: { weight: 0.25 } },
+  { id: 'bubblegum', name: 'Bubblegum', stats: { accelRate: 0.2, maxSpeed: -1.3, turnRate: 0.05, weight: -0.3 } },
+  { id: 'sunburst', name: 'Sunburst', stats: { maxSpeed: 1.7, accelRate: -0.14, turnRate: -0.1 } },
+  { id: 'lagoon', name: 'Lagoon', stats: { turnRate: 0.2, grip: 0.6, maxSpeed: -1.3, accelRate: -0.05 } },
+  { id: 'mocha', name: 'Mocha', stats: { weight: 0.9, maxSpeed: 0.6, accelRate: -0.14, turnRate: -0.1 } },
 ];
 
 export function characterEntry(id: string): RosterEntry {

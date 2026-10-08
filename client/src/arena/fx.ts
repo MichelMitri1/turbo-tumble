@@ -185,6 +185,152 @@ export class Bolts {
     }
     for (let i = this.live.length - 1; i >= 0; i--) if (this.live[i]!.life <= 0) this.live.splice(i, 1);
   }
+
+  dispose(): void {
+    for (const b of this.live) {
+      b.line.geometry.dispose();
+      (b.line.material as THREE.Material).dispose();
+    }
+    this.live.length = 0;
+    this.mat.dispose();
+    this.glow.dispose();
+  }
+}
+
+/** Instanced status decorations: ice crystals on frozen units, spinning stars over stunned ones. */
+export class StatusFx {
+  readonly group = new THREE.Group();
+  private readonly ice: THREE.InstancedMesh;
+  private readonly stars: THREE.InstancedMesh;
+  private nIce = 0;
+  private nStar = 0;
+  private readonly m = new THREE.Matrix4();
+  private readonly q = new THREE.Quaternion();
+  private readonly e = new THREE.Euler();
+  private readonly p = new THREE.Vector3();
+  private readonly s = new THREE.Vector3();
+
+  constructor(cap = 256) {
+    const iceMat = new THREE.MeshStandardMaterial({ color: '#cff6ff', emissive: '#5fc8ff', emissiveIntensity: 0.45, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 });
+    this.ice = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.3).scale(0.6, 1.9, 0.6), iceMat, cap);
+    const star = new THREE.Shape();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+      const r = i % 2 ? 0.14 : 0.34;
+      if (i) star.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      else star.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    this.stars = new THREE.InstancedMesh(new THREE.ExtrudeGeometry(star, { depth: 0.05, bevelEnabled: false }), new THREE.MeshBasicMaterial({ color: '#ffe14d' }), cap);
+    for (const im of [this.ice, this.stars]) {
+      im.frustumCulled = false;
+      im.count = 0;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.group.add(im);
+    }
+  }
+
+  begin(): void {
+    this.nIce = 0;
+    this.nStar = 0;
+  }
+
+  /** A ring of crystals hugging a frozen unit (radius r, height h). */
+  freeze(x: number, y: number, z: number, r: number, h: number, seed: number): void {
+    for (let i = 0; i < 7 && this.nIce < this.ice.instanceMatrix.count; i++) {
+      const a = seed * 1.7 + (i / 7) * Math.PI * 2;
+      this.p.set(x + Math.cos(a) * r, y + (0.08 + (i % 3) * 0.26) * h, z + Math.sin(a) * r);
+      this.e.set(Math.cos(a) * 0.45, a, Math.sin(a) * 0.45);
+      const k = 1.2 + ((seed + i) % 3) * 0.3 + h * 0.25;
+      this.ice.setMatrixAt(this.nIce++, this.m.compose(this.p, this.q.setFromEuler(this.e), this.s.set(k, k, k)));
+    }
+  }
+
+  /** Three stars circling above a stunned unit's head. */
+  stun(x: number, y: number, z: number, t: number): void {
+    for (let i = 0; i < 3 && this.nStar < this.stars.instanceMatrix.count; i++) {
+      const a = t * 5 + (i / 3) * Math.PI * 2;
+      this.p.set(x + Math.cos(a) * 0.6, y + Math.sin(a * 2) * 0.08, z + Math.sin(a) * 0.6);
+      this.e.set(0, -a, t * 3);
+      this.stars.setMatrixAt(this.nStar++, this.m.compose(this.p, this.q.setFromEuler(this.e), this.s.set(1, 1, 1)));
+    }
+  }
+
+  end(): void {
+    this.ice.count = this.nIce;
+    this.stars.count = this.nStar;
+    this.ice.instanceMatrix.needsUpdate = true;
+    this.stars.instanceMatrix.needsUpdate = true;
+  }
+
+  dispose(): void {
+    for (const im of [this.ice, this.stars]) {
+      im.geometry.dispose();
+      (im.material as THREE.Material).dispose();
+      im.dispose();
+    }
+  }
+}
+
+interface Floater {
+  el: HTMLDivElement;
+  pos: THREE.Vector3;
+  t: number;
+  life: number;
+  dx: number;
+}
+
+/** Pooled floating damage numbers: DOM labels re-projected from world space every frame. */
+export class FloatingNumbers {
+  private readonly pool: Floater[] = [];
+  private readonly live: Floater[] = [];
+  private readonly tmp = new THREE.Vector3();
+
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly project: (p: THREE.Vector3) => { x: number; y: number },
+  ) {}
+
+  add(text: string, at: THREE.Vector3, style: 'normal' | 'crit' | 'tower'): void {
+    let n = this.pool.pop();
+    if (!n && this.live.length >= 48) n = this.live.shift();
+    if (!n) {
+      const el = document.createElement('div');
+      this.container.appendChild(el);
+      n = { el, pos: new THREE.Vector3(), t: 0, life: 0, dx: 0 };
+    }
+    n.el.className = `cf-dmg ${style}`;
+    n.el.textContent = text;
+    n.el.style.display = '';
+    n.pos.copy(at);
+    n.t = 0;
+    n.life = style === 'normal' ? 0.75 : 1.05;
+    n.dx = (Math.random() - 0.5) * 0.5;
+    this.live.push(n);
+  }
+
+  update(dt: number): void {
+    for (let i = this.live.length - 1; i >= 0; i--) {
+      const n = this.live[i]!;
+      n.t += dt;
+      if (n.t >= n.life) {
+        n.el.style.display = 'none';
+        this.live.splice(i, 1);
+        this.pool.push(n);
+        continue;
+      }
+      const k = n.t / n.life;
+      const s = this.project(this.tmp.set(n.pos.x + n.dx * k, n.pos.y + k * 1.1, n.pos.z));
+      const pop = k < 0.15 ? 0.6 + (k / 0.15) * 0.6 : 1.2 - Math.min(0.2, (k - 0.15) * 0.6);
+      n.el.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -50%) scale(${pop.toFixed(3)})`;
+      n.el.style.opacity = String(k > 0.65 ? 1 - (k - 0.65) / 0.35 : 1);
+    }
+  }
+
+  dispose(): void {
+    for (const n of [...this.live, ...this.pool]) n.el.remove();
+    this.live.length = 0;
+    this.pool.length = 0;
+  }
 }
 
 /** Expanding ground ring (shockwaves, spell outlines). */
@@ -216,5 +362,11 @@ export class Rings {
       (this.live[i]!.m.material as THREE.Material).dispose();
       this.live.splice(i, 1);
     }
+  }
+
+  dispose(): void {
+    for (const r of this.live) (r.m.material as THREE.Material).dispose();
+    this.live.length = 0;
+    this.geo.dispose();
   }
 }

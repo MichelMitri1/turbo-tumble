@@ -20,6 +20,8 @@ export interface PropPlacement {
   tint?: string;
   /** Explosive (barrels). */
   explosive?: boolean;
+  /** Boundary dressing: drawn instanced, no shadows. */
+  edge?: boolean;
 }
 
 export interface SpawnPoint {
@@ -106,9 +108,9 @@ class Builder {
   }
 
   /** Place a model; its collision box comes from the model bounds. */
-  prop(model: string, x: number, z: number, rot = 0, s: number | [number, number, number] = 1, opts: { collide?: boolean; y?: number; tint?: string; explosive?: boolean; shrink?: number; trunk?: [number, number] } = {}): this {
+  prop(model: string, x: number, z: number, rot = 0, s: number | [number, number, number] = 1, opts: { collide?: boolean; y?: number; tint?: string; explosive?: boolean; shrink?: number; trunk?: [number, number]; edge?: boolean } = {}): this {
     const [sx, sy, sz] = typeof s === 'number' ? [s, s, s] : s;
-    const p: PropPlacement = { model, x, y: opts.y ?? 0, z, rot: ((rot % 4) + 4) % 4, sx, sy, sz, collide: opts.collide ?? true, tint: opts.tint, explosive: opts.explosive };
+    const p: PropPlacement = { model, x, y: opts.y ?? 0, z, rot: ((rot % 4) + 4) % 4, sx, sy, sz, collide: opts.collide ?? true, tint: opts.tint, explosive: opts.explosive, edge: opts.edge };
     this.props.push(p);
     // Trees / towers: only the trunk or legs block.
     const trunk = opts.trunk ?? (/tree/.test(model) ? [0.5, 4] : /watertank-platform/.test(model) ? [1.6, 6] : null);
@@ -134,19 +136,37 @@ class Builder {
     return this;
   }
 
-  /** Invisible map boundary. */
-  bounds(hx: number, hz: number, h = 12): this {
+  /** Map boundary: an invisible wall, with a low visible kerb along it so the edge reads. */
+  bounds(hx: number, hz: number, h = 12, kerb: Material = 'concrete'): this {
     const t = 1;
     this.box(-hx - t, 0, -hz - t, hx + t, h, -hz, 'invisible', false, true);
     this.box(-hx - t, 0, hz, hx + t, h, hz + t, 'invisible', false, true);
     this.box(-hx - t, 0, -hz, -hx, h, hz, 'invisible', false, true);
     this.box(hx, 0, -hz, hx + t, h, hz, 'invisible', false, true);
+    const k = 0.45;
+    const y = 0.7;
+    this.box(-hx - k, 0, -hz - k, hx + k, y, -hz, kerb);
+    this.box(-hx - k, 0, hz, hx + k, y, hz + k, kerb);
+    this.box(-hx - k, 0, -hz, -hx, y, hz, kerb);
+    this.box(hx, 0, -hz, hx + k, y, hz, kerb);
+    return this;
+  }
+
+  /** Decorative barrier props (no collision) just outside the boundary, every `step` metres along all four sides. */
+  edge(hx: number, hz: number, model: string, step: number, s: number | [number, number, number], opts: { out?: number; tint?: string; skip?: (x: number, z: number) => boolean } = {}): this {
+    const o = opts.out ?? 1.2;
+    for (let x = -hx + step / 2; x < hx; x += step)
+      for (const side of [-1, 1]) if (!opts.skip?.(x, side * (hz + o))) this.prop(model, x, side * (hz + o), 0, s, { collide: false, tint: opts.tint, edge: true });
+    for (let z = -hz + step / 2; z < hz; z += step)
+      for (const side of [-1, 1]) if (!opts.skip?.(side * (hx + o), z)) this.prop(model, side * (hx + o), z, 1, s, { collide: false, tint: opts.tint, edge: true });
     return this;
   }
 }
 
 // Map yaws are written as "facing +x = π/2"; the sim looks down −z at yaw 0 and turns left with +yaw.
 const sp = (x: number, z: number, yaw: number, y = 0): SpawnPoint => ({ x, y, z, yaw: -yaw });
+/** Spawns look at the middle of the map (never at the boundary); ones near the middle keep their written yaw. */
+const faceCentre = (pts: SpawnPoint[]): SpawnPoint[] => pts.map((p) => (Math.hypot(p.x, p.z) < 8 ? p : { ...p, yaw: Math.atan2(p.x, p.z) }));
 const CONTAINER_L: [number, number, number] = [2.8, 1.22, 1.15];
 const CONTAINER_S: [number, number, number] = [2.7, 1.22, 1.15];
 const CONTAINER_COLORS = ['#8a2a22', '#2a4f7a', '#3d6b35', '#a8742a', '#5c5f63', '#6b3a72'];
@@ -156,7 +176,7 @@ const CONTAINER_COLORS = ['#8a2a22', '#2a4f7a', '#3d6b35', '#a8742a', '#5c5f63',
 function freight(): MapDef {
   const b = new Builder();
   const H = 22;
-  b.bounds(H, H);
+  b.bounds(H, H, 12, 'metal');
   // Perimeter: stacked containers (visual) + the boundary.
   let ci = 0;
   for (const side of [-1, 1]) {
@@ -199,6 +219,8 @@ function freight(): MapDef {
   b.prop('prop-crate', 17, -18, 0, 1.4);
   b.prop('prop-streetlight', -20.5, 0, 1, 1.4, { collide: false });
   b.prop('prop-streetlight', 20.5, 0, 3, 1.4, { collide: false });
+  // Container corners close the stacked walls off.
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as Array<[number, number]>) b.prop('prop-container-small', x * (H + 1.3), z * (H + 1.3), 0, CONTAINER_S, { collide: false, tint: '#5c5f63' });
   return {
     id: 'freight',
     name: 'Freight',
@@ -207,10 +229,10 @@ function freight(): MapDef {
     boxes: b.boxes,
     props: b.props,
     spawns: [
-      [sp(-19, -14, Math.PI / 2), sp(-19, -6, Math.PI / 2), sp(-19, 6, Math.PI / 2), sp(-19, 14, Math.PI / 2), sp(-15, -19, Math.PI / 2), sp(-15, 19, Math.PI / 2)],
-      [sp(19, -14, -Math.PI / 2), sp(19, -6, -Math.PI / 2), sp(19, 6, -Math.PI / 2), sp(19, 14, -Math.PI / 2), sp(15, -19, -Math.PI / 2), sp(15, 19, -Math.PI / 2)],
+      faceCentre([sp(-19, -14, Math.PI / 2), sp(-19, -6, Math.PI / 2), sp(-19, 6, Math.PI / 2), sp(-19, 14, Math.PI / 2), sp(-15, -19, Math.PI / 2), sp(-15, 19, Math.PI / 2)]),
+      faceCentre([sp(19, -14, -Math.PI / 2), sp(19, -6, -Math.PI / 2), sp(19, 6, -Math.PI / 2), sp(19, 14, -Math.PI / 2), sp(15, -19, -Math.PI / 2), sp(15, 19, -Math.PI / 2)]),
     ],
-    ffa: [sp(-19, -19, 0.8), sp(19, 19, -2.4), sp(-19, 19, 2.4), sp(19, -19, -0.8), sp(0, -19, 0), sp(0, 19, Math.PI), sp(-19, 0, Math.PI / 2), sp(19, 0, -Math.PI / 2), sp(-6, -6, 0), sp(6, 6, Math.PI)],
+    ffa: faceCentre([sp(-19, -19, 0.8), sp(19, 19, -2.4), sp(-19, 19, 2.4), sp(19, -19, -0.8), sp(0, -19, 0), sp(0, 19, Math.PI), sp(-19, 0, Math.PI / 2), sp(19, 0, -Math.PI / 2), sp(-6, -6, 0), sp(6, 6, Math.PI)]),
     flags: [
       { x: -17, z: 0, y: 0 },
       { x: 4.5, z: 0, y: 0 },
@@ -301,6 +323,9 @@ function culdesac(): MapDef {
   b.prop('prop-streetlight', 12, -9, 2, 1.4, { collide: false });
   b.prop('prop-trafficcone', -1, -12, 0, 1.2, { collide: false });
   b.prop('prop-trafficcone', 1.5, -12.5, 0, 1.2, { collide: false });
+  // Chain-link fence round the neighbourhood; road barriers where the street leaves the map.
+  b.edge(HX, HZ, 'prop-metalfence', 3.5, 1, { out: 0.9, skip: (x, z) => Math.abs(x) < 7 && Math.abs(z) > HZ });
+  for (const side of [-1, 1]) for (const x of [-4.5, -1.5, 1.5, 4.5]) b.prop('prop-barrier-single', x, side * (HZ + 0.9), 0, [1.6, 1.2, 1.2], { collide: false, tint: '#c8b24a' });
   return {
     id: 'culdesac',
     name: 'Cul-de-Sac',
@@ -309,10 +334,10 @@ function culdesac(): MapDef {
     boxes: b.boxes,
     props: b.props,
     spawns: [
-      [sp(-33, -12, Math.PI / 2), sp(-33, 12, Math.PI / 2), sp(-28, -20, Math.PI / 2), sp(-28, 20, Math.PI / 2), sp(-33, 0, Math.PI / 2), sp(-22, -22, 1.2)],
-      [sp(33, -12, -Math.PI / 2), sp(33, 12, -Math.PI / 2), sp(28, -20, -Math.PI / 2), sp(28, 20, -Math.PI / 2), sp(33, 0, -Math.PI / 2), sp(22, 22, -1.9)],
+      faceCentre([sp(-33, -12, Math.PI / 2), sp(-33, 12, Math.PI / 2), sp(-28, -20, Math.PI / 2), sp(-28, 20, Math.PI / 2), sp(-33, 0, Math.PI / 2), sp(-22, -22, 1.2)]),
+      faceCentre([sp(33, -12, -Math.PI / 2), sp(33, 12, -Math.PI / 2), sp(28, -20, -Math.PI / 2), sp(28, 20, -Math.PI / 2), sp(33, 0, -Math.PI / 2), sp(22, 22, -1.9)]),
     ],
-    ffa: [sp(-33, -20, 0.8), sp(33, 20, -2.4), sp(-33, 20, 2.4), sp(33, -20, -0.8), sp(0, -23, 0), sp(0, 23, Math.PI), sp(-24, 0, Math.PI / 2), sp(24, 0, -Math.PI / 2), sp(-12, 18, 2), sp(12, -18, -1)],
+    ffa: faceCentre([sp(-33, -20, 0.8), sp(33, 20, -2.4), sp(-33, 20, 2.4), sp(33, -20, -0.8), sp(0, -23, 0), sp(0, 23, Math.PI), sp(-24, 0, Math.PI / 2), sp(24, 0, -Math.PI / 2), sp(-12, 18, 2), sp(12, -18, -1)]),
     flags: [
       { x: -13, z: 0, y: 0 },
       { x: 0, z: 2, y: 0 },
@@ -436,6 +461,8 @@ function outpost(): MapDef {
   b.prop('prop-pipes', 28, 2, 0, 1.3);
   b.prop('prop-tree-2', -40, -40, 0, 2.4, { tint: '#b8a060' });
   b.prop('prop-tree-2', 40, 40, 0, 2.4, { tint: '#b8a060' });
+  // Concrete T-walls ring the outpost.
+  b.edge(H, H, 'prop-barrier-large', 4, 1, { out: 0.8, tint: '#b8ad96' });
   return {
     id: 'outpost',
     name: 'Outpost',
@@ -444,10 +471,10 @@ function outpost(): MapDef {
     boxes: b.boxes,
     props: b.props,
     spawns: [
-      [sp(-42, -10, Math.PI / 2), sp(-42, 0, Math.PI / 2), sp(-42, 10, Math.PI / 2), sp(-38, -20, Math.PI / 2), sp(-38, 20, Math.PI / 2), sp(-42, -26, Math.PI / 2)],
-      [sp(42, -10, -Math.PI / 2), sp(42, 0, -Math.PI / 2), sp(42, 10, -Math.PI / 2), sp(38, -20, -Math.PI / 2), sp(38, 20, -Math.PI / 2), sp(42, 26, -Math.PI / 2)],
+      faceCentre([sp(-42, -10, Math.PI / 2), sp(-42, 0, Math.PI / 2), sp(-42, 10, Math.PI / 2), sp(-38, -20, Math.PI / 2), sp(-38, 20, Math.PI / 2), sp(-42, -26, Math.PI / 2)]),
+      faceCentre([sp(42, -10, -Math.PI / 2), sp(42, 0, -Math.PI / 2), sp(42, 10, -Math.PI / 2), sp(38, -20, -Math.PI / 2), sp(38, 20, -Math.PI / 2), sp(42, 26, -Math.PI / 2)]),
     ],
-    ffa: [sp(-42, -42, 0.8), sp(42, 42, -2.4), sp(-42, 42, 2.4), sp(42, -42, -0.8), sp(0, -42, 0), sp(0, 42, Math.PI), sp(-42, 0, Math.PI / 2), sp(42, 0, -Math.PI / 2), sp(-20, 35, 2), sp(20, -35, -1), sp(-30, -20, 1), sp(30, 20, -2)],
+    ffa: faceCentre([sp(-42, -42, 0.8), sp(42, 42, -2.4), sp(-42, 42, 2.4), sp(42, -42, -0.8), sp(0, -42, 0), sp(0, 42, Math.PI), sp(-42, 0, Math.PI / 2), sp(42, 0, -Math.PI / 2), sp(-20, 35, 2), sp(20, -35, -1), sp(-30, -20, 1), sp(30, 20, -2)]),
     flags: [
       { x: -28, z: 8, y: 0 },
       { x: 0, z: 10, y: 0 },

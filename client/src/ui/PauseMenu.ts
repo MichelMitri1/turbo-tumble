@@ -34,6 +34,8 @@ export class PauseMenu {
       button('Fullscreen', () => undefined),
       button('Toggle Debug', () => actions.toggleDebug()),
     ];
+    // Developer overlay only on ?debug links.
+    if (!new URLSearchParams(location.search).has('debug')) this.buttons[5]!.style.display = 'none';
     bindFullscreenButton(this.buttons[4]!, ['Fullscreen', 'Exit Fullscreen']);
     this.title = el('h2', 'tt-panel__title tt-display', 'PAUSED');
     this.root = el('div', 'tt-pause', [el('div', 'tt-panel', [this.title, ...this.buttons])]);

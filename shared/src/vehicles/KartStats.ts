@@ -47,7 +47,7 @@ export const BASE_KART_STATS: Readonly<KartStats> = {
   fullSteerSpeed: 9,
   grip: 10,
   airControl: 0.35,
-  hopSpeed: 6.2,
+  hopSpeed: 4.6,
   slopeFactor: 0.5,
   wallBounce: 0.35,
   weight: 1,

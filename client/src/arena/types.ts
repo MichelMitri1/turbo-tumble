@@ -150,6 +150,8 @@ export interface CardDefinition {
   speed: Speed | 'none';
   /** Attack range in tiles (0.8 = melee). */
   range: number;
+  /** Dead zone: can't hit targets closer than this (Mortar). */
+  minRange?: number;
   /** How far it notices enemies (tiles). */
   sight: number;
   count: number;

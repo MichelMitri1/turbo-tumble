@@ -4,8 +4,9 @@
  * spin decays separately. Ball–ball impacts are near-elastic with a little
  * "throw" friction; cushions bounce with speed loss and pick up english.
  *
- * Deterministic: only + − × ÷ and Math.sqrt, so the server and every browser
- * replay the exact same shot from the same inputs.
+ * Deterministic: only + − × ÷ and Math.sqrt (exp/sin/cos are replaced by short
+ * polynomials), so the server and every browser replay the exact same shot
+ * from the same inputs.
  *
  * Units: metres, seconds. Table origin at the centre, x along the length
  * (head string on the left), y across.
@@ -15,25 +16,36 @@ export const TABLE_L = 1.98; // 7-ft "bar box" playing surface (the classic onli
 export const TABLE_W = 0.99;
 const G = 9.81;
 const MU_SLIDE = 0.2;
-const MU_ROLL = 0.012;
+const MU_ROLL = 0.015;
 const MU_SPIN = 0.044;
-const E_BALL = 0.95;
-const E_CUSHION = 0.78;
+const E_BALL = 0.98;
 const E_JAW = 0.45;
 const MU_CUSHION = 0.2;
-const MU_BALL = 0.05;
+const MU_BALL = 0.06;
+/** Side-spin squirt: the cue ball leaves the tip this far (rad) off the aim line at max offset, losing ~10 % speed. */
+const SQUIRT = (3 * Math.PI) / 180;
+/** A ball still on the table / knocked off it (never a pot; the rules respot it). */
+export const ON_TABLE = -1;
+export const ESCAPED = -2;
 export const DT = 1 / 1000;
 export const MAX_CUE_SPEED = 9;
 /** Tip offset limit (fraction of R) before a miscue. */
 export const MAX_TIP = 0.6;
 
 export interface Pocket {
+  /** Centre of the hole (the capture circle). */
   x: number;
   y: number;
+  /** Capture radius: the ball drops once its centre is this close and heading in. */
   r: number;
   /** Aim point a little inside the mouth (for bots / guides). */
   ax: number;
   ay: number;
+  /** Unit direction into the pocket, and the mouth line's offset from the centre along it (negative = table side). */
+  mx: number;
+  my: number;
+  mouth: number;
+  side: boolean;
 }
 export interface Segment {
   x1: number;
@@ -42,6 +54,8 @@ export interface Segment {
   y2: number;
   /** Pocket jaw facing (softer, deader rubber). */
   jaw?: boolean;
+  /** Inside the pocket (its back wall): collides, but isn't drawn. */
+  hidden?: boolean;
 }
 
 const HL = TABLE_L / 2;
@@ -52,14 +66,13 @@ const CC = CORNER_MOUTH / Math.SQRT2;
 const SM = SIDE_MOUTH / 2;
 const FACE = 0.06;
 
-export const POCKETS: Pocket[] = [
-  { x: -HL, y: HW, r: 0.085, ax: -HL + 0.03, ay: HW - 0.03 },
-  { x: 0, y: HW + 0.036, r: 0.066, ax: 0, ay: HW - 0.005 },
-  { x: HL, y: HW, r: 0.085, ax: HL - 0.03, ay: HW - 0.03 },
-  { x: -HL, y: -HW, r: 0.085, ax: -HL + 0.03, ay: -HW + 0.03 },
-  { x: 0, y: -HW - 0.036, r: 0.066, ax: 0, ay: -HW + 0.005 },
-  { x: HL, y: -HW, r: 0.085, ax: HL - 0.03, ay: -HW + 0.03 },
-];
+const CORNER_R = 0.06;
+const SIDE_R = 0.045;
+const SIDE_DEPTH = 0.05;
+const corner = (sx: number, sy: number): Pocket => ({ x: sx * HL, y: sy * HW, r: CORNER_R, ax: sx * (HL - 0.03), ay: sy * (HW - 0.03), mx: sx * Math.SQRT1_2, my: sy * Math.SQRT1_2, mouth: -CC * Math.SQRT1_2, side: false });
+const side = (sy: number): Pocket => ({ x: 0, y: sy * (HW + SIDE_DEPTH), r: SIDE_R, ax: 0, ay: sy * (HW - 0.005), mx: 0, my: sy, mouth: -SIDE_DEPTH, side: true });
+/** The side pockets sit behind the rail line so a ball rolling along the cushion (y = ±(HW − R)) never drops. */
+export const POCKETS: Pocket[] = [corner(-1, 1), side(1), corner(1, 1), corner(-1, -1), side(-1), corner(1, -1)];
 
 /** Cushion noses + pocket jaw facings. */
 export const SEGMENTS: Segment[] = (() => {
@@ -72,6 +85,11 @@ export const SEGMENTS: Segment[] = (() => {
     // Side pocket facings (slightly flared).
     s.push({ x1: -SM, y1: sy * HW, x2: -SM + 0.012, y2: sy * (HW + FACE), jaw: true });
     s.push({ x1: SM, y1: sy * HW, x2: SM - 0.012, y2: sy * (HW + FACE), jaw: true });
+    // Inside of the side pocket (a ball that skips the hole rattles instead of leaving the table).
+    const sb = HW + SIDE_DEPTH + 0.035;
+    s.push({ x1: -SM + 0.012, y1: sy * (HW + FACE), x2: -SM + 0.012, y2: sy * sb, jaw: true, hidden: true });
+    s.push({ x1: SM - 0.012, y1: sy * (HW + FACE), x2: SM - 0.012, y2: sy * sb, jaw: true, hidden: true });
+    s.push({ x1: -SM + 0.012, y1: sy * sb, x2: SM - 0.012, y2: sy * sb, jaw: true, hidden: true });
     // Corner facings on the long rails.
     s.push({ x1: -HL + CC, y1: sy * HW, x2: -HL + CC - k, y2: sy * (HW + k), jaw: true });
     s.push({ x1: HL - CC, y1: sy * HW, x2: HL - CC + k, y2: sy * (HW + k), jaw: true });
@@ -81,6 +99,17 @@ export const SEGMENTS: Segment[] = (() => {
     s.push({ x1: sx * HL, y1: -HW + CC, x2: sx * HL, y2: HW - CC });
     s.push({ x1: sx * HL, y1: HW - CC, x2: sx * (HL + k), y2: HW - CC + k, jaw: true });
     s.push({ x1: sx * HL, y1: -HW + CC, x2: sx * (HL + k), y2: -HW + CC - k, jaw: true });
+    // Inside of the corner pockets: the jaws run on into a back wall just behind the hole's centre.
+    const e = 0.035 / Math.SQRT2;
+    for (const sy of [1, -1]) {
+      const ax = sx * (HL - CC + k);
+      const ay = sy * (HW + k);
+      const bx = sx * (HL + k);
+      const by = sy * (HW - CC + k);
+      s.push({ x1: ax, y1: ay, x2: ax + sx * e, y2: ay + sy * e, jaw: true, hidden: true });
+      s.push({ x1: bx, y1: by, x2: bx + sx * e, y2: by + sy * e, jaw: true, hidden: true });
+      s.push({ x1: ax + sx * e, y1: ay + sy * e, x2: bx + sx * e, y2: by + sy * e, jaw: true, hidden: true });
+    }
   }
   return s;
 })();
@@ -103,8 +132,9 @@ export interface Ball {
 
 export type SimEvent =
   | { k: 'ball'; t: number; a: number; b: number; speed: number }
-  | { k: 'cushion'; t: number; a: number; speed: number }
-  | { k: 'pocket'; t: number; a: number; pocket: number; speed: number };
+  | { k: 'cushion'; t: number; a: number; speed: number; jaw: boolean }
+  | { k: 'pocket'; t: number; a: number; pocket: number; speed: number }
+  | { k: 'escape'; t: number; a: number };
 
 export interface ShotInput {
   /** Unit aim direction. */
@@ -121,7 +151,31 @@ export interface BallRest {
   id: number;
   x: number;
   y: number;
+  /** Pocket index once pocketed; ON_TABLE, or ESCAPED (knocked off the table). */
   pocket: number;
+}
+
+/**
+ * Squirt (cue-ball deflection): side spin pushes the ball off the aim line, away
+ * from the tip, and costs a little speed. Returned direction is unit length.
+ */
+export function squirt(dx: number, dy: number, sx: number, sy: number): { dx: number; dy: number; speed: number } {
+  let a = sx;
+  let b = sy;
+  const m = Math.sqrt(a * a + b * b);
+  if (m > MAX_TIP) {
+    a = (a / m) * MAX_TIP;
+    b = (b / m) * MAX_TIP;
+  }
+  const f = a / MAX_TIP;
+  // Right english (+) → the ball squirts left (counter-clockwise of the aim line).
+  const th = SQUIRT * f;
+  const c = 1 - (th * th) / 2;
+  const s = th - (th * th * th) / 6;
+  const x = dx * c - dy * s;
+  const y = dx * s + dy * c;
+  const l = Math.sqrt(x * x + y * y);
+  return { dx: x / l, dy: y / l, speed: 1 - 0.1 * f * f };
 }
 
 export class Sim {
@@ -150,7 +204,6 @@ export class Sim {
   /** Strike the cue ball. */
   shoot(s: ShotInput): void {
     const cue = this.ball(0)!;
-    const V = Math.max(0.02, Math.min(1, s.power)) * MAX_CUE_SPEED;
     let a = s.sx;
     let b = s.sy;
     const m = Math.sqrt(a * a + b * b);
@@ -158,8 +211,10 @@ export class Sim {
       a = (a / m) * MAX_TIP;
       b = (b / m) * MAX_TIP;
     }
-    cue.vx = s.dx * V;
-    cue.vy = s.dy * V;
+    const sq = squirt(s.dx, s.dy, a, b);
+    const V = Math.max(0.02, Math.min(1, s.power)) * MAX_CUE_SPEED * sq.speed;
+    cue.vx = sq.dx * V;
+    cue.vy = sq.dy * V;
     // ω = 5/(2R²) · r × (V d): vertical offset → follow/draw, side → english.
     const k = (5 * V) / (2 * R);
     cue.wx = k * b * -s.dy;
@@ -168,7 +223,7 @@ export class Sim {
   }
 
   get moving(): boolean {
-    for (const b of this.balls) if (b.pocket < 0 && (b.vx !== 0 || b.vy !== 0 || b.wx !== 0 || b.wy !== 0)) return true;
+    for (const b of this.balls) if (b.pocket === ON_TABLE && (b.vx !== 0 || b.vy !== 0 || b.wx !== 0 || b.wy !== 0)) return true;
     return false;
   }
 
@@ -189,17 +244,17 @@ export class Sim {
     const dt = DT;
     this.t += dt;
     for (const b of this.balls) {
-      if (b.pocket >= 0) continue;
+      if (b.pocket !== ON_TABLE) continue;
       this.motion(b, dt);
     }
     // Collisions.
     const bs = this.balls;
     for (let i = 0; i < bs.length; i++) {
       const a = bs[i]!;
-      if (a.pocket >= 0) continue;
+      if (a.pocket !== ON_TABLE) continue;
       for (let j = i + 1; j < bs.length; j++) {
         const c = bs[j]!;
-        if (c.pocket >= 0) continue;
+        if (c.pocket !== ON_TABLE) continue;
         const dx = c.x - a.x;
         const dy = c.y - a.y;
         const d2 = dx * dx + dy * dy;
@@ -280,11 +335,14 @@ export class Sim {
     a.vy -= J * ny;
     c.vx += J * nx;
     c.vy += J * ny;
-    // Throw: friction from the contact's tangential slip (side spin + cut).
+    // Throw: friction from the contact's tangential slip (side spin + cut); the
+    // coefficient falls off with slip speed, μ = 0.06·e^(−|u|/1.5) + 0.01.
     const tx = -ny;
     const ty = nx;
     const ut = (a.vx - c.vx) * tx + (a.vy - c.vy) * ty + R * (a.wz + c.wz);
-    const jt0 = Math.min(MU_BALL * J, Math.abs(ut) / 7);
+    const u = (ut < 0 ? -ut : ut) / 1.5;
+    const mu = MU_BALL / (1 + u + (u * u) / 2 + (u * u * u) / 6) + 0.01;
+    const jt0 = Math.min(mu * J, Math.abs(ut) / 7);
     const jt = ut > 0 ? jt0 : -jt0;
     a.vx -= jt * tx;
     a.vy -= jt * ty;
@@ -320,7 +378,9 @@ export class Sim {
       b.y += ny * (R - d);
       const vn = b.vx * nx + b.vy * ny;
       if (vn >= 0) continue;
-      const e = s.jaw ? E_JAW : E_CUSHION;
+      // Rubber gets deader the harder it's hit: e = 0.85 − 0.03·|vn|, 0.65..0.9.
+      const ec = 0.85 + 0.03 * vn;
+      const e = s.jaw ? E_JAW : ec < 0.65 ? 0.65 : ec > 0.9 ? 0.9 : ec;
       b.vx -= (1 + e) * vn * nx;
       b.vy -= (1 + e) * vn * ny;
       // English grabs the cushion.
@@ -332,43 +392,49 @@ export class Sim {
       b.vx -= jt * tx;
       b.vy -= jt * ty;
       b.wz += (5 / (2 * R)) * jt;
-      // The cushion nose sits above centre: it kills most of the roll.
-      b.wx *= 0.4;
-      b.wy *= 0.4;
+      // The nose sits above centre: the roll along the cushion survives, the roll
+      // into it doesn't — so the ball comes off a hard rebound sliding (shorter)
+      // and running english keeps its bite.
+      const wt = b.wx * tx + b.wy * ty;
+      b.wx = wt * tx;
+      b.wy = wt * ty;
       if (this.firstHit >= 0) this.railAfterHit = true;
       this.railed.add(b.id);
-      this.events.push({ k: 'cushion', t: this.t, a: b.id, speed: -vn });
+      this.events.push({ k: 'cushion', t: this.t, a: b.id, speed: -vn, jaw: !!s.jaw });
     }
   }
 
+  /**
+   * A ball drops once it is past the mouth line and its centre is over the hole —
+   * provided it is heading in: a slow ball just falls, a fast one must be lined
+   * up with the pocket (corners forgive more than sides) or it bounces between
+   * the jaws and may rattle back out.
+   */
   private checkPockets(b: Ball): void {
     if (b.x > -HL + 0.03 && b.x < HL - 0.03 && b.y > -HW + 0.03 && b.y < HW - 0.03) return;
     for (let i = 0; i < POCKETS.length; i++) {
       const p = POCKETS[i]!;
-      const dx = b.x - p.x;
-      const dy = b.y - p.y;
-      if (dx * dx + dy * dy < p.r * p.r) {
-        const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-        b.pocket = i;
-        b.vx = b.vy = b.wx = b.wy = b.wz = 0;
-        this.events.push({ k: 'pocket', t: this.t, a: b.id, pocket: i, speed });
-        return;
-      }
-    }
-    // Safety: anything that escaped the table falls in the nearest pocket.
-    if (b.x < -HL - 0.08 || b.x > HL + 0.08 || b.y < -HW - 0.08 || b.y > HW + 0.08) {
-      let best = 0;
-      let bd = Infinity;
-      POCKETS.forEach((p, i) => {
-        const d = (b.x - p.x) ** 2 + (b.y - p.y) ** 2;
-        if (d < bd) {
-          bd = d;
-          best = i;
-        }
-      });
-      b.pocket = best;
+      const dx = p.x - b.x;
+      const dy = p.y - b.y;
+      const d2 = dx * dx + dy * dy;
+      const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+      // A slow ball hanging over the lip tips in from a little further out.
+      const r = speed < 0.5 ? p.r + 0.015 : p.r;
+      if (d2 >= r * r) continue;
+      if (-(dx * p.mx + dy * p.my) < p.mouth) continue;
+      const along = b.vx * p.mx + b.vy * p.my;
+      const need = p.side ? Math.min(0.95, 0.4 + 0.09 * speed) : Math.min(0.9, 0.3 + 0.07 * speed);
+      if (speed > 1 && along < need * speed) continue;
+      b.pocket = i;
       b.vx = b.vy = b.wx = b.wy = b.wz = 0;
-      this.events.push({ k: 'pocket', t: this.t, a: b.id, pocket: best, speed: 0 });
+      this.events.push({ k: 'pocket', t: this.t, a: b.id, pocket: i, speed });
+      return;
+    }
+    // Safety: a ball that somehow left the table is frozen; the rules put it back.
+    if (b.x < -HL - 0.08 || b.x > HL + 0.08 || b.y < -HW - 0.08 || b.y > HW + 0.08) {
+      b.pocket = ESCAPED;
+      b.vx = b.vy = b.wx = b.wy = b.wz = 0;
+      this.events.push({ k: 'escape', t: this.t, a: b.id });
     }
   }
 }
@@ -377,7 +443,7 @@ export class Sim {
 export function spotFree(balls: BallRest[], x: number, y: number, ignore = 0): boolean {
   if (x < -HL + R || x > HL - R || y < -HW + R || y > HW - R) return false;
   for (const b of balls) {
-    if (b.id === ignore || b.pocket >= 0) continue;
+    if (b.id === ignore || b.pocket !== ON_TABLE) continue;
     const dx = b.x - x;
     const dy = b.y - y;
     if (dx * dx + dy * dy < 4 * R * R * 1.0001) return false;
@@ -389,7 +455,7 @@ export function spotFree(balls: BallRest[], x: number, y: number, ignore = 0): b
 export function castCue(balls: BallRest[], cx: number, cy: number, dx: number, dy: number): { t: number; ball: number; nx: number; ny: number } {
   let best = { t: Infinity, ball: -1, nx: 0, ny: 0 };
   for (const b of balls) {
-    if (b.id === 0 || b.pocket >= 0) continue;
+    if (b.id === 0 || b.pocket !== ON_TABLE) continue;
     // Ray vs circle of radius 2R.
     const ox = cx - b.x;
     const oy = cy - b.y;

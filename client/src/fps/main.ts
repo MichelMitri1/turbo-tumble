@@ -5,7 +5,7 @@ import { DEFAULT_CLASSES, NO_ATTACHMENTS as NO_ATT, PERKS, PRIMARIES, SECONDARIE
 import type { BotSkill } from './sim/bots';
 import { preload } from './render/assets';
 import { CAMOS, progress } from './render/camo';
-import { GunStage, gunThumb, itemThumb, mapThumb, type ItemThumb } from './render/preview';
+import { GunStage, cachedThumb, mapThumb, renderThumb, setThumbGate, type ItemThumb, type ThumbSpec } from './render/preview';
 import { icon } from './icons';
 import { Match, LocalSession, type Session } from './match';
 import { FpsInput, DEFAULT_INPUT, type InputSettings } from './input';
@@ -59,7 +59,8 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 /** Lazy preview images (filled in by `thumbs()`). */
 const gimg = (id: string, camo = profile.camos[id] ?? 'none', att?: Attachments) => `<img data-g="${id}|${camo}${att ? `|${att.optic}|${att.muzzle}|${att.under}` : ''}" alt="" draggable="false">`;
 const iimg = (kind: ItemThumb) => `<img data-i="${kind}" alt="" draggable="false">`;
-const mimg = (id: string) => `<img data-m="${id}" alt="" draggable="false">`;
+/** Map shots are pre-baked (see `__zh.bakeMapThumbs`): rendering a whole map in the menu froze it. */
+const mimg = (id: string) => `<img src="/assets/fps/thumbs/${id}.jpg" alt="" draggable="false" decoding="async">`;
 const app = document.getElementById('game')!;
 app.innerHTML = `
 <div id="view"></div>
@@ -203,6 +204,7 @@ function show(id: ScreenId): void {
   if (id !== 'settings') back = screen === 'pause' ? 'pause' : 'menu';
   if (id === 'settings' && screen === 'pause') back = 'pause';
   screen = id;
+  quietUntil = performance.now() + 500;
   for (const s of ['menu', 'play', 'classes', 'armory', 'settings', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
   $('#click').classList.toggle('hidden', !(id === 'game' && !input.locked && input.device === 'kb'));
   audio.ui();
@@ -265,32 +267,65 @@ $('#q-start').addEventListener('click', () => void startLocal());
 
 // ---------------------------------------------------------------- previews
 
-/** Lazily fill `<img data-g|data-i|data-m>` thumbnails, a few per frame. */
+const spec = (el: HTMLImageElement): ThumbSpec => {
+  if (el.dataset.i) return { item: el.dataset.i as ItemThumb };
+  const [gun, camo, optic, muzzle, under] = el.dataset.g!.split('|');
+  return { gun: gun!, camo: camo ?? 'none', att: optic ? ({ optic, muzzle, under, ammo: 'standard' } as Attachments) : undefined };
+};
+/** A real idle slot (≥ 12 ms free), never within half a second of a screen change. */
+let quietUntil = 0;
+const idle = () =>
+  new Promise<void>((res) => {
+    if (typeof requestIdleCallback !== 'function') return void setTimeout(res, 50);
+    const f = (d: IdleDeadline) => (d.timeRemaining() < 12 || performance.now() < quietUntil ? requestIdleCallback(f) : res());
+    requestIdleCallback(f);
+  });
+const thumbQ: HTMLImageElement[] = [];
+let thumbBusy = false;
+// Menu thumbnails also wait for idle before their render + readback (not during the loading screen's pre-render).
+setThumbGate(() => (loading ? Promise.resolve() : idle()));
+
+/**
+ * Fill `<img data-g|data-i>` thumbnails: cached ones (memory / localStorage) at
+ * once, the rest rendered one per idle slot (never during a match).
+ */
 function thumbs(root: ParentNode = app): void {
-  const todo = [...root.querySelectorAll<HTMLImageElement>('img[data-g]:not([src]), img[data-i]:not([src]), img[data-m]:not([src])')];
-  const step = () => {
-    const t0 = performance.now();
-    while (todo.length && performance.now() - t0 < 12) {
-      const el = todo.shift()!;
-      if (!el.isConnected) continue;
-      let url = '';
-      if (el.dataset.g) {
-        const [id, camo, optic, muzzle, under] = el.dataset.g.split('|');
-        url = gunThumb(id!, camo, optic ? ({ optic, muzzle, under, ammo: 'standard' } as Attachments) : undefined);
-      } else if (el.dataset.i) url = itemThumb(el.dataset.i as ItemThumb);
-      else if (el.dataset.m) url = mapThumb(el.dataset.m);
-      if (url) el.src = url;
-    }
-    if (todo.length) requestAnimationFrame(step);
-  };
-  step();
+  for (const el of root.querySelectorAll<HTMLImageElement>('img[data-g]:not([src]), img[data-i]:not([src])')) {
+    const url = cachedThumb(spec(el));
+    if (url) el.src = url;
+    else thumbQ.push(el);
+  }
+  void pumpThumbs();
+}
+async function pumpThumbs(): Promise<void> {
+  if (thumbBusy) return;
+  thumbBusy = true;
+  while (thumbQ.length) {
+    await idle();
+    while (screen === 'game' || loading) await new Promise((r) => setTimeout(r, 400));
+    const el = thumbQ.shift()!;
+    if (!el.isConnected || el.src) continue;
+    const url = await renderThumb(spec(el));
+    if (url) el.src = url;
+  }
+  thumbBusy = false;
+}
+
+/** Render thumbnails ahead (e.g. the pause menu's class list during the loading screen). */
+async function prerenderThumbs(root: ParentNode): Promise<void> {
+  for (const el of root.querySelectorAll<HTMLImageElement>('img[data-g], img[data-i]')) if (!el.src) el.src = await renderThumb(spec(el));
 }
 
 /** Every model the menus can show; previews fill in once they're loaded. */
-void preload(MAPS.flatMap((m) => m.props.map((p) => p.model))).then(() => {
+void preload(MAPS.flatMap((m) => m.props.map((p) => p.model))).then(async () => {
   thumbs();
   if (screen === 'classes') updateStage();
   if (screen === 'armory') updateArmoryStage();
+  // GL contexts + studio lighting for the turntables, before anyone opens those screens.
+  await idle();
+  if (!loading && screen !== 'game') classStage.warm();
+  await idle();
+  if (!loading && screen !== 'game') armoryStage.warm();
 });
 
 const CLASS_NAME: Record<WeaponDef['cls'], string> = { ar: 'ASSAULT RIFLE', smg: 'SUBMACHINE GUN', lmg: 'LIGHT MACHINE GUN', shotgun: 'SHOTGUN', sniper: 'SNIPER RIFLE', marksman: 'MARKSMAN RIFLE', pistol: 'HANDGUN' };
@@ -554,12 +589,43 @@ function loadout(): Loadout {
   return profile.classes[profile.cls] ?? profile.classes[0]!;
 }
 
-async function loadingScreen(props: string[]): Promise<void> {
+let loading = false;
+const bar = (f: number) => ($('#l-bar').style.width = `${(f * 100).toFixed(1)}%`);
+
+/**
+ * Everything a match needs happens behind the loading bar: models, the session
+ * (sim, nav), then the map, shaders and first shadowed frame (Match.load).
+ */
+async function runMatch(props: string[], make: () => Session, say: string): Promise<void> {
+  if (loading) return;
+  loading = true;
+  match?.dispose();
+  match = null;
   $('#loading').classList.remove('hidden');
-  await preload(props, (f) => {
-    $('#l-bar').style.width = `${f * 100}%`;
-  });
-  $('#loading').classList.add('hidden');
+  bar(0);
+  try {
+    await preload(props, (f) => bar(f * 0.4));
+    const session = make();
+    const m = new Match($('#view'), session, input, audio, { fov: profile.fov, quality: profile.quality });
+    m.onPause = pause;
+    m.onOver = (g) => showEnd(g);
+    await m.load((f) => bar(0.4 + f * 0.55));
+    renderPauseClasses();
+    await prerenderThumbs($('#p-classes'));
+    bar(1);
+    match = m;
+    // Pre-roll a few real (paused) frames behind the bar: first-frame GPU syncs land here, not in the first second of play.
+    for (let i = 0; i < 4; i++) {
+      m.frame(0);
+      await new Promise<void>((res) => requestAnimationFrame(() => setTimeout(res, 0)));
+    }
+  } finally {
+    loading = false;
+    $('#loading').classList.add('hidden');
+  }
+  show('game');
+  input.lock();
+  audio.say(say);
 }
 
 const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk'];
@@ -575,25 +641,28 @@ async function startLocal(): Promise<void> {
     const camoPool = ['none', 'woodland', 'desert', 'urban', 'digital', 'tiger', 'gold'];
     setups.push({ id: `bot${i}`, name: names.pop() ?? `Bot${i}`, team: i % 2 === 0 ? 1 : 0, bot: true, loadout: cls, camos: { [cls.primary]: camoPool[Math.floor(Math.random() * camoPool.length)]! } });
   }
-  await loadingScreen(map.props.map((p) => p.model));
-  const game = new Game(map.id, { mode: profile.mode }, setups);
-  begin(new LocalSession(game, profile.skill));
+  await runMatch(
+    map.props.map((p) => p.model),
+    () => new LocalSession(new Game(map.id, { mode: profile.mode }, setups), profile.skill),
+    `${MODES[profile.mode].name}. ${map.name}. Good luck.`,
+  );
 }
 
-function begin(session: Session): void {
-  match?.dispose();
-  match = new Match($('#view'), session, input, audio, { fov: profile.fov, quality: profile.quality });
-  match.onPause = pause;
-  match.onOver = (g) => showEnd(g);
-  show('game');
-  input.lock();
-  audio.say(`${MODES[session.game.mode].name}. ${session.game.map.name}. Good luck.`);
+/** The pause menu's class list: rebuilt only when the classes change (its thumbnails are rendered at match start). */
+let pauseKey = '';
+function renderPauseClasses(): void {
+  const key = JSON.stringify([profile.classes, profile.camos]);
+  if (key !== pauseKey) {
+    pauseKey = key;
+    $('#p-classes').innerHTML = profile.classes.map((c, i) => `<button data-i="${i}">${gimg(c.primary, undefined, c.primaryAtt)}<span>${esc(c.name.toUpperCase())}<small>${WEAPON[c.primary]?.name} · ${WEAPON[c.secondary]?.name}</small></span></button>`).join('');
+  }
+  $('#p-classes').querySelectorAll<HTMLElement>('[data-i]').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === profile.cls));
 }
 
 function pause(): void {
-  if (!match) return;
+  if (!match || match.over) return;
   input.unlock();
-  $('#p-classes').innerHTML = profile.classes.map((c, i) => `<button class="${i === profile.cls ? 'on' : ''}" data-i="${i}">${gimg(c.primary, undefined, c.primaryAtt)}<span>${esc(c.name.toUpperCase())}<small>${WEAPON[c.primary]?.name} · ${WEAPON[c.secondary]?.name}</small></span></button>`).join('');
+  renderPauseClasses();
   show('pause');
   thumbs($('#p-classes'));
 }
@@ -626,7 +695,10 @@ function leave(): void {
 }
 
 function showEnd(g: Game): void {
-  const me = g.soldier(match?.session.meId ?? '')!;
+  // Left (or started another match) during the end delay: nothing to show.
+  if (!match || match.session.game !== g) return;
+  const me = g.soldier(match.session.meId);
+  if (!me) return;
   input.unlock();
   const won = g.mode === 'ffa' ? [...g.soldiers].sort((a, b) => b.kills - a.kills)[0] === me : g.winner === me.team;
   const draw = g.mode !== 'ffa' && g.winner === -1;
@@ -708,10 +780,11 @@ async function connect(how: (n: FpsNet) => Promise<void>): Promise<void> {
     lobby = l;
     renderLobby();
   };
-  n.onBegin = async (b) => {
+  n.onBegin = (b) => {
     const map = MAPS.find((m) => m.id === b.map) ?? MAPS[0]!;
-    await loadingScreen(map.props.map((p) => p.model));
-    begin(new OnlineSession(n, b));
+    // The session starts listening straight away (snapshots queue while the map loads).
+    const session = new OnlineSession(n, b);
+    void runMatch(map.props.map((p) => p.model), () => session, `${MODES[b.mode].name}. ${map.name}. Good luck.`);
   };
   n.onError = (m) => oStatus(m, true);
   n.onClosed = (reason) => {
@@ -827,4 +900,10 @@ else if (q.has('play')) void startLocal();
     return match;
   },
   profile,
+  audio,
+  /** Dev: render every map's menu shot (data URLs) — saved as assets/fps/thumbs/<id>.jpg. */
+  async bakeMapThumbs() {
+    await preload(MAPS.flatMap((m) => m.props.map((p) => p.model)));
+    return Object.fromEntries(MAPS.map((m) => [m.id, mapThumb(m.id)]));
+  },
 };

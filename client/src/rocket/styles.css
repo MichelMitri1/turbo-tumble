@@ -420,10 +420,23 @@ kbd {
   padding: 2px 7px;
   color: #fff;
 }
+/* Garage: the panel is fixed to the viewport and the car grid scrolls inside it. */
+#garage .rk-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: min(1100px, 100%);
+}
 .rk-cars {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 2px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 160, 255, 0.45) transparent;
 }
 .rk-car {
   display: flex;
@@ -676,10 +689,112 @@ kbd {
 .rk-boost.empty b {
   color: #ff7a7a;
 }
+/* Pad pickup: the gauge pops and glows. */
+.rk-boost.flash svg {
+  animation: rk-boost-flash 0.35s ease-out;
+}
+.rk-boost.flash b {
+  animation: rk-boost-pop 0.3s ease-out;
+}
+@keyframes rk-boost-flash {
+  from {
+    filter: drop-shadow(0 0 22px rgba(255, 210, 90, 1)) brightness(1.6);
+  }
+}
+@keyframes rk-boost-pop {
+  from {
+    transform: scale(1.18);
+    color: #ffe08a;
+  }
+}
+/* Big pad: a warm glow around the screen edges. */
+.rk-edge {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  box-shadow: inset 0 0 90px 10px rgba(255, 150, 40, 0.55);
+}
+.rk-edge.on {
+  animation: rk-edge 0.55s ease-out;
+}
+@keyframes rk-edge {
+  from {
+    opacity: 1;
+  }
+}
+/* Ball cam state. */
+.rk-camicon {
+  position: absolute;
+  right: 48px;
+  bottom: 182px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 3px 9px;
+  background: rgba(8, 12, 32, 0.55);
+  border-radius: 3px;
+}
+.rk-camicon i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+}
+.rk-camicon.on {
+  color: #fff;
+}
+.rk-camicon.on i {
+  background: var(--orange);
+  border-color: var(--orange);
+  box-shadow: 0 0 8px var(--orange);
+}
+/* Off-screen ball: an arrow on the screen edge, pointing at it. */
+.rk-ballind {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 54px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+}
+.rk-ballind i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(230, 236, 255, 0.92) 0 9px, rgba(8, 12, 32, 0.6) 10px 26px, transparent 27px);
+}
+.rk-ballind i::after {
+  content: '';
+  position: absolute;
+  right: -9px;
+  top: 50%;
+  margin-top: -9px;
+  border: 9px solid transparent;
+  border-left: 13px solid #fff;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+}
+.rk-ballind b {
+  position: absolute;
+  top: 100%;
+  font-size: 13px;
+  color: #fff;
+  text-shadow: 0 1px 3px #000;
+  white-space: nowrap;
+}
+/* Replays keep only the scoreboard. */
+.rk-hud.replay > :not(.rk-sb) {
+  display: none !important;
+}
 .rk-speed {
   position: absolute;
   right: 40px;
-  bottom: 182px;
+  bottom: 210px;
   font-size: 14px;
   letter-spacing: 0.2em;
   color: #fff;
@@ -714,6 +829,48 @@ kbd {
 }
 .rk-big.go .cd {
   color: #ffd04a;
+}
+/* Countdown numbers slam in and shrink away; GO! bursts outward. */
+.rk-big.count .cd {
+  display: block;
+  animation: rk-count 1s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+.rk-big.count.go .cd {
+  animation: rk-go 0.8s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+@keyframes rk-count {
+  0% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+  14% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+}
+@keyframes rk-go {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  15% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
 }
 .rk-big .goal {
   font-size: clamp(80px, 14vw, 170px);
@@ -911,11 +1068,66 @@ kbd {
   font-family: var(--head);
   font-size: 40px;
 }
-.rk-mvp {
-  text-align: center;
-  font-family: var(--head);
-  color: #ffd04a;
+/* Post-game titles under the scoreboard. */
+.rk-titles {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-top: 6px;
+}
+.rk-title {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 150px;
+  padding: 8px 14px 8px 10px;
+  background: rgba(8, 12, 32, 0.9);
+  border-bottom: 3px solid var(--blue);
+}
+.rk-title.t1 {
+  border-bottom-color: var(--orange);
+}
+.rk-title i {
+  grid-row: span 2;
+  font-style: normal;
+  font-size: 26px;
+}
+.rk-title small {
+  font-family: var(--head);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #ffd04a;
+}
+.rk-title b {
+  font-size: 18px;
+  color: #fff;
+}
+/* Arena picker. */
+.rk-arenas button {
+  flex: 1 1 22%;
+  font-size: 13px;
+}
+.rk-panel.wide .rk-arenas button {
+  flex: 1 1 12%;
+  padding: 10px 4px;
+  font-size: 12px;
+}
+.rk-arena-desc {
+  color: var(--muted);
+  font-size: 14px;
+  min-height: 1.2em;
+}
+/* Pause quick toggles. */
+.rk-quick {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 @media (max-width: 640px) {
   .rk-boost {

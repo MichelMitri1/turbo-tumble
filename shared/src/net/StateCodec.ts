@@ -74,6 +74,8 @@ export const KART_FULL: FullLayout<KartState> = {
   slipstreamCharge: 'f32',
   slipstreamTimer: 'f32',
   slipstreamCooldown: 'f32',
+  lipSpeed: 'f32',
+  liftTimer: 'f32',
   spinTimer: 'f32',
   tumbleTimer: 'f32',
   squishTimer: 'f32',
@@ -81,6 +83,9 @@ export const KART_FULL: FullLayout<KartState> = {
   shrinkTimer: 'f32',
   rocketTimer: 'f32',
   inkTimer: 'f32',
+  ghostTimer: 'f32',
+  megaTimer: 'f32',
+  featherTimer: 'f32',
   coins: 'u8',
 };
 
@@ -113,6 +118,10 @@ export const KART_REMOTE: PartialLayout<KartState> = {
   shrinkTimer: 'ms',
   rocketTimer: 'ms',
   inkTimer: 'ms',
+  liftTimer: 'ms',
+  ghostTimer: 'ms',
+  megaTimer: 'ms',
+  featherTimer: 'ms',
   coins: 'u8',
 };
 
@@ -152,6 +161,9 @@ export const SLOT_FULL: FullLayout<ItemSlot> = {
   octo: 'itemlist',
   pressed: 'bool',
   cooldown: 'f32',
+  reserve: 'item',
+  reserveRoulette: 'f32',
+  reservePending: 'item',
 };
 
 export const SLOT_PUBLIC: PartialLayout<ItemSlot> = {
@@ -160,6 +172,8 @@ export const SLOT_PUBLIC: PartialLayout<ItemSlot> = {
   roulette: 'ms',
   timer: 'ms',
   timedItem: 'item',
+  reserve: 'item',
+  reserveRoulette: 'ms',
 };
 
 /** Item entities as drawn by clients. */
@@ -170,6 +184,7 @@ export const ENTITY_PUBLIC: PartialLayout<ItemEntity> = {
   position: 'vec',
   velocity: 'vec',
   owner: 'u8',
+  target: 'i8',
   age: 'f32',
   radius: 'f32',
   attach: 'attach',

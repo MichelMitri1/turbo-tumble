@@ -312,6 +312,32 @@ export class DriverRig {
     driver.add(this.scarf);
   }
 
+  /** Materials owned by this rig (topper + scarf), for whole-kart looks like the Phantom fade. */
+  get materials(): MeshStandardMaterial[] {
+    const out = new Set<MeshStandardMaterial>();
+    const add = (o: Object3D): void => {
+      const m = o as Mesh;
+      if (m.isMesh && m.material instanceof MeshStandardMaterial) out.add(m.material);
+    };
+    this.topper?.traverse(add);
+    if (this.scarf) add(this.scarf);
+    return [...out];
+  }
+
+  /** Free the topper and scarf (built per kart; the driver mesh itself is shared). */
+  dispose(): void {
+    const free = (o: Object3D): void => {
+      const m = o as Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      (m.material as MeshStandardMaterial).dispose();
+    };
+    this.topper?.traverse(free);
+    if (this.scarf) free(this.scarf);
+    this.topper?.removeFromParent();
+    this.scarf?.removeFromParent();
+  }
+
   gesture(kind: DriverGesture): void {
     // Replace a running gesture of the same kind instead of stacking it.
     const existing = this.gestures.find((g) => g.kind === kind);

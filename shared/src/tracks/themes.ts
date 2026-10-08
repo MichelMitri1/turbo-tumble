@@ -20,6 +20,8 @@ export interface Theme {
   props?: (lapLength: number) => PropPlacement[];
   /** No grandstands / balloons (e.g. night city has its own skyline). */
   noCrowd?: boolean;
+  /** Asset-manifest models for static road obstacles (cycled); default pylons. */
+  hazards?: string[];
 }
 
 const rule = (models: string[], count: number, min: number, max: number, scale: [number, number], seed: number, extra: Partial<ScatterRule> = {}): ScatterRule => ({
@@ -68,6 +70,7 @@ const FLOWERS = ['flower_redA', 'flower_yellowA', 'flower_purpleA', 'grass_large
 export const THEMES: Record<string, Theme> = {
   meadow: {
     id: 'meadow',
+    hazards: ['pylon'],
     palette: { grassA: '#5cbf3c', grassB: '#8fd14f', shoulder: '#4fae36', sand: '#e8d38f', rock: '#8d8478' },
     noiseAmplitude: 5,
     lakes: true,
@@ -88,6 +91,7 @@ export const THEMES: Record<string, Theme> = {
 
   tropical: {
     id: 'tropical',
+    hazards: ['rock_largeE', 'rock_largeF'],
     palette: { grassA: '#74c94a', grassB: '#a6dc62', shoulder: '#ead79a', sand: '#f4e3a8', rock: '#a69c8c' },
     noiseAmplitude: 4,
     lakes: true,
@@ -108,6 +112,7 @@ export const THEMES: Record<string, Theme> = {
 
   sunset: {
     id: 'sunset',
+    hazards: ['pylon'],
     palette: { grassA: '#6bb64a', grassB: '#9cc85e', shoulder: '#e3c98f', sand: '#efd7a0', rock: '#9a8a7c' },
     noiseAmplitude: 5,
     lakes: true,
@@ -127,6 +132,7 @@ export const THEMES: Record<string, Theme> = {
 
   farm: {
     id: 'farm',
+    hazards: ['crop_pumpkin'],
     palette: { grassA: '#94c84a', grassB: '#c9d65c', shoulder: '#b49c5a', sand: '#dac47c', rock: '#9a8e7a' },
     noiseAmplitude: 4,
     lakes: true,
@@ -151,6 +157,7 @@ export const THEMES: Record<string, Theme> = {
 
   alpine: {
     id: 'alpine',
+    hazards: ['log_stack'],
     palette: { grassA: '#3f9a45', grassB: '#62b357', shoulder: '#4a8d3e', sand: '#cfc59a', rock: '#8c8c94' },
     noiseAmplitude: 7,
     lakes: true,
@@ -170,6 +177,7 @@ export const THEMES: Record<string, Theme> = {
 
   desert: {
     id: 'desert',
+    hazards: ['cactus_tall', 'cactus_short'],
     palette: { grassA: '#e2c07c', grassB: '#d6aa68', shoulder: '#c99a5b', sand: '#f0d9a0', rock: '#b5734a' },
     noiseAmplitude: 6,
     lakes: false,
@@ -188,6 +196,7 @@ export const THEMES: Record<string, Theme> = {
 
   autumn: {
     id: 'autumn',
+    hazards: ['crop_pumpkin', 'stump_round'],
     palette: { grassA: '#9cae45', grassB: '#c8a44a', shoulder: '#8d8a3c', sand: '#d9b77a', rock: '#8c7d6c' },
     noiseAmplitude: 6,
     lakes: true,
@@ -207,6 +216,7 @@ export const THEMES: Record<string, Theme> = {
 
   mushroom: {
     id: 'mushroom',
+    hazards: ['mushroom_redTall', 'mushroom_tanTall'],
     palette: { grassA: '#4f8a5a', grassB: '#6aa067', shoulder: '#3e6f4a', sand: '#b9a8c8', rock: '#6f6a80' },
     noiseAmplitude: 6,
     lakes: true,
@@ -226,6 +236,7 @@ export const THEMES: Record<string, Theme> = {
 
   ruins: {
     id: 'ruins',
+    hazards: ['statue_column', 'statue_columnDamaged'],
     palette: { grassA: '#6aae45', grassB: '#93c05a', shoulder: '#c2b48a', sand: '#d8c99a', rock: '#a89c84' },
     noiseAmplitude: 6,
     lakes: true,
@@ -245,6 +256,7 @@ export const THEMES: Record<string, Theme> = {
 
   snow: {
     id: 'snow',
+    hazards: ['rock_largeA'],
     palette: { grassA: '#eef3fa', grassB: '#dde7f2', shoulder: '#cfdbe8', sand: '#e8eef5', rock: '#9aa3b2' },
     noiseAmplitude: 7,
     lakes: true,
@@ -263,6 +275,7 @@ export const THEMES: Record<string, Theme> = {
 
   volcano: {
     id: 'volcano',
+    hazards: ['rock_tallA', 'rock_tallB'],
     palette: { grassA: '#3d322d', grassB: '#4b3b33', shoulder: '#2e2622', sand: '#5a4538', rock: '#2a2422' },
     noiseAmplitude: 7,
     lakes: true,
@@ -322,5 +335,209 @@ export const THEMES: Record<string, Theme> = {
     scatter: (s) => [rule(['tree_cone_dark', 'tree_default_dark'], 160, 3, 18, [4, 6], s + 1)],
     landmarks: () => [{ type: 'skyline', params: { count: 260 } }],
     props: (L) => [{ model: 'lightPostModern', distance: 20, side: 'left', wallOffset: 0.8, scale: 9, repeat: { every: 34, until: L - 20 } }],
+  },
+
+  // ---------------------------------------------------------------- course-specific worlds
+
+  /** Coral Cove: white-sand islet in a turquoise lagoon (not Palm Bay's resort jungle). */
+  beach: {
+    id: 'beach',
+    palette: { grassA: '#f2e2b8', grassB: '#e9d6a4', shoulder: '#f4e6c2', sand: '#fbf0d2', rock: '#c8b89a' },
+    noiseAmplitude: 2.5,
+    lakes: true,
+    liquid: { color: '#2fd6d0', opacity: 0.82 },
+    lighting: { ...DAY_LIGHT, sunDirection: [-0.35, 0.85, 0.2], sunIntensity: 3, skyColor: '#d8fbff', groundColor: '#f0e0b0', exposure: 1.06 },
+    sky: { ...DAY_SKY, top: '#0f9ae8', horizon: '#c8f8ff', bottom: '#e8fcff', fogColor: '#d2f6ff', fogNear: 220, fogFar: 1400, clouds: 14 },
+    mountains: { low: '#e8d6a8', mid: '#6fb07a', peak: '#4f9a6a' },
+    music: 'music-sunny',
+    halfWidth: 9,
+    hazards: ['rock_largeE', 'rock_largeF'],
+    scatter: (s) => [
+      rule(['tree_palmBend', 'tree_palmDetailedTall', 'tree_palmTall', 'tree_palmShort'], 340, 5, 200, [6.5, 10.5], s + 1, { castShadow: true }),
+      rule(['grass_large', 'plant_flatTall'], 420, 1, 40, [2.5, 4], s + 2, { tint: '#d8c890', tintAmount: 0.35 }),
+      rule(['rock_largeE', 'rock_largeF', 'rock_largeB'], 90, 6, 160, [2, 5], s + 3, { avoidWater: false, tint: '#e8dcc0', tintAmount: 0.4 }),
+    ],
+  },
+
+  /** River Rapids: lush valley with white water, mossy rocks and mill country. */
+  river: {
+    id: 'river',
+    palette: { grassA: '#4fae4a', grassB: '#7cc35a', shoulder: '#5a9a48', sand: '#c9c2a0', rock: '#7d8a8a' },
+    noiseAmplitude: 6,
+    lakes: true,
+    liquid: { color: '#3fb8e0', opacity: 0.86 },
+    lighting: { ...DAY_LIGHT, sunDirection: [-0.6, 0.72, -0.2], sunColor: '#fff6e0', groundColor: '#4a7a3a' },
+    sky: { ...DAY_SKY, top: '#3a8ee0', horizon: '#d8f2ff', fogColor: '#d4eef4', fogNear: 150, clouds: 30 },
+    mountains: { low: '#3f8a4a', mid: '#6f8f7a', peak: '#c8d8d0' },
+    music: 'music-sunny',
+    halfWidth: 9,
+    hazards: ['log_stack'],
+    scatter: (s) => [
+      rule(['tree_oak', 'tree_detailed', 'tree_tall', 'tree_pineRoundA', 'tree_pineTallA_detailed'], 760, 6, 320, [6, 10], s + 1, { castShadow: true }),
+      rule(BUSHES, 420, 1.5, 45, [3.5, 6], s + 2),
+      rule(['rock_largeA', 'rock_largeC', 'rock_largeD'], 220, 3, 160, [2.5, 6], s + 3, { avoidWater: false, tint: '#5a7a5a', tintAmount: 0.25 }),
+      rule(['flower_purpleA', 'flower_yellowA', 'grass_large', 'lily_large'], 700, 0.8, 45, [3, 4.5], s + 4),
+    ],
+  },
+
+  /** Jungle Falls: dense, misty rainforest under cliffs and cascades. */
+  jungle: {
+    id: 'jungle',
+    palette: { grassA: '#2f8a3a', grassB: '#4fa040', shoulder: '#6a5a3a', sand: '#b8a070', rock: '#5f6a52' },
+    noiseAmplitude: 7,
+    lakes: true,
+    liquid: { color: '#2aa898', opacity: 0.88 },
+    lighting: { ...DAY_LIGHT, sunDirection: [-0.3, 0.86, 0.35], sunColor: '#fff2c8', sunIntensity: 2.3, skyColor: '#cdeedd', groundColor: '#2f5a2a', hemiIntensity: 1.2 },
+    sky: { ...DAY_SKY, top: '#3d9a8a', horizon: '#d8f0d0', bottom: '#eaf6e0', fogColor: '#c4e2c8', fogNear: 90, fogFar: 760, clouds: 24 },
+    mountains: { low: '#2a6a3a', mid: '#3f7a4a', peak: '#6a9a6a' },
+    music: 'music-dunes',
+    halfWidth: 9,
+    hazards: ['statue_head', 'statue_block'],
+    scatter: (s) => [
+      rule([...PALMS, 'tree_tall_dark', 'tree_oak_dark', 'tree_plateau_dark'], 1100, 5, 300, [7, 12], s + 1, { castShadow: true }),
+      rule(['plant_bushLargeTriangle', 'plant_flatTall', 'plant_bushDetailed', 'plant_bushLarge'], 900, 1.2, 50, [3.5, 7], s + 2),
+      rule(['hanging_moss', 'grass_large'], 400, 1, 40, [3, 5], s + 3),
+      rule(['statue_head', 'statue_columnDamaged', 'stone_tallA'], 40, 8, 120, [4, 7], s + 4, { castShadow: true, tint: '#4a6a3a', tintAmount: 0.35 }),
+    ],
+  },
+
+  /** Moonlit Marsh: a blue night bog — fog, dead trees, lily pads, will-o'-wisps. */
+  marsh: {
+    id: 'marsh',
+    palette: { grassA: '#3a5a46', grassB: '#4a6a4a', shoulder: '#3a4a3a', sand: '#5a5a48', rock: '#4a5058' },
+    noiseAmplitude: 3,
+    lakes: true,
+    liquid: { color: '#2a4a48', emissive: '#18403a', emissiveIntensity: 0.4, opacity: 0.92 },
+    lighting: { sunDirection: [0.35, 0.6, -0.5], sunColor: '#bcd4ff', sunIntensity: 1.5, skyColor: '#7a8ad8', groundColor: '#1a2a2a', hemiIntensity: 1.15, exposure: 1.12 },
+    sky: { top: '#060a24', horizon: '#3a4a7a', bottom: '#4a5a7a', sunGlow: '#e8f0ff', fogColor: '#2a3654', fogNear: 70, fogFar: 640, clouds: 10, stars: 0.9 },
+    mountains: { low: '#1a2a2a', mid: '#2a3446', peak: '#4a5468' },
+    music: 'music-neon',
+    halfWidth: 9,
+    noCrowd: true,
+    hazards: ['stump_oldTall', 'stump_old'],
+    scatter: (s) => [
+      rule(['tree_thin_dark', 'tree_default_dark', 'tree_plateau_dark', 'tree_cone_dark'], 620, 6, 280, [6, 10], s + 1, { castShadow: true, tint: '#2a3a3a', tintAmount: 0.35 }),
+      rule(['stump_old', 'stump_oldTall', 'log_large'], 260, 2, 90, [3, 5], s + 2, { tint: '#3a3a30', tintAmount: 0.3 }),
+      rule(['lily_large', 'grass_large', 'hanging_moss'], 700, 0.8, 50, [3, 5], s + 3, { avoidWater: false }),
+      rule(['mushroom_tan', 'mushroom_tanGroup'], 160, 1, 40, [3, 5], s + 4),
+    ],
+  },
+
+  /** Clockwork Factory: brick, steel and smog at golden hour. */
+  factory: {
+    id: 'factory',
+    palette: { grassA: '#5a5650', grassB: '#6a645a', shoulder: '#4a4844', sand: '#7a6a58', rock: '#5a4a42' },
+    noiseAmplitude: 1.2,
+    lakes: false,
+    lighting: { sunDirection: [-0.7, 0.5, 0.3], sunColor: '#ffc890', sunIntensity: 2.3, skyColor: '#d8b89a', groundColor: '#4a3a30', hemiIntensity: 1.1, exposure: 1.06 },
+    sky: { top: '#5a5a7a', horizon: '#e8a070', bottom: '#d89a7a', sunGlow: '#ffb070', fogColor: '#b08a78', fogNear: 120, fogFar: 900, clouds: 12 },
+    mountains: null,
+    music: 'music-volcano',
+    halfWidth: 9,
+    noCrowd: true,
+    hazards: ['pylon'],
+    scatter: (s) => [rule(['rock_largeA', 'rock_largeC'], 60, 4, 60, [2, 4], s + 1, { tint: '#5a5048', tintAmount: 0.5 })],
+  },
+
+  /** Glacier Gauntlet: blue ice and a frozen sea under an aurora. */
+  glacier: {
+    id: 'glacier',
+    palette: { grassA: '#d8ecf8', grassB: '#c4e0f2', shoulder: '#b8d8ee', sand: '#e0f0fa', rock: '#7fa8c8' },
+    noiseAmplitude: 8,
+    lakes: true,
+    liquid: { color: '#7ad0f0', emissive: '#2a80b0', emissiveIntensity: 0.25, opacity: 0.95 },
+    lighting: { sunDirection: [0.4, 0.45, -0.6], sunColor: '#d8f0ff', sunIntensity: 1.9, skyColor: '#9ad8ff', groundColor: '#8ab0d0', hemiIntensity: 1.35, exposure: 1.0 },
+    sky: { top: '#0a1a40', horizon: '#3ad8b0', bottom: '#a8e8ff', sunGlow: '#9affd8', fogColor: '#7ab8d0', fogNear: 120, fogFar: 900, clouds: 8, stars: 0.6 },
+    mountains: { low: '#a8d0e8', mid: '#6aa0c8', peak: '#e8f8ff', snow: true },
+    music: 'music-frost',
+    halfWidth: 9,
+    noCrowd: true,
+    hazards: ['rock_largeB'],
+    scatter: (s) => [
+      rule(TALL_ROCKS, 260, 5, 260, [5, 12], s + 1, { castShadow: true, tint: '#a8dcff', tintAmount: 0.7, avoidWater: false }),
+      rule(['tree_pineSmallA', 'tree_pineGroundA'], 200, 4, 120, [3.5, 6], s + 2, { tint: '#ffffff', tintAmount: 0.7 }),
+      rule(ROCKS, 160, 3, 160, [2.5, 6], s + 3, { tint: '#c8ecff', tintAmount: 0.6, avoidWater: false }),
+    ],
+  },
+
+  /** Thunder Ridge: red mesas under a bruised storm sky. */
+  mesa: {
+    id: 'mesa',
+    palette: { grassA: '#a8603a', grassB: '#b8744a', shoulder: '#8a5038', sand: '#c88a5a', rock: '#7a3a2a' },
+    noiseAmplitude: 8,
+    lakes: false,
+    lighting: { sunDirection: [-0.2, 0.7, 0.6], sunColor: '#d8d0ff', sunIntensity: 1.7, skyColor: '#8a8aa8', groundColor: '#5a3020', hemiIntensity: 1.2, exposure: 1.08 },
+    sky: { top: '#1a1a30', horizon: '#7a6a80', bottom: '#9a7a7a', sunGlow: '#b8b0ff', fogColor: '#5a4a5a', fogNear: 110, fogFar: 820, clouds: 30 },
+    mountains: { low: '#8a4a30', mid: '#a85a38', peak: '#c87a4a' },
+    music: 'music-volcano',
+    halfWidth: 9,
+    noCrowd: true,
+    hazards: ['rock_tallC', 'rock_tallD'],
+    scatter: (s) => [
+      rule(TALL_ROCKS, 300, 6, 300, [6, 16], s + 1, { castShadow: true, tint: '#a8502a', tintAmount: 0.55 }),
+      rule(TALL_ROCKS, 60, 140, 420, [26, 48], s + 2, { tint: '#9a4a2a', tintAmount: 0.6 }),
+      rule(['cactus_short', 'stump_old', 'rock_largeE'], 200, 2, 120, [2.5, 5], s + 3, { tint: '#8a5a3a', tintAmount: 0.3 }),
+    ],
+  },
+
+  /** Magma Core: a black basalt caldera under a red-hot sky. */
+  magma: {
+    id: 'magma',
+    palette: { grassA: '#201a1e', grassB: '#2a1e1e', shoulder: '#1e1818', sand: '#3a2420', rock: '#1a1416' },
+    noiseAmplitude: 6,
+    lakes: true,
+    liquid: { color: '#ff4a10', emissive: '#ff2a00', emissiveIntensity: 2.2, opacity: 1 },
+    lighting: { sunDirection: [0.2, 0.7, -0.6], sunColor: '#ff8a5a', sunIntensity: 1.7, skyColor: '#ff5a3a', groundColor: '#3a1010', hemiIntensity: 1.15, exposure: 1.12 },
+    sky: { top: '#0a0206', horizon: '#c8301a', bottom: '#ff6a2a', sunGlow: '#ff4a1a', fogColor: '#4a1410', fogNear: 90, fogFar: 760, clouds: 0, stars: 0.15 },
+    mountains: { low: '#1a1010', mid: '#2a1414', peak: '#ff4a1a' },
+    music: 'music-volcano',
+    halfWidth: 9,
+    noCrowd: true,
+    hazards: ['rock_tallE', 'rock_tallF'],
+    scatter: (s) => [
+      rule(TALL_ROCKS, 420, 5, 300, [5, 13], s + 1, { castShadow: true, tint: '#140e10', tintAmount: 0.8, avoidWater: false }),
+      rule(['rock_largeA', 'rock_largeD', 'stone_tallB'], 240, 2, 140, [2.5, 6], s + 2, { tint: '#1a1214', tintAmount: 0.75, avoidWater: false }),
+    ],
+  },
+
+  /** Space variants: each cosmic course has its own nebula. */
+  starlight: {
+    id: 'starlight',
+    palette: { grassA: '#10102a', grassB: '#10102a', shoulder: '#10102a', sand: '#10102a', rock: '#10102a' },
+    noiseAmplitude: 0,
+    lakes: false,
+    lighting: { sunDirection: [0.3, 0.8, 0.4], sunColor: '#cfe0ff', sunIntensity: 1.5, skyColor: '#6a8aff', groundColor: '#1a2a5a', hemiIntensity: 1.5, exposure: 1.15 },
+    sky: { top: '#01041a', horizon: '#14306a', bottom: '#0a1440', sunGlow: '#7ab0ff', fogColor: '#0e1a40', fogNear: 300, fogFar: 1500, clouds: 0, stars: 1 },
+    mountains: null,
+    music: 'music-neon',
+    halfWidth: 9,
+    noCrowd: true,
+    scatter: () => [],
+  },
+  comet: {
+    id: 'comet',
+    palette: { grassA: '#10102a', grassB: '#10102a', shoulder: '#10102a', sand: '#10102a', rock: '#10102a' },
+    noiseAmplitude: 0,
+    lakes: false,
+    lighting: { sunDirection: [-0.4, 0.75, 0.3], sunColor: '#d8fff0', sunIntensity: 1.5, skyColor: '#4adcc8', groundColor: '#0a2a2a', hemiIntensity: 1.45, exposure: 1.15 },
+    sky: { top: '#020a10', horizon: '#0a4a4a', bottom: '#06202a', sunGlow: '#5affd8', fogColor: '#08262a', fogNear: 300, fogFar: 1500, clouds: 0, stars: 1 },
+    mountains: null,
+    music: 'music-neon',
+    halfWidth: 9,
+    noCrowd: true,
+    scatter: () => [],
+  },
+  prism: {
+    id: 'prism',
+    palette: { grassA: '#10102a', grassB: '#10102a', shoulder: '#10102a', sand: '#10102a', rock: '#10102a' },
+    noiseAmplitude: 0,
+    lakes: false,
+    lighting: { sunDirection: [0.3, 0.8, 0.4], sunColor: '#ffe0ff', sunIntensity: 1.3, skyColor: '#c88aff', groundColor: '#3a1a4a', hemiIntensity: 1.6, exposure: 1.15 },
+    sky: { top: '#05021a', horizon: '#4a1a6a', bottom: '#200a3a', sunGlow: '#ff9aff', fogColor: '#1e0e3a', fogNear: 320, fogFar: 1600, clouds: 0, stars: 1 },
+    mountains: null,
+    music: 'music-neon',
+    halfWidth: 9,
+    noCrowd: true,
+    scatter: () => [],
   },
 };

@@ -5,7 +5,7 @@ import type { Input } from '../sim/player';
 
 /** Zero Hour online protocol. */
 export const FP_ROOM = 'zerohour';
-export const FP_VERSION = 1;
+export const FP_VERSION = 2;
 export const FP_MAX = 12;
 
 export const FpMsg = {
@@ -85,7 +85,7 @@ export interface FpSnap {
   nades: Array<[number, number, number, number]>;
   uav: Array<[string, number]>;
   barrels: number[];
-  /** Scoreboard (sent every second): [idx, kills, deaths, assists, score]. */
+  /** Scoreboard (sent every second): [idx, kills, deaths, assists, score, ping ms]. */
   board?: number[][];
 }
 

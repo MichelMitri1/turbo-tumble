@@ -25,7 +25,10 @@ export type ItemId =
   | 'horn' //            shockwave: knocks back racers, destroys incoming items
   | 'octo' //            eight orbiting assorted items
   | 'coin' //            +2 coins
-  | 'quake'; //          ground-shaking block: spins racers ahead who aren't airborne
+  | 'quake' //           ground-shaking block: spins racers ahead who aren't airborne
+  | 'phantom' //         turn see-through (items pass) and steal an item from a racer ahead
+  | 'giant' //           grow huge: flatten karts, shrug off most items
+  | 'feather'; //        a very high hop over traps and shots
 
 export type ItemCategory = 'boost' | 'projectile' | 'trap' | 'attack' | 'buff' | 'utility';
 
@@ -73,6 +76,9 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
   octo: { id: 'octo', name: 'Octo Orbit', description: 'Eight assorted items circling you.', category: 'utility', use: 'deploy', uses: 8, colors: ['#ff8c1a', '#3fd8ff'] },
   coin: { id: 'coin', name: 'Spark Coins', description: 'Two coins — each one adds top speed.', category: 'boost', use: 'instant', uses: 1, colors: ['#ffd23f', '#ff9a1a'] },
   quake: { id: 'quake', name: 'Quake Block', description: 'Shakes the ground — rivals ahead spin out.', category: 'attack', use: 'instant', uses: 1, colors: ['#ff8c1a', '#5a2a8a'] },
+  phantom: { id: 'phantom', name: 'Phantom Sheet', description: 'Go see-through for a moment and swipe an item from a racer ahead.', category: 'utility', use: 'instant', uses: 1, colors: ['#eeeaff', '#7a5cff'] },
+  giant: { id: 'giant', name: 'Giant Gummy', description: 'Grow huge: flatten anyone you touch, shrug off most items.', category: 'buff', use: 'instant', uses: 1, colors: ['#ff4f8a', '#ffe14d'] },
+  feather: { id: 'feather', name: 'Sky Feather', description: 'A huge hop — sail over traps and incoming shots.', category: 'utility', use: 'instant', uses: 1, colors: ['#ffffff', '#ffb52e'] },
 };
 
 export const ALL_ITEMS = Object.keys(ITEMS) as ItemId[];

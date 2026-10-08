@@ -1,10 +1,11 @@
 import type { BotLevel } from '../sim/bot';
+import type { ArenaId } from '../arenas';
 import type { CarId } from '../sim/constants';
 import type { PlayerInfo, Stats, WorldEvent } from '../sim/world';
 
 /** Boostball online protocol (browser ↔ server). */
 export const RB_ROOM = 'boostball';
-export const RB_VERSION = 2;
+export const RB_VERSION = 3;
 export const RB_MAX_PER_TEAM = 3;
 
 export const RbMsg = {
@@ -31,6 +32,8 @@ export interface RbConfig {
   length: number;
   /** Fill empty seats with bots. */
   bots: boolean;
+  /** Arena look ('random' is resolved when the match starts). */
+  arena: ArenaId | 'random';
 }
 
 export interface RbLobbyPlayer {
@@ -58,6 +61,7 @@ export interface RbBegin {
   seed: number;
   length: number;
   lan: boolean;
+  arena: ArenaId;
 }
 
 /** Inputs for consecutive ticks starting at `t` (6 numbers per tick, see packControls). */

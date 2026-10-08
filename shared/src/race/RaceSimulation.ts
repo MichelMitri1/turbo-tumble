@@ -4,7 +4,7 @@ import type { TrackPath } from '../track/TrackPath';
 import { spawnSlot } from '../track/spawnGrid';
 import { SeededRandom } from '../math/random';
 import { createEmptyInput, type PlayerInput } from '../types/input';
-import { createKartState, isInvulnerable } from '../vehicles/KartState';
+import { createKartState } from '../vehicles/KartState';
 import { KartSimulation } from '../vehicles/KartSimulation';
 import type { KartStats } from '../vehicles/KartStats';
 import { ItemSystem } from '../items/ItemSystem';
@@ -14,6 +14,7 @@ import { computeRacingLine, type RacingLine } from '../track/RacingLine';
 import { LapTracker } from './LapTracker';
 import { Pickups } from './Pickups';
 import { stepSlipstream } from './Slipstream';
+import { speedClassScale } from './SpeedClass';
 import { MoverField, type MoverContact } from './Movers';
 import { createItemSlot, createProgress, v3, type RaceContext, type RaceEvent, type Racer } from './RaceTypes';
 
@@ -40,9 +41,13 @@ export interface RaceConfig {
   seed: number;
   /** Seconds from start until GO (the last three are the 3-2-1 beats). */
   countdown: number;
+  /** Engine class (50/100/150/200cc); default 150. */
+  speedClass?: number;
 }
 
 const KART_RADIUS = 1.1;
+/** Giant Gummy size (collision; the view scales the kart to match). */
+export const GIANT_SCALE = 1.9;
 const BUMP_RESTITUTION = 0.55;
 
 /**
@@ -85,10 +90,14 @@ export class RaceSimulation implements RaceContext {
     this.racingLine = computeRacingLine(track);
     this.movers = new MoverField(track);
     const profile = DIFFICULTY[config.difficulty];
+    const cc = speedClassScale(config.speedClass);
 
     config.racers.forEach((setup, index) => {
       const state = createKartState();
       const stats = { ...setup.stats };
+      stats.maxSpeed *= cc.speed;
+      stats.accelRate *= cc.accel;
+      stats.accelMin *= cc.accel;
       if (setup.isAI) stats.maxSpeed *= profile.speedMul;
       const sim = new KartSimulation(state, stats, physics, track);
       const spawn = spawnSlot(track, index);
@@ -238,22 +247,29 @@ export class RaceSimulation implements RaceContext {
         const sa = a.state;
         const sb = b.state;
         if (Math.abs(sa.position.y - sb.position.y) > 1.8) continue;
-        const ra = KART_RADIUS * (sa.shrinkTimer > 0 ? 0.6 : 1);
-        const rb = KART_RADIUS * (sb.shrinkTimer > 0 ? 0.6 : 1);
+        // Phantoms drift straight through other karts.
+        if (sa.ghostTimer > 0 || sb.ghostTimer > 0) continue;
+        const ra = KART_RADIUS * (sa.shrinkTimer > 0 ? 0.6 : sa.megaTimer > 0 ? GIANT_SCALE : 1);
+        const rb = KART_RADIUS * (sb.shrinkTimer > 0 ? 0.6 : sb.megaTimer > 0 ? GIANT_SCALE : 1);
         const n = this.n.set(sa.position.x - sb.position.x, 0, sa.position.z - sb.position.z);
         const dist = n.length();
         if (dist >= ra + rb || dist < 1e-4) continue;
         n.divideScalar(dist);
 
-        const powerA = isInvulnerable(sa) && sa.respawnTimer <= 0;
-        const powerB = isInvulnerable(sb) && sb.respawnTimer <= 0;
-        if (powerA && !powerB) this.items.entities.hitRacer(b, 'tumble', a.index, 'ram');
-        if (powerB && !powerA) this.items.entities.hitRacer(a, 'tumble', b.index, 'ram');
+        const powerA = sa.invincibleTimer > 0 || sa.rocketTimer > 0;
+        const powerB = sb.invincibleTimer > 0 || sb.rocketTimer > 0;
+        const giantA = sa.megaTimer > 0;
+        const giantB = sb.megaTimer > 0;
+        if (powerA && !powerB && !giantB) this.items.entities.hitRacer(b, 'tumble', a.index, 'ram');
+        if (powerB && !powerA && !giantA) this.items.entities.hitRacer(a, 'tumble', b.index, 'ram');
+        // Giants flatten whoever they touch.
+        if (giantA && !giantB && sb.squishTimer <= 0) this.items.entities.hitRacer(b, 'squish', a.index, 'giant');
+        if (giantB && !giantA && sa.squishTimer <= 0) this.items.entities.hitRacer(a, 'squish', b.index, 'giant');
         if (sa.shrinkTimer > 0 && sb.shrinkTimer <= 0 && sa.squishTimer <= 0) this.items.entities.hitRacer(a, 'squish', b.index, 'squish');
         if (sb.shrinkTimer > 0 && sa.shrinkTimer <= 0 && sb.squishTimer <= 0) this.items.entities.hitRacer(b, 'squish', a.index, 'squish');
 
-        const wa = a.sim.stats.weight * (sa.shrinkTimer > 0 ? 0.3 : 1) * (powerA ? 50 : 1);
-        const wb = b.sim.stats.weight * (sb.shrinkTimer > 0 ? 0.3 : 1) * (powerB ? 50 : 1);
+        const wa = a.sim.stats.weight * (sa.shrinkTimer > 0 ? 0.3 : 1) * (powerA || giantA ? 50 : 1);
+        const wb = b.sim.stats.weight * (sb.shrinkTimer > 0 ? 0.3 : 1) * (powerB || giantB ? 50 : 1);
         const overlap = ra + rb - dist;
         sa.position.addScaledVector(n, (overlap * wb) / (wa + wb));
         sb.position.addScaledVector(n, (-overlap * wa) / (wa + wb));

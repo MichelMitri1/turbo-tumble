@@ -85,7 +85,6 @@ export class NavGrid {
   }
 
   private walk(i: number, j: number, y: number): boolean {
-    void 0;
     return (this.cells.get(i * 10000 + j) ?? []).some((n) => Math.abs(this.nodes[n]!.y - y) <= 1.0);
   }
 

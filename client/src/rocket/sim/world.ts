@@ -1,9 +1,9 @@
 import { Vector3 } from 'three';
 import { arenaDistance, arenaNormal, ARENA } from './arena';
-import { Ball } from './ball';
+import { Ball, predictBall, predictedGoal, type BallSample } from './ball';
 import { Car, NO_CONTROLS, type Controls } from './car';
 import * as C from './constants';
-import { DEFAULT_RULES, REPLAY_EXTRA, type Rules } from './rules';
+import { DEFAULT_RULES, REPLAY_SLACK, replayDuration, type Rules } from './rules';
 
 export interface PlayerInfo {
   id: number;
@@ -21,6 +21,25 @@ export interface Stats {
   demos: number;
   touches: number;
   score: number;
+  /** Saves made from inside the goal mouth (also counted in `saves`). */
+  epicSaves: number;
+  /** Goals conceded while this player was in the match. */
+  goalsAgainst: number;
+}
+
+/** How far ahead a touch is judged to be a shot / save (seconds). */
+const SHOT_LOOKAHEAD = 1.5;
+
+interface Touch {
+  car: number;
+  team: 0 | 1;
+  t: number;
+  /** Credited as a shot on goal. */
+  shot: boolean;
+  /** The ball was heading into this player's net before the touch (epic: from inside the mouth). */
+  threat: boolean;
+  epic: boolean;
+  save: boolean;
 }
 
 export type WorldEvent =
@@ -62,7 +81,10 @@ export class World {
   events: WorldEvent[] = [];
   winner: 0 | 1 | -1 = -1;
   lastCountdownN = 4;
-  private touches: Array<{ car: number; team: 0 | 1; t: number }> = [];
+  private touches: Touch[] = [];
+  /** The current touch needs its shot / save judged (after this tick's collisions). */
+  private judgeTick = -1;
+  private readonly path: BallSample[] = [];
   private readonly extraHitTick = new Map<number, number>();
   private readonly v1 = tmp();
   private readonly v2 = tmp();
@@ -87,7 +109,7 @@ export class World {
       const car = new Car(p.id, p.team, C.carBody(p.body));
       car.rules = rules;
       this.cars.push(car);
-      this.stats.set(p.id, { goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, touches: 0, score: 0 });
+      this.stats.set(p.id, { goals: 0, assists: 0, saves: 0, shots: 0, demos: 0, touches: 0, score: 0, epicSaves: 0, goalsAgainst: 0 });
     }
     this.kickoff();
   }
@@ -162,14 +184,14 @@ export class World {
         // No clock in free play.
       } else if (!this.overtime) {
         this.clock = Math.max(0, this.clock - dt);
-        // Time's up: the match ends once the ball touches the ground (unless tied).
-        if (this.clock <= 0 && this.phase === 'play') {
+        // Time's up: the match ends (or overtime starts) once the ball touches the ground.
+        if (this.clock <= 0 && this.phase === 'play' && this.ball.pos.z < this.ball.worldRadius + 10) {
           if (this.score[0] === this.score[1]) {
             this.overtime = true;
             this.clock = 0;
             this.events.push({ k: 'overtime' });
             this.kickoff();
-          } else if (this.ball.pos.z < this.ball.worldRadius + 10) this.finish();
+          } else this.finish();
         }
       } else this.clock += dt;
     } else if (this.phase === 'goal') {
@@ -208,10 +230,13 @@ export class World {
     }
     for (const car of this.cars) if (!car.demolished) this.collideCarWorld(car);
     for (const car of this.cars) car.integrate(dt);
-    if (!ballFrozen || this.phase === 'over') this.ball.tick(dt);
+    // After the whistle the ball stays live (free play until the end screen).
+    const ballLive = !ballFrozen || this.phase === 'over';
+    if (ballLive) this.ball.tick(dt);
     if (this.ball.bounce > 250) this.events.push({ k: 'bounce', power: this.ball.bounce, x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z });
-    if (!ballFrozen) for (const car of this.cars) if (!car.demolished) this.collideCarBall(car);
+    if (ballLive) for (const car of this.cars) if (!car.demolished) this.collideCarBall(car);
     for (let i = 0; i < this.cars.length; i++) for (let j = i + 1; j < this.cars.length; j++) this.collideCars(this.cars[i]!, this.cars[j]!);
+    if (this.judgeTick === this.tickCount) this.judgeTouch();
     this.updatePads(dt);
   }
 
@@ -337,31 +362,55 @@ export class World {
         hitDir.addScaledVector(car.forward, -hitDir.dot(car.forward) * (1 - C.BALL_EXTRA_FORWARD_SCALE)).normalize();
         ball.vel.addScaledVector(hitDir, (relSpeed * C.curve(C.BALL_EXTRA_CURVE, relSpeed) * this.rules.hitPower) / Math.sqrt(this.rules.ballWeight));
       }
-      this.touch(car, relSpeed);
+      this.touch(car, relSpeed, preBallVel);
     }
     if (ball.vel.lengthSq() > this.rules.ballMaxSpeed ** 2) ball.vel.setLength(this.rules.ballMaxSpeed);
   }
 
-  private touch(car: Car, power: number): void {
+  private touch(car: Car, power: number, preVel: Vector3): void {
     const prev = this.touches[this.touches.length - 1];
     const now = this.tickCount * C.TICK;
+    const b = this.ball;
     if (!prev || prev.car !== car.id || now - prev.t > 0.2) {
-      this.touches.push({ car: car.id, team: car.team, t: now });
+      // A ball that would have crossed our line without this touch makes it a (potential) save.
+      const vel = b.vel.clone();
+      b.vel.copy(preVel);
+      const threat = this.phase === 'play' && predictedGoal(predictBall(b, SHOT_LOOKAHEAD, 1 / 30, this.path), b.radius) === 1 - car.team;
+      b.vel.copy(vel);
+      const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
+      // Epic: off the line, in the goal mouth.
+      const epic = threat && Math.abs(b.pos.x) < ARENA.goalHalfX && b.pos.z < ARENA.goalHeight && Math.abs(b.pos.y) > ARENA.halfY - 300 && Math.sign(b.pos.y) === Math.sign(ownY);
+      this.touches.push({ car: car.id, team: car.team, t: now, shot: false, threat, epic, save: false });
       if (this.touches.length > 8) this.touches.shift();
       const s = this.stats.get(car.id)!;
       s.touches++;
       s.score += 2;
-      // Save: ball heading into own goal, cleared by a defender.
-      const ownGoalY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
-      const b = this.ball;
-      if (Math.sign(b.pos.y) === Math.sign(ownGoalY) && Math.abs(b.pos.y) > 3500 && Math.abs(b.pos.x) < 1300) {
-        s.saves++;
-        s.score += 50;
-      }
     }
-    this.ball.lastTouch = car.id;
-    this.ball.lastTouchTeam = car.team;
-    this.events.push({ k: 'touch', car: car.id, power, x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z });
+    // Judge the shot / save once this tick's collisions are done (at most every other tick).
+    this.judgeTick = this.tickCount;
+    b.lastTouch = car.id;
+    b.lastTouchTeam = car.team;
+    this.events.push({ k: 'touch', car: car.id, power, x: b.pos.x, y: b.pos.y, z: b.pos.z });
+  }
+
+  /** Shot: the ball now heads into the enemy net. Save: a threatened ball no longer heads into ours. */
+  private judgeTouch(): void {
+    const touch = this.touches[this.touches.length - 1];
+    if (!touch || this.phase !== 'play' || (touch.shot && (touch.save || !touch.threat))) return;
+    const b = this.ball;
+    const goal = predictedGoal(predictBall(b, SHOT_LOOKAHEAD, 1 / 30, this.path), b.radius);
+    const s = this.stats.get(touch.car)!;
+    if (!touch.shot && goal === touch.team) {
+      touch.shot = true;
+      s.shots++;
+      s.score += 10;
+    }
+    if (touch.threat && !touch.save && goal !== 1 - touch.team) {
+      touch.save = true;
+      s.saves++;
+      if (touch.epic) s.epicSaves++;
+      s.score += touch.epic ? 75 : 50;
+    }
   }
 
   /** Wheels touching the ball while airborne give back the flip. */
@@ -436,7 +485,7 @@ export class World {
       else {
         const speed = att.forwardSpeed;
         const flat = dir.clone().setZ(0).normalize();
-        const k = 0.6 * this.rules.bumpStrength;
+        const k = this.rules.bumpStrength;
         vic.vel.addScaledVector(flat, C.curve(vic.onGround ? C.BUMP_GROUND_CURVE : C.BUMP_AIR_CURVE, speed) * k);
         vic.vel.z += C.curve(C.BUMP_UP_CURVE, speed) * k;
         this.events.push({ k: 'bump', car: att.id, other: vic.id });
@@ -491,7 +540,11 @@ export class World {
     if (scorer) {
       const s = this.stats.get(scorer.car)!;
       s.goals++;
-      s.shots++;
+      // A goal is always a shot on goal (unless the touch was already judged one).
+      if (!scorer.shot) {
+        scorer.shot = true;
+        s.shots++;
+      }
       s.score += 100;
     }
     if (assist) {
@@ -499,10 +552,11 @@ export class World {
       s.assists++;
       s.score += 50;
     }
+    for (const p of this.players) if (p.team !== team) this.stats.get(p.id)!.goalsAgainst++;
     this.events.push({ k: 'goal', team, scorer: scorer?.car ?? -1, assist: assist?.car ?? -1, speed: this.ball.vel.length(), x: b.x, y: b.y, z: b.z });
     this.phase = 'goal';
     // The goal phase also covers the replay (clients show it; the server just waits).
-    this.phaseTimer = this.rules.goalDelay + (this.freePlay || this.rules.replayTime <= 0 ? 0 : this.rules.replayTime + REPLAY_EXTRA);
+    this.phaseTimer = this.rules.goalDelay + (this.freePlay || this.rules.replayTime <= 0 ? 0 : replayDuration(this.rules.replayTime) + REPLAY_SLACK);
     this.touches = [];
     this.goalExplosion(b);
   }

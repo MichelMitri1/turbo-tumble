@@ -5,7 +5,7 @@ import type { View } from '../view';
 
 /** Kitten Kaboom online protocol (shared by browser and server). */
 export const KK_ROOM = 'kittens';
-export const KK_VERSION = 1;
+export const KK_VERSION = 2;
 export const KK_MAX_PLAYERS = 5;
 
 export const KkMsg = {
@@ -21,6 +21,12 @@ export interface KkConfig {
   deck: DeckId;
   bots: number;
   botLevel: BotLevel;
+  /** House-rule switch: keep the whole deck with 2–3 players. */
+  fullDeck: boolean;
+  /** Any matching pair steals (current rulebook) vs cat cards only (classic). */
+  anyPairs: boolean;
+  /** Imploding Kittens expansion pack. */
+  imploding: boolean;
 }
 
 export interface KkLobby {

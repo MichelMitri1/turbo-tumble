@@ -25,8 +25,19 @@ const WORLD_UP = new Vector3(0, 1, 0);
 /** Drift charge (s) needed for each mini-turbo stage, and the boost each stage gives. */
 export const DRIFT_STAGE_CHARGE = [0, 0.75, 1.65, 2.7] as const;
 const MINI_TURBO_DURATION = [0, 0.65, 1.15, 1.75] as const;
-const MINI_TURBO_POWER = 7;
+/** Extra top speed per stage: each colour is a felt step up, not just a longer burst. */
+const MINI_TURBO_POWER = [0, 6, 7.5, 9] as const;
 const MIN_DRIFT_SPEED = 9;
+
+/** Off any lip (not just ramps): leave the ground faster than this and a trick is allowed… */
+const LIP_TRICK_SPEED = 15;
+/** …and it pays out if the kart stays airborne at least this long. */
+const LIP_TRICK_AIR = 0.25;
+/** Falling off the course: the pickup carrier lowers the kart back onto the road. */
+export const LIFT_TIME = 1.5;
+export const LIFT_HEIGHT = 5.5;
+/** Pickup drop point stays this far (m) before the start of a gap. */
+const GAP_MARGIN = 8;
 
 /** Durations of hit reactions (s). */
 export const HIT_DURATION: Record<HitKind, number> = { spin: 1.15, tumble: 1.45, squish: 2.4 };
@@ -70,6 +81,7 @@ export class KartSimulation {
     s.airTime = 0;
     s.jumpCooldown = 0;
     s.jumpFlight = s.jumpTrick = false;
+    s.lipSpeed = s.liftTimer = 0;
     s.slipstreamCharge = s.slipstreamTimer = s.slipstreamCooldown = 0;
     s.trackIndex = -1;
     s.grounded = false;
@@ -89,9 +101,14 @@ export class KartSimulation {
     ev.driftStarted = false;
     ev.driftStageUp = 0;
     ev.miniTurbo = 0;
+    ev.tricked = false;
     ev.hit = null;
 
     this.tickTimers(dt);
+    if (s.liftTimer > 0) {
+      this.carry(dt);
+      return;
+    }
     const stunned = isStunned(s);
 
     // --- Steering input smoothing (keyboard gets a short ramp, analog stays crisp).
@@ -102,10 +119,15 @@ export class KartSimulation {
     // --- Hop on drift press (grounded only).
     const driftPressed = input.drift && !s.driftHeld;
     s.driftHeld = input.drift;
-    if (driftPressed && !s.grounded && s.jumpFlight && !stunned) s.jumpTrick = true;
+    const canTrick = s.jumpFlight || s.lipSpeed > LIP_TRICK_SPEED;
+    if (driftPressed && !s.grounded && canTrick && !s.jumpTrick && !stunned) {
+      s.jumpTrick = true;
+      ev.tricked = true;
+    }
     if (driftPressed && s.grounded && !stunned) {
       s.velocity.addScaledVector(s.up, this.stats.hopSpeed);
       s.grounded = false;
+      s.lipSpeed = 0;
       ev.hopped = true;
     }
     this.updateDrift(input, stunned);
@@ -115,14 +137,16 @@ export class KartSimulation {
 
     this.integrateAgainstWalls(dt);
     this.probeGround(false);
+    // A drift can start on the very tick a hop lands.
+    if (ev.landed > 0 && !s.drifting) this.updateDrift(input, isStunned(s));
     this.updateTrackLocation();
     this.launchFromRamp();
     this.updateStuck(input, dt);
 
-    // Fell into the void (well below the road) → back to the last checkpoint.
+    // Fell into the void (well below the road) → carried back to just before where we left it.
     const roadY = s.trackIndex >= 0 ? this.track.samples[s.trackIndex]!.position.y : 0;
     const fell = s.position.y < KILL_PLANE_Y || (!s.grounded && s.airTime > 0.35 && s.position.y < roadY - 14);
-    if (fell) this.respawn(s.respawnIndex >= 0 ? s.respawnIndex : s.safeTrackIndex - 3);
+    if (fell) this.pickUp();
     else if (s.offTrackTicks > 60 * 6 || s.stuckTime > 4) this.respawn();
   }
 
@@ -140,6 +164,9 @@ export class KartSimulation {
     s.shrinkTimer = dec(s.shrinkTimer);
     s.rocketTimer = dec(s.rocketTimer);
     s.inkTimer = dec(s.inkTimer);
+    s.ghostTimer = dec(s.ghostTimer);
+    s.megaTimer = dec(s.megaTimer);
+    s.featherTimer = dec(s.featherTimer);
   }
 
   /** Hold drift + steer → slide; charge builds sparks; releasing fires a mini-turbo. */
@@ -166,7 +193,7 @@ export class KartSimulation {
   private endDrift(fireTurbo: boolean): void {
     const s = this.state;
     if (fireTurbo && s.driftStage > 0) {
-      this.giveBoost(MINI_TURBO_DURATION[s.driftStage]!, MINI_TURBO_POWER);
+      this.giveBoost(MINI_TURBO_DURATION[s.driftStage]!, MINI_TURBO_POWER[s.driftStage]!);
       this.events.miniTurbo = s.driftStage;
     }
     s.drifting = false;
@@ -186,6 +213,15 @@ export class KartSimulation {
   applyHit(kind: HitKind): boolean {
     const s = this.state;
     if (isInvulnerable(s)) return false;
+    if (this.onGapRampApproach()) {
+      // Forgiveness: a hit on the run-up to a gap jump would mean a certain fall.
+      // It still costs coins and some speed, but keeps the kart on its line.
+      s.coins = Math.max(0, s.coins - 3);
+      s.velocity.multiplyScalar(0.85);
+      s.jumpTrick = false;
+      this.events.hit = kind;
+      return true;
+    }
     this.endDrift(false);
     s.boostTimer = 0;
     s.boostPower = 0;
@@ -216,7 +252,7 @@ export class KartSimulation {
     const s = this.state;
     const st = this.stats;
     const surf = SURFACE_PARAMS[s.surface];
-    const powered = s.boostTimer > 0 || s.invincibleTimer > 0 || s.rocketTimer > 0;
+    const powered = s.boostTimer > 0 || s.invincibleTimer > 0 || s.rocketTimer > 0 || s.megaTimer > 0;
     // Boosts and invincibility ignore off-road slowdown.
     const speedMul = powered ? Math.max(1, surf.speedMul) : surf.speedMul;
     const gripMul = powered ? Math.max(1, surf.gripMul) : surf.gripMul;
@@ -224,6 +260,7 @@ export class KartSimulation {
     if (s.shrinkTimer > 0) vmax *= 0.7;
     if (s.squishTimer > 0) vmax *= 0.45;
     if (s.invincibleTimer > 0) vmax += 4;
+    if (s.megaTimer > 0) vmax += 2.5;
     if (s.boostTimer > 0) vmax += s.boostPower;
     if (s.rocketTimer > 0) vmax = st.maxSpeed + 17;
     return { vmax, gripMul, accelBoost: powered };
@@ -381,18 +418,23 @@ export class KartSimulation {
       s.surface = hit.surface;
       if (!wasGrounded) {
         this.events.landed = Math.max(0, -vn);
-        s.airTime = 0;
-        if (s.jumpFlight && s.jumpTrick && !isStunned(s)) {
-          this.giveBoost(1.1, 7);
+        // Trick landing: the longer the flight, the longer the boost (ramps always pay at least 1.1 s).
+        if (s.jumpTrick && (s.jumpFlight || s.airTime > LIP_TRICK_AIR) && !isStunned(s)) {
+          const dur = clamp(0.55 + s.airTime * 0.75, 0.7, 1.7);
+          this.giveBoost(s.jumpFlight ? Math.max(1.1, dur) : dur, 7);
           this.events.miniTurbo = 1;
         }
+        s.airTime = 0;
         s.jumpFlight = s.jumpTrick = false;
+        s.lipSpeed = 0;
       }
       // Remove velocity into/out of the surface.
       s.velocity.addScaledVector(hit.normal, -s.velocity.dot(hit.normal));
       s.up.lerp(hit.normal, dampFactor(14, FIXED_DT)).normalize();
       this.orthonormalize();
     } else {
+      // Left the ground on its own (crest, lip, edge) rather than by hopping: trickable if fast.
+      if (wasGrounded && !force) s.lipSpeed = Math.hypot(s.velocity.x, s.velocity.z);
       s.grounded = false;
       // Never sink through the ground when falling fast.
       if (gap < 0) {
@@ -409,6 +451,19 @@ export class KartSimulation {
     s.forward.normalize();
   }
 
+  /** On the last stretch before a ramp that clears a gap (where getting knocked off line means falling). */
+  private onGapRampApproach(): boolean {
+    const def = this.track.def;
+    if (!def.gaps?.length || this.state.trackIndex < 0) return false;
+    for (const jump of def.jumps) {
+      const lip = jump.distance + jump.length;
+      if (!def.gaps.some((g) => Math.abs(g.distance - lip) < 12)) continue;
+      const ahead = this.track.wrapDistance(this.track.startDistance + lip - this.loc.splineDistance);
+      if (ahead < jump.length + 15 && Math.abs(this.loc.lateral - (jump.lateral ?? 0)) < jump.width / 2 + 1.5) return true;
+    }
+    return false;
+  }
+
   /** A forward crossing of the raised lip launches; driving beside it does not. */
   private launchFromRamp(): void {
     const s = this.state;
@@ -421,6 +476,15 @@ export class KartSimulation {
       if (s.position.y < lip.position.y + jump.rise - 1.3 || s.position.y > lip.position.y + jump.rise + 2 || s.forward.dot(lip.tangent) < 0.7) continue;
       this.endDrift(false);
       s.position.y = Math.max(s.position.y, lip.position.y + jump.rise + 0.12);
+      // Gap jumps: a slowed kart still gets enough run to make the far side.
+      const gapJump = this.track.def.gaps?.some((g) => Math.abs(g.distance - (jump.distance + jump.length)) < 12);
+      const flat = Math.hypot(s.velocity.x, s.velocity.z);
+      const floor = this.stats.maxSpeed * 0.75;
+      if (gapJump && flat < floor) {
+        const dir = this.v2.copy(lip.tangent).setY(0).normalize();
+        s.velocity.x = dir.x * floor;
+        s.velocity.z = dir.z * floor;
+      }
       s.velocity.y = jump.launchSpeed;
       s.grounded = false;
       s.airTime = 0;
@@ -454,6 +518,50 @@ export class KartSimulation {
       s.offTrackTicks++;
     } else {
       s.offTrackTicks = 0;
+    }
+  }
+
+  /**
+   * Fell off the course: lift the kart back over the road at the last safe point
+   * (never inside or right before a gap) and lower it down over LIFT_TIME.
+   */
+  pickUp(): void {
+    const s = this.state;
+    const track = this.track;
+    const back = Math.max(1, Math.round(4 / track.spacing));
+    let i = track.wrapIndex(s.safeTrackIndex - back);
+    // Walk back until the next GAP_MARGIN metres of road are solid.
+    const look = Math.ceil(GAP_MARGIN / track.spacing);
+    for (let guard = 0; guard < track.samples.length; guard++) {
+      let clear = true;
+      for (let k = 0; k <= look && clear; k++) if (track.samples[track.wrapIndex(i + k)]!.gap) clear = false;
+      if (clear) break;
+      i = track.wrapIndex(i - 1);
+    }
+    this.respawn(i);
+    s.liftTimer = LIFT_TIME;
+    s.respawnTimer = LIFT_TIME + 1.2;
+    s.grounded = false;
+    s.position.addScaledVector(WORLD_UP, LIFT_HEIGHT);
+  }
+
+  /** Being lowered by the pickup carrier: no control, settles onto the road. */
+  private carry(dt: number): void {
+    const s = this.state;
+    s.liftTimer = Math.max(0, s.liftTimer - dt);
+    s.velocity.set(0, 0, 0);
+    s.forwardSpeed = 0;
+    s.steer = 0;
+    s.stuckTime = 0;
+    s.offTrackTicks = 0;
+    const hit = this.physics.raycastGround(this.v1.copy(s.position).addScaledVector(WORLD_UP, 1), PROBE_LENGTH, this.hit);
+    const ground = hit ? hit.point.y : s.position.y - LIFT_HEIGHT;
+    const k = s.liftTimer / LIFT_TIME;
+    // Ease in: hang a moment, then lower smoothly.
+    s.position.y = ground + 0.15 + LIFT_HEIGHT * k * k * (3 - 2 * k);
+    if (s.liftTimer === 0) {
+      s.airTime = 0;
+      this.probeGround(true);
     }
   }
 

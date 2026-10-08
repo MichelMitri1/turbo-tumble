@@ -15,6 +15,8 @@ interface Member {
   loadout: Loadout;
   camos: Record<string, string>;
   connected: boolean;
+  /** Round-trip time the client reports (ms). */
+  ping: number;
 }
 
 const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge'];
@@ -111,7 +113,11 @@ export class FpsRoom extends Room {
       const s = this.game?.soldier(c.sessionId);
       if (s) s.nextLoadout = lo;
     });
-    this.onMessage(FpMsg.Ping, (c, m: { t: number }) => c.send(FpMsg.Ping, { t: m?.t ?? 0 }));
+    this.onMessage(FpMsg.Ping, (c, m: { t: number; rtt?: number }) => {
+      const mem = this.members.get(c.sessionId);
+      if (mem && Number.isFinite(m?.rtt)) mem.ping = Math.max(0, Math.min(9999, Math.round(m.rtt!)));
+      c.send(FpMsg.Ping, { t: m?.t ?? 0 });
+    });
     this.setSimulationInterval((ms) => this.update(ms / 1000), 1000 / 60);
     console.log(`[zerohour ${this.roomId}] created`);
   }
@@ -123,23 +129,25 @@ export class FpsRoom extends Room {
       const t0 = this.game.soldiers.filter((s) => s.team === 0 && !s.bot).length;
       const t1 = this.game.soldiers.filter((s) => s.team === 1 && !s.bot).length;
       const team: 0 | 1 = t0 <= t1 ? 0 : 1;
-      const m: Member = { id: client.sessionId, name: clean(o?.name), team, loadout: safeLoadout(o?.loadout), camos: o?.camos ?? {}, connected: true };
+      const m: Member = { id: client.sessionId, name: clean(o?.name), team, loadout: safeLoadout(o?.loadout), camos: o?.camos ?? {}, connected: true, ping: 0 };
       this.members.set(client.sessionId, m);
       // Replace a bot on that team if there is one.
       const bot = this.game.soldiers.find((s) => s.bot && s.team === team);
       if (bot) this.game.remove(bot.id);
-      const s = this.game.add({ id: m.id, name: m.name, team, bot: false, loadout: m.loadout, camos: m.camos });
+      const setup: SoldierSetup = { id: m.id, name: m.name, team, bot: false, loadout: m.loadout, camos: m.camos };
+      const s = this.game.add(setup);
       s.remote = true;
       this.ids = this.game.soldiers.map((x) => x.id);
       this.sendLobby();
-      // Everyone needs the new roster.
-      this.broadcast(FpMsg.Begin, this.beginMsg());
+      // Only the newcomer starts a match; everyone else just mirrors the roster change (same order, so snapshot indices agree).
+      client.send(FpMsg.Begin, this.beginMsg());
+      this.broadcast(FpMsg.Events, [{ k: 'joined', who: setup, removed: bot?.id ?? '' } satisfies GameEvent], { except: client });
       return;
     }
     if (this.members.size >= FP_MAX) throw new ServerError(4002, 'Lobby full.');
     const t0 = [...this.members.values()].filter((m) => m.team === 0).length;
     const team: 0 | 1 = t0 <= this.members.size - t0 ? 0 : 1;
-    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, loadout: safeLoadout(o?.loadout), camos: o?.camos ?? {}, connected: true });
+    this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, loadout: safeLoadout(o?.loadout), camos: o?.camos ?? {}, connected: true, ping: 0 });
     if (!this.hostId) this.hostId = client.sessionId;
     this.sendLobby();
   }
@@ -272,7 +280,7 @@ export class FpsRoom extends Room {
       nades: g.grenades.map((n) => [n.id, r(n.x), r(n.y), r(n.z)] as [number, number, number, number]),
       uav: [...g.uav.entries()].filter(([, t]) => t > g.time).map(([k, t]) => [k, r(t - g.time, 10)] as [string, number]),
       barrels: g.barrels.map((b) => (b.alive ? 1 : 0)),
-      board: sendBoard ? g.soldiers.map((s) => [this.ids.indexOf(s.id), s.kills, s.deaths, s.assists, s.score]) : undefined,
+      board: sendBoard ? g.soldiers.map((s) => [this.ids.indexOf(s.id), s.kills, s.deaths, s.assists, s.score, this.members.get(s.id)?.ping ?? 0]) : undefined,
     };
     for (const client of this.clients) {
       const s = g.soldier(client.sessionId);

@@ -20,6 +20,8 @@ import { buildDecor } from './decor/DecorBuilder';
 import { getLandmark } from './landmarks';
 import { Water } from '../rendering/Water';
 import { buildPlanets, buildShortcutTrails, buildStreams } from './builders/FeatureBuilder';
+import { kits, type KitId } from './kits';
+import { THEME_KITS } from './builders/skins';
 
 export interface TrackLoadDeps {
   assets: AssetLoader;
@@ -56,6 +58,13 @@ export function requiredModels(def: TrackDefinition): string[] {
   return [...ids];
 }
 
+/** Kenney kits a track's set pieces and themed obstacles use. */
+export function requiredKits(def: TrackDefinition): KitId[] {
+  const ids = new Set<KitId>(THEME_KITS[def.theme] ?? []);
+  def.decor.landmarks.forEach((l) => getLandmark(l.type).kits?.forEach((k) => ids.add(k)));
+  return [...ids];
+}
+
 const nextFrame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()));
 
 /** Build colliders + visuals for a track. Yields between stages so the loading UI stays live. */
@@ -64,7 +73,10 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
   const path = new TrackPath(def);
   const terrain = new TerrainField(path, def.terrain);
 
-  await deps.assets.loadModels(requiredModels(def), (done, total) => onProgress(0.05 + 0.4 * (done / Math.max(1, total)), 'Unpacking scenery'));
+  await Promise.all([
+    deps.assets.loadModels(requiredModels(def), (done, total) => onProgress(0.05 + 0.4 * (done / Math.max(1, total)), 'Unpacking scenery')),
+    kits.load(requiredKits(def)),
+  ]);
 
   const root = new Group();
   root.name = `track:${def.id}`;
@@ -73,6 +85,7 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
     path,
     terrain,
     assets: deps.assets,
+    kits,
     physics: deps.physics,
     graphics: deps.graphics,
     root,
@@ -99,13 +112,26 @@ export async function loadTrack(def: TrackDefinition, deps: TrackLoadDeps, onPro
   buildJumps(ctx);
   buildStreams(ctx);
   buildShortcutTrails(ctx);
-  if (def.space && def.theme === 'space') buildPlanets(ctx);
+  if (def.space && def.theme !== 'sky') buildPlanets(ctx);
   if (def.terrain.waterLevel !== null) {
     for (const lake of def.terrain.lakes) {
       // Sized to the lake's carved basin (shore blend reaches ~1.6× the radii).
       const size = Math.max(lake.radiusX, lake.radiusZ) * 3.4;
       const liquid = def.terrain.liquid;
       const water = new Water(def.terrain.waterLevel, lake.x, lake.z, size, liquid?.color, liquid ?? {});
+      const along = Math.max(lake.radiusX, lake.radiusZ);
+      const across = Math.min(lake.radiusX, lake.radiusZ);
+      if (along > across * 2) {
+        // Open sea (courseFactory `sea`): a plane reaching from the near shore out
+        // past the horizon, so low ground on the track side never floods.
+        const alongX = lake.radiusX > lake.radiusZ;
+        const out = alongX ? Math.sign(lake.z - terrain.centerZ) || 1 : Math.sign(lake.x - terrain.centerX) || 1;
+        const reach = 2400;
+        water.mesh.scale.set(alongX ? 2400 / size : reach / size, 1, alongX ? reach / size : 2400 / size);
+        const shift = reach / 2 - across * 0.95;
+        if (alongX) water.mesh.position.z = lake.z + out * shift;
+        else water.mesh.position.x = lake.x + out * shift;
+      }
       root.add(water.mesh);
       ctx.updatables.push({ update: (_dt, time) => water.update(time) });
     }

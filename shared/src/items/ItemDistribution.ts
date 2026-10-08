@@ -25,12 +25,15 @@ const TABLE: Record<ItemId, [number, number, number, number, number]> = {
   rang: [0, 5, 7, 5, 3],
   snapper: [0, 3, 6, 6, 4],
   paint: [0, 4, 8, 8, 6],
-  octo: [0, 0, 3, 6, 8],
-  crownBuster: [0, 1, 6, 12, 12],
+  octo: [0, 0, 1, 3, 5],
+  crownBuster: [0, 0, 2, 5, 6],
   prism: [0, 0, 4, 12, 16],
   zap: [0, 0, 2, 8, 14],
   jetRocket: [0, 0, 1, 8, 16],
   quake: [0, 1, 4, 8, 8],
+  phantom: [0, 3, 4, 3, 1],
+  giant: [0, 0, 2, 4, 5],
+  feather: [3, 4, 3, 1, 0],
 };
 
 export interface RollContext {

@@ -41,3 +41,61 @@ export function sampleRange(ctx: BuildContext, centerLapDistance: number, length
   const first = Math.round(path.wrapDistance(start) / path.spacing);
   return Array.from({ length: count }, (_, k) => path.wrapIndex(first + k));
 }
+
+/** Distance from (x, z) to the nearest wall line of any part of the track (negative = on it). */
+export function roadClearance(ctx: BuildContext, x: number, z: number): number {
+  let best = Infinity;
+  const s = ctx.path.samples;
+  for (let i = 0; i < s.length; i += 2) {
+    const p = s[i]!;
+    const d = Math.hypot(p.position.x - x, p.position.z - z) - p.wallOffset;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * Nearest spot to `from` where a set piece of `radius` stands clear of every road
+ * (by `margin`) and of other landmarks' footprints: walks outward along `dir`
+ * first, then spirals. Returns null when nothing fits within `maxDist`.
+ */
+export function findClearSpot(ctx: BuildContext, from: Vector3, radius: number, opts: { dir?: Vector3; margin?: number; maxDist?: number } = {}): Vector3 | null {
+  const margin = opts.margin ?? 4;
+  const maxDist = opts.maxDist ?? 260;
+  const ok = (x: number, z: number): boolean =>
+    roadClearance(ctx, x, z) > radius + margin && !ctx.footprints.some((f) => Math.hypot(f.x - x, f.z - z) < f.r + radius * 0.8);
+  const at = (x: number, z: number): Vector3 => new Vector3(x, ctx.def.space ? from.y : ctx.terrain.sample(x, z), z);
+  if (opts.dir) {
+    const d = opts.dir.clone().setY(0).normalize();
+    for (let k = 0; k <= maxDist; k += 6) {
+      const x = from.x + d.x * k;
+      const z = from.z + d.z * k;
+      if (ok(x, z)) return at(x, z);
+    }
+  }
+  for (let r = 0; r <= maxDist; r += 8) {
+    const steps = Math.max(1, Math.round((2 * Math.PI * r) / 10));
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const x = from.x + Math.cos(a) * r;
+      const z = from.z + Math.sin(a) * r;
+      if (ok(x, z)) return at(x, z);
+    }
+  }
+  return null;
+}
+
+/**
+ * Where a big set piece goes: beside the lap at `p.anchor` (pushed out from the
+ * wall until it clears every road), or at `p.position`. Reserves its footprint.
+ */
+export function placeSetPiece(ctx: BuildContext, p: LandmarkPlacement, radius: number, margin = 4): ResolvedPlacement | null {
+  const r = resolvePlacement(ctx, p);
+  const dir = r.frame && r.side ? r.frame.sample.flatRight.clone().multiplyScalar(r.side) : undefined;
+  const spot = findClearSpot(ctx, r.position, radius, { dir, margin });
+  if (!spot) return null;
+  ctx.footprints.push({ x: spot.x, z: spot.z, r: radius });
+  // Face back towards the track point it was anchored to.
+  const yaw = r.frame ? Math.atan2(r.frame.position.x - spot.x, r.frame.position.z - spot.z) + ((p.yaw ?? 0) * Math.PI) / 180 : r.yaw;
+  return { ...r, position: spot, yaw };
+}

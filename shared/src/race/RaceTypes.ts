@@ -26,6 +26,11 @@ export interface ItemSlot {
   /** Item button state last tick (edge detection). */
   pressed: boolean;
   cooldown: number;
+  /** Second slot (double item slot): moves up when the front item is used up. */
+  reserve: ItemId | null;
+  /** Roulette for the second slot (a box hit while the front slot is busy). */
+  reserveRoulette: number;
+  reservePending: ItemId | null;
 }
 
 export interface RacerProgress {
@@ -85,6 +90,7 @@ export type RaceEvent =
   | { type: 'slipstream'; racer: number }
   | { type: 'jump'; racer: number }
   | { type: 'chomp'; racer: number; position: V3 }
+  | { type: 'steal'; racer: number; from: number; item: ItemId }
   | { type: 'entityGone'; kind: string; position: V3 }
   | { type: 'bump'; a: number; b: number; impact: number; position: V3 }
   | { type: 'lap'; racer: number; lap: number; lapTime: number }
@@ -107,7 +113,7 @@ export function v3(v: Vector3): V3 {
 }
 
 export function createItemSlot(): ItemSlot {
-  return { item: null, uses: 0, roulette: 0, pending: null, heldEntity: -1, orbit: [], timer: 0, timedItem: null, octo: [], pressed: false, cooldown: 0 };
+  return { item: null, uses: 0, roulette: 0, pending: null, heldEntity: -1, orbit: [], timer: 0, timedItem: null, octo: [], pressed: false, cooldown: 0, reserve: null, reserveRoulette: 0, reservePending: null };
 }
 
 export function createProgress(): RacerProgress {

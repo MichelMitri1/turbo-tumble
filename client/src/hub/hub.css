@@ -63,9 +63,12 @@ a.hub-card:active { transform: translateY(0); box-shadow: 0 4px 0 rgba(0, 0, 0, 
     linear-gradient(135deg, var(--from), var(--to));
   border-bottom: 4px solid var(--white);
 }
+.hub-card__art { overflow: hidden; }
+.hub-card__shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 0.35s ease; }
+a.hub-card:hover .hub-card__shot, a.hub-card:focus .hub-card__shot { transform: scale(1.06); }
 .hub-card__emoji { font-size: 84px; filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.3)); transition: transform 0.2s ease; }
 a.hub-card:hover .hub-card__emoji, a.hub-card:focus .hub-card__emoji { transform: scale(1.12) rotate(-6deg); }
-.hub-card__badge { position: absolute; top: 12px; right: 12px; padding: 4px 10px; border-radius: 999px; background: var(--ink); font-weight: 900; font-size: 12px; letter-spacing: 0.15em; }
+.hub-card__badge { position: absolute; z-index: 1; top: 12px; right: 12px; padding: 4px 10px; border-radius: 999px; background: var(--ink); font-weight: 900; font-size: 12px; letter-spacing: 0.15em; }
 
 .hub-card__body { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 18px; }
 .hub-card__title { margin: 0; font-size: 30px; color: var(--yellow); }
@@ -85,4 +88,4 @@ a.hub-card:hover .hub-card__emoji, a.hub-card:focus .hub-card__emoji { transform
 .hub-footer { margin-top: auto; text-align: center; font-weight: 800; font-size: 13px; opacity: 0.6; }
 
 @media (hover: none) { .hub-footer { display: none; } }
-@media (prefers-reduced-motion: reduce) { .hub-card, .hub-card__emoji { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .hub-card, .hub-card__emoji, .hub-card__shot { transition: none; } }

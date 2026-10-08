@@ -81,6 +81,8 @@ export interface Soldier {
   remote: boolean;
   /** Class picked mid-match: applied at the next spawn. */
   nextLoadout?: Loadout;
+  /** Round-trip time in ms (online humans; from the server's scoreboard). */
+  ping?: number;
 }
 
 export interface Grenade {
@@ -157,6 +159,8 @@ export type GameEvent =
   | { k: 'flag'; flag: number; team: -1 | 0 | 1; by: string[] }
   | { k: 'tag'; who: string; confirmed: boolean }
   | { k: 'over'; winner: -1 | 0 | 1; top: string }
+  /** Online: someone joined mid-match (replacing `removed`, a bot, if any). */
+  | { k: 'joined'; who: SoldierSetup; removed: string }
   | { k: 'timeLeft'; s: number };
 
 export interface GameOptions {
@@ -339,12 +343,20 @@ export class Game {
         best = p;
       }
     }
-    // Nudge off anyone already standing there.
+    // Nudge off anyone already standing there: sideways along the spawn's facing (never into someone's view), then behind.
     let x = best.x;
     let z = best.z;
-    for (let k = 0; k < 8 && this.soldiers.some((o) => o !== s && o.alive && Math.hypot(o.m.x - x, o.m.z - z) < 0.8); k++) {
-      x = best.x + Math.cos(k * 1.3) * (0.9 + k * 0.3);
-      z = best.z + Math.sin(k * 1.3) * (0.9 + k * 0.3);
+    const rx = Math.cos(best.yaw);
+    const rz = -Math.sin(best.yaw);
+    for (let k = 1; k <= 8 && this.soldiers.some((o) => o !== s && o.alive && Math.hypot(o.m.x - x, o.m.z - z) < 0.8); k++) {
+      const side = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 1.1;
+      const back = k > 6 ? 1.2 : 0;
+      x = best.x + rx * side + Math.sin(best.yaw) * back;
+      z = best.z + rz * side + Math.cos(best.yaw) * back;
+      if (this.level.blocked(x - P.radius, best.y + 0.1, z - P.radius, x + P.radius, best.y + P.height, z + P.radius)) {
+        x = best.x;
+        z = best.z;
+      }
     }
     if (s.nextLoadout) {
       s.loadout = s.nextLoadout;
@@ -501,8 +513,8 @@ export class Game {
     const w = this.weapon(s).def;
     const moving = Math.hypot(s.m.vx, s.m.vz) > 1 ? 1.25 : 1;
     const air = s.m.onGround ? 1 : 2;
-    let hip = w.hip * moving * air * (s.m.crouched ? 0.8 : 1) * (this.has(s, 'steady') ? 0.65 : 1);
-    if (this.weapon(s).att.under === 'laser') hip *= 1;
+    // The tac laser is already in the def (applyAttachments: hip × 0.7).
+    const hip = w.hip * moving * air * (s.m.crouched ? 0.8 : 1) * (this.has(s, 'steady') ? 0.65 : 1);
     const deg = hip + (w.adsSpread - hip) * s.adsT;
     return (deg * Math.PI) / 180;
   }

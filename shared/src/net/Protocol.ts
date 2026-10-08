@@ -5,8 +5,8 @@ import type { RaceEvent } from '../race/RaceTypes';
 import type { RacerSetup } from '../race/RaceSimulation';
 
 /** Bumped whenever the wire format changes; mismatched clients are refused. */
-export const PROTOCOL_VERSION = 2;
-export const DEFAULT_SERVER_PORT = 2567;
+export const PROTOCOL_VERSION = 3;
+export { DEFAULT_SERVER_PORT } from './port';
 export const ROOM_NAME = 'race';
 
 /** Snapshots go out every N simulation ticks (60 Hz / 2 = 30 Hz). */

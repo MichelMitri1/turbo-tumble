@@ -48,6 +48,7 @@ export function copyEntity(src: ItemEntity, out: ItemEntity): void {
   out.position.copy(src.position);
   out.velocity.copy(src.velocity);
   out.owner = src.owner;
+  out.target = src.target;
   out.age = src.age;
   out.radius = src.radius;
   out.attach = src.attach;

@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_PORT } from '@shared/net/Protocol';
+import { DEFAULT_SERVER_PORT } from '@shared/net/port';
 
 /**
  * Where the game server lives: ?server=host:port, else the page's host on :2567

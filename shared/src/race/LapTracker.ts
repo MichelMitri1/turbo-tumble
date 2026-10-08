@@ -106,13 +106,18 @@ export class LapTracker {
           p.lap--;
           p.nextCheckpoint = N;
         }
-      } else if (p.nextCheckpoint < N) {
-        const cp = this.checkpoints[p.nextCheckpoint]!;
-        if (prev < cp && d >= cp && d - prev < CROSS_WINDOW) p.nextCheckpoint++;
+      } else {
+        // Several checkpoints can sit within one tick's travel (boosts, close spacing): take them all.
+        while (p.nextCheckpoint < N) {
+          const cp = this.checkpoints[p.nextCheckpoint]!;
+          if (prev < cp && d >= cp && d - prev < CROSS_WINDOW) p.nextCheckpoint++;
+          else break;
+        }
       }
-      if (p.nextCheckpoint >= 2 && p.nextCheckpoint <= N) {
+      while (p.nextCheckpoint >= 2 && p.nextCheckpoint <= N) {
         const back = this.checkpoints[p.nextCheckpoint - 1]!;
         if (prev >= back && d < back && prev - d < CROSS_WINDOW) p.nextCheckpoint--;
+        else break;
       }
     }
 

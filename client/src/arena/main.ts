@@ -64,19 +64,26 @@ root.innerHTML = `
 
   <section class="cf-hud hidden" id="hud">
     <div class="cf-hud__top">
-      <div class="cf-player red"><div class="cf-player__name cf-display" id="rival-name">RIVAL</div><div class="cf-crowns" id="red-crowns"></div></div>
+      <div class="cf-player red"><div class="cf-player__name cf-display" id="rival-name">RIVAL</div><div class="cf-crowns" id="red-crowns"></div><div class="cf-foe-elixir" id="foe-elixir" title="Rival's elixir (estimate)"></div></div>
       <div class="cf-timer"><small id="timer-label">TIME LEFT</small><b class="cf-display" id="timer">3:00</b><em id="mult"></em></div>
     </div>
+    <div class="cf-vignette" id="vignette"></div>
+    <div class="cf-ot cf-display hidden" id="ot-flag">OVERTIME</div>
+    <div class="cf-tip hidden" id="card-tip"></div>
     <div class="cf-banner" id="banner"></div>
     <div class="cf-count cf-display" id="count"></div>
     <div class="cf-hud__bottom">
-      <div class="cf-player blue"><div class="cf-crowns" id="blue-crowns"></div><div class="cf-player__name cf-display">YOU</div></div>
+      <div class="cf-hud__row">
+        <div class="cf-player blue"><div class="cf-crowns" id="blue-crowns"></div><div class="cf-player__name cf-display">YOU</div></div>
+        <div class="cf-emotes" id="emotes">${['GG!', 'HA HA!', 'GRR!', 'WOW!'].map((t, i) => `<button data-emote="${i}" title="Shift+${i + 1}">${t}</button>`).join('')}</div>
+      </div>
       <div class="cf-hand-panel" id="hand-panel">
-        <div class="cf-next"><small>NEXT</small><div id="next"></div></div>
+        <div class="cf-next"><small id="next-label">NEXT</small><div id="next"></div></div>
         <div class="cf-hand" id="hand"></div>
         <div class="cf-elixir">
           <div class="cf-elixir__drop cf-display" id="elixir-num">5</div>
-          <div class="cf-elixir__bar"><div class="cf-elixir__fill" id="elixir-fill"></div><div class="cf-elixir__ticks">${'<i></i>'.repeat(9)}</div></div>
+          <div class="cf-elixir__bar" id="elixir-bar"><div class="cf-elixir__spent" id="elixir-spent"></div><div class="cf-elixir__fill" id="elixir-fill"></div><div class="cf-elixir__ticks">${'<i></i>'.repeat(9)}</div></div>
+          <div class="cf-elixir__pops" id="elixir-pops"></div>
         </div>
       </div>
     </div>
@@ -92,6 +99,7 @@ root.innerHTML = `
         <button class="cf-chip-btn" id="b-close">✕</button>
       </header>
       <div class="cf-deckrow cf-deckrow--slots" id="b-deck"></div>
+      <div class="cf-deckinfo"><span id="b-deckstats"></span><span class="cf-deckinfo__code"><button class="cf-chip-btn" id="b-copy">Copy code</button><button class="cf-chip-btn" id="b-paste">Paste code</button></span></div>
       <div class="cf-builder__filters">
         <input id="b-search" placeholder="Search cards…" />
         <div class="cf-seg" id="b-type"><button data-v="" class="on">All</button><button data-v="troop">Troops</button><button data-v="building">Buildings</button><button data-v="spell">Spells</button></div>
@@ -183,6 +191,8 @@ function renderBuilder(): void {
   $('#b-deck').innerHTML = slots.join('');
   $('#b-count').textContent = `${deck.length}/8`;
   $('#b-avg').textContent = `Avg ${avg(deck).toFixed(1)} elixir`;
+  $('#b-deckstats').innerHTML = deckStats(deck);
+  ($('#b-copy') as HTMLButtonElement).disabled = deck.length !== 8;
   ($('#b-save') as HTMLButtonElement).disabled = deck.length !== 8;
   const list = CARDS.filter((c) => (!filter.q || c.name.toLowerCase().includes(filter.q)) && (!filter.type || c.type === filter.type) && (!filter.rarity || c.rarity === filter.rarity)).sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name));
   $('#b-grid').innerHTML = list.map((c) => cardHtml(c.id, { cls: deck.includes(c.id) ? 'chosen' : '' })).join('');
@@ -190,8 +200,8 @@ function renderBuilder(): void {
   renderInfo(infoCard ?? deck[0] ?? 'knight');
 }
 
-function renderInfo(id: string): void {
-  infoCard = id;
+/** Rarity line, blurb and stat grid of a card (deck builder info + battle preview). */
+function cardStatsHtml(id: string): string {
   const c = getCard(id);
   const stat = (k: string, v: string | number) => `<div><small>${k}</small><b>${v}</b></div>`;
   const speed = { none: '—', slow: 'Slow', medium: 'Medium', fast: 'Fast', veryFast: 'Very fast' }[c.speed];
@@ -208,8 +218,36 @@ function renderInfo(id: string): void {
           c.damage ? stat('Targets', targets) : '',
           c.count > 1 ? stat('Count', `×${c.count}`) : '',
         ];
-  $('#b-info').innerHTML = `${cardHtml(id)}<h3 class="cf-display">${c.name}</h3><p class="cf-info__rar" style="color:${RARITY_COLORS[c.rarity][0]}">${c.rarity} ${c.type}</p><p>${c.blurb}</p><div class="cf-info__stats">${stats.join('')}</div>`;
+  return `<h3 class="cf-display">${c.name}</h3><p class="cf-info__rar" style="color:${RARITY_COLORS[c.rarity][0]}">${c.rarity} ${c.type} · ${c.cost} elixir</p><p>${c.blurb}</p><div class="cf-info__stats">${stats.join('')}</div>`;
+}
+
+function renderInfo(id: string): void {
+  infoCard = id;
+  $('#b-info').innerHTML = `${cardHtml(id)}${cardStatsHtml(id)}`;
   hydratePortraits($('#b-info'));
+}
+
+/** Avg cost, the cheapest 4-card cycle and the classic deck-building warnings. */
+function deckStats(ids: string[]): string {
+  if (!ids.length) return 'Pick 8 cards';
+  const cards = ids.map(getCard);
+  const cycle = cards.map((c) => c.cost).sort((a, b) => a - b).slice(0, 4).reduce((a, b) => a + b, 0);
+  const warn: string[] = [];
+  const winCon = cards.some((c) => c.targets === 'buildings' || c.abilities.burrow || (c.type === 'building' && c.range >= 9) || ['graveyard', 'goblin-keg'].includes(c.id));
+  if (!winCon) warn.push('No win condition');
+  if (!cards.some((c) => c.type === 'spell' && (c.spell?.damage ?? 0) > 0)) warn.push('No damage spell');
+  if (!cards.some((c) => c.type !== 'spell' && c.damage > 0 && (c.targets === 'all' || c.targets === 'air'))) warn.push('No anti-air');
+  return `Avg <b>${avg(ids).toFixed(1)}</b> · 4-card cycle <b>${ids.length >= 4 ? cycle : '–'}</b>${warn.map((w) => `<em>⚠ ${w}</em>`).join('')}`;
+}
+
+const deckCode = (ids: string[]) => btoa(ids.join(','));
+function parseDeckCode(code: string): string[] | null {
+  try {
+    const ids = [...new Set(atob(code.trim()).split(','))];
+    return ids.length === 8 && ids.every((id) => CARDS.some((c) => c.id === id)) ? ids : null;
+  } catch {
+    return null;
+  }
 }
 
 function toggleCard(id: string): void {
@@ -262,6 +300,27 @@ $('#b-random').addEventListener('click', () => {
   while (deck.length < 8) deck.push(...pick(() => true, 8 - deck.length));
   renderBuilder();
 });
+$('#b-copy').addEventListener('click', () => {
+  const code = deckCode(deck);
+  void navigator.clipboard?.writeText(code).then(
+    () => ($('#b-copy').textContent = 'Copied!'),
+    () => prompt('Deck code', code),
+  );
+  setTimeout(() => ($('#b-copy').textContent = 'Copy code'), 1400);
+});
+$('#b-paste').addEventListener('click', async () => {
+  let text = '';
+  try {
+    text = (await navigator.clipboard?.readText()) ?? '';
+  } catch {
+    /* no clipboard access */
+  }
+  const ids = parseDeckCode(text) ?? parseDeckCode(prompt('Paste a deck code') ?? '');
+  if (!ids) return audio.error();
+  deck = ids;
+  audio.play();
+  renderBuilder();
+});
 $('#b-close').addEventListener('click', () => {
   deck = BattleEngine.loadDeck();
   $('#builder').classList.add('hidden');
@@ -304,20 +363,27 @@ async function startSession(attract: boolean): Promise<void> {
     engine.countdown = 0.1;
   }
   const names = modelsFor([...engine.blue.deck, ...engine.red.deck]);
+  const fill = $('#load-fill');
   if (!attract) {
     $('#loading').classList.remove('hidden');
-    const fill = $('#load-fill');
-    await preload([...names, ...TOWER_MODELS], (d, t) => (fill.style.width = `${(d / t) * 100}%`));
-    $('#loading').classList.add('hidden');
+    await preload([...names, ...TOWER_MODELS], (d, t) => (fill.style.width = `${(d / t) * 70}%`));
   } else {
     void preload([...TOWER_MODELS, ...names]);
   }
-  session?.scene.dispose();
+  const old = session;
+  session = null;
+  old?.scene.dispose();
   const scene = new ArenaScene(engine, $('#stage'));
   scene.onEvent = (ev) => onEvent(ev, engine, attract);
+  // Build, compile and upload every model this battle can show while the loading screen is up.
+  if (!attract) {
+    await scene.warmup({ blue: engine.blue.deck, red: engine.red.deck }, (k) => (fill.style.width = `${70 + k * 30}%`));
+    $('#loading').classList.add('hidden');
+  }
   const ais = [new ArenaAI(engine, 'red', attract ? 'normal' : difficulty)];
   if (attract) ais.push(new ArenaAI(engine, 'blue', 'normal'));
   session = { engine, scene, ais, attract };
+  resetHud();
   lastCount = -1;
   selected = null;
   last = performance.now();
@@ -342,7 +408,7 @@ function frame(now: number): void {
     // Bottom hand (portrait): keep the arena above it. Side hand (landscape): full height.
     const hand = $('#hand-panel').getBoundingClientRect();
     const centred = hand.left < innerWidth / 2 && hand.right > innerWidth / 2;
-    s.scene.setReserve(centred ? 96 : 12, centred ? innerHeight - hand.top + 6 : 12);
+    s.scene.setReserve(centred ? 96 : 12, centred ? innerHeight - hand.top + 6 : 12, centred ? 0 : innerWidth - hand.left + 8);
   } else s.scene.setReserve(12, 12);
   s.scene.render();
   if (s.attract) {
@@ -350,12 +416,30 @@ function frame(now: number): void {
     if (s.engine.phase === 'ended' && s.engine.units.every((u) => !u.dead || u.kind === 'tower' || u.deadFor > 2)) void startSession(true);
     return;
   }
-  if (s.engine.phase === 'battle' || s.engine.phase === 'overtime') audio.tickMusic(dt, s.engine.multiplier > 1 ? 1 : 0);
+  const e = s.engine;
+  if (e.phase === 'battle' || e.phase === 'overtime') {
+    audio.tickMusic(dt, e.phase === 'overtime' ? 2 : e.multiplier > 1 ? 1 : 0, Math.floor(e.time / 60));
+    hud.foe = Math.min(10, hud.foe + ((dt * (s.net ? 1 : e.debug.speed)) / 2.8) * e.multiplier);
+  }
   updateHud(s.engine);
   updatePlacement();
 }
 
 let handKey = '';
+const hud = { elixir: -1, tick: -1, foe: 5, foeLast: '' };
+
+function resetHud(): void {
+  hud.elixir = -1;
+  hud.tick = -1;
+  hud.foe = 5;
+  hud.foeLast = '';
+  handKey = '';
+  $('#vignette').classList.remove('on');
+  $('#ot-flag').classList.add('hidden');
+  $('#foe-elixir').textContent = '';
+  hideTip();
+}
+
 function updateHud(e: BattleEngine): void {
   const key = `${e.blue.hand.join()}|${e.blue.next}|${selected}`;
   if (key !== handKey) {
@@ -371,6 +455,32 @@ function updateHud(e: BattleEngine): void {
   const el = e.blue.elixir;
   $('#elixir-num').textContent = String(Math.floor(el));
   $('#elixir-fill').style.width = `${el * 10}%`;
+  // Spending: the spent chunk flashes and drops out of the bar.
+  if (hud.elixir >= 0 && el < hud.elixir - 0.5) {
+    const sp = $('#elixir-spent');
+    sp.style.left = `${el * 10}%`;
+    sp.style.width = `${(hud.elixir - el) * 10}%`;
+    sp.classList.remove('drop');
+    void sp.offsetWidth;
+    sp.classList.add('drop');
+  }
+  hud.elixir = el;
+  $('#elixir-bar').classList.toggle('full', el >= 9.99);
+  // Rival elixir: counted from their plays (what a player would track), clamped 0..10.
+  const playing = e.phase === 'battle' || e.phase === 'overtime';
+  if (playing) {
+    $('#foe-elixir').textContent = `≈${Math.floor(hud.foe)} 💧`;
+    $('#ot-flag').classList.toggle('hidden', e.phase !== 'overtime');
+    const sec = Math.ceil(left);
+    $('#vignette').classList.toggle('on', left <= 10);
+    if (left <= 10 && sec !== hud.tick && sec > 0) {
+      hud.tick = sec;
+      audio.tick(sec <= 3);
+    }
+  } else {
+    $('#vignette').classList.remove('on');
+    if (e.phase === 'ended') $('#ot-flag').classList.add('hidden');
+  }
   const crowns = (n: number) => [0, 1, 2].map((i) => `<i class="${i < n ? 'on' : ''}">♛</i>`).join('');
   const bc = crowns(e.blue.crowns);
   const rc = crowns(e.red.crowns);
@@ -400,6 +510,7 @@ function renderHand(): void {
   const e = session!.engine;
   $('#hand').innerHTML = e.blue.hand.map((id, i) => cardHtml(id, { cost: e.costOf('blue', getCard(id)), cls: `${id === selected ? 'selected' : ''} slot-${i}` })).join('');
   $('#next').innerHTML = cardHtml(e.blue.next, { mini: true });
+  $('#next-label').innerHTML = `NEXT · <b>${e.costOf('blue', getCard(e.blue.next))}</b>`;
   hydratePortraits($('#hud'));
 }
 
@@ -416,6 +527,11 @@ function onEvent(ev: BattleEvent, e: BattleEngine, attract: boolean): void {
   switch (ev.type) {
     case 'play':
       if (ev.team === 'blue') audio.play();
+      else {
+        const c = getCard(ev.card);
+        hud.foe = Math.max(0, hud.foe - (c.spell?.mirror && hud.foeLast ? Math.min(10, getCard(hud.foeLast).cost + 1) : c.cost));
+        if (!c.spell?.mirror) hud.foeLast = ev.card;
+      }
       break;
     case 'deploy': {
       const c = getCard(ev.card);
@@ -439,19 +555,47 @@ function onEvent(ev: BattleEvent, e: BattleEngine, attract: boolean): void {
     case 'death':
       if (ev.kind !== 'tower') audio.death();
       break;
-    case 'tower':
+    case 'tower': {
       audio.tower(ev.team === 'red');
+      audio.crown(ev.team === 'blue');
       banner(ev.team === 'blue' ? (ev.role === 'king' ? 'KING DOWN!' : 'CROWN!') : 'TOWER LOST', ev.team === 'blue' ? 'gold' : 'pink');
+      const s = session;
+      if (s && !s.net && s.engine === e && e.phase !== 'ended') {
+        // A beat of slow motion while the tower comes down (offline only).
+        const before = e.debug.speed;
+        e.debug.speed = before * 0.4;
+        setTimeout(() => {
+          if (e.debug.speed === before * 0.4) e.debug.speed = before;
+        }, 800);
+        // The rival gloats (or grumbles).
+        if (ev.team === 'red' || Math.random() < 0.5) setTimeout(() => s.engine.phase !== 'ended' && s.engine.emote('red', ev.team === 'red' ? 1 : 2), 900);
+      }
       break;
+    }
     case 'elixir':
-      if (ev.team === 'blue') audio.elixir();
+      if (ev.team === 'blue') {
+        audio.elixir();
+        const pops = $('#elixir-pops');
+        const b = document.createElement('b');
+        b.textContent = '+1';
+        pops.appendChild(b);
+        setTimeout(() => b.remove(), 900);
+        const drop = $('#elixir-num');
+        drop.classList.remove('bump');
+        void drop.offsetWidth;
+        drop.classList.add('bump');
+      } else hud.foe = Math.min(10, hud.foe + 1);
+      break;
+    case 'emote':
+      audio.emote();
       break;
     case 'heal':
       audio.heal();
       break;
     case 'announce':
       if (ev.text === 'VICTORY!' || ev.text === 'DEFEAT' || ev.text === 'DRAW') {
-        setTimeout(() => showResult(e), 1800);
+        // Only if this battle is still on screen (the player may have gone back to the menu).
+        setTimeout(() => session?.engine === e && !session.attract && showResult(e), 1800);
         audio.victory(ev.text === 'VICTORY!');
       } else audio.announce();
       banner(ev.text, ev.tone);
@@ -551,7 +695,6 @@ $('#hand').addEventListener('pointerdown', (e) => {
   if (!card || !session || session.attract) return;
   e.preventDefault();
   const id = card.dataset.card!;
-  const wasSelected = selected === id;
   selected = id;
   dragging = true;
   dragMoved = false;
@@ -559,13 +702,56 @@ $('#hand').addEventListener('pointerdown', (e) => {
   $('#drag').innerHTML = cardHtml(id);
   hydratePortraits($('#drag'));
   for (const c of document.querySelectorAll('#hand .cf-card')) c.classList.toggle('selected', (c as HTMLElement).dataset.card === id);
-  if (wasSelected) card.dataset.reselect = '1';
+  // Touch: hold a card to read it.
+  hideTip();
+  if (e.pointerType !== 'mouse') tipTimer = window.setTimeout(() => !dragMoved && showTip(card), 450);
+});
+
+// ---------------------------------------------------------------- card preview (hover / long-press)
+
+let tipTimer = 0;
+function showTip(card: HTMLElement): void {
+  const id = card.dataset.card;
+  if (!id || !card.isConnected) return;
+  const tip = $('#card-tip');
+  tip.innerHTML = cardStatsHtml(id);
+  tip.classList.remove('hidden');
+  const r = card.getBoundingClientRect();
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  let x = r.left + r.width / 2 - w / 2;
+  let y = r.top - h - 12;
+  if (y < 8) {
+    // No room above (docked hand): to the left of the card.
+    x = r.left - w - 12;
+    y = Math.max(8, r.top + r.height / 2 - h / 2);
+  }
+  tip.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, x))}px`;
+  tip.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, y))}px`;
+}
+function hideTip(): void {
+  clearTimeout(tipTimer);
+  $('#card-tip').classList.add('hidden');
+}
+$('#hand').addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse' || dragging) return;
+  const card = (e.target as HTMLElement).closest<HTMLElement>('.cf-card');
+  if (!card) return;
+  clearTimeout(tipTimer);
+  tipTimer = window.setTimeout(() => !dragging && showTip(card), 350);
+});
+$('#hand').addEventListener('pointerout', (e) => {
+  if (!(e.relatedTarget instanceof Node) || !$('#hand').contains(e.relatedTarget)) hideTip();
 });
 addEventListener('pointermove', (e) => {
   pointer = { x: e.clientX, y: e.clientY };
-  if (dragging) dragMoved = true;
+  if (dragging) {
+    dragMoved = true;
+    hideTip();
+  }
 });
 addEventListener('pointerup', (e) => {
+  if (e.pointerType !== 'mouse') hideTip();
   if (!session || session.attract) return;
   if (dragging) {
     dragging = false;
@@ -575,8 +761,31 @@ addEventListener('pointerup', (e) => {
   }
   if (selected && (e.target as HTMLElement).classList.contains('cf-canvas')) tryPlay(e.clientX, e.clientY);
 });
+// ---------------------------------------------------------------- emotes
+
+let emoteReady = 0;
+function sendEmote(n: number): void {
+  const s = session;
+  if (!s || s.attract || (s.engine.phase !== 'battle' && s.engine.phase !== 'overtime') || performance.now() < emoteReady) return;
+  emoteReady = performance.now() + 2500;
+  if (s.net) s.net.emote(n);
+  else s.engine.emote('blue', n);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#emotes button')) b.disabled = true;
+  setTimeout(() => document.querySelectorAll<HTMLButtonElement>('#emotes button').forEach((b) => (b.disabled = false)), 2500);
+}
+$('#emotes').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-emote]');
+  if (b) sendEmote(Number(b.dataset.emote));
+});
+
 addEventListener('keydown', (e) => {
   if (!session || session.attract) return;
+  // Shift+1..4: taunts (plain 1..4 pick cards).
+  const digit = /^Digit([1-4])$/.exec(e.code);
+  if (e.shiftKey && digit) {
+    sendEmote(Number(digit[1]) - 1);
+    return;
+  }
   const n = Number(e.key);
   if (n >= 1 && n <= 4) {
     selected = session.engine.blue.hand[n - 1] ?? null;
@@ -707,7 +916,15 @@ async function connect(how: (net: CrownfallNet, name: string) => Promise<void>):
   net.onLobby = renderLobby;
   net.onStart = (st) => void beginOnline(net, st);
   net.onSnap = (snap) => onSnap(net, snap);
-  net.onNope = () => audio.error();
+  net.onNope = (cardId) => {
+    audio.error();
+    // The optimistic play was refused: shake the card (or the hand while the snapshot restores it).
+    const el = document.querySelector<HTMLElement>(`#hand .cf-card[data-card="${cardId}"]`) ?? $('#hand');
+    el.classList.remove('nope');
+    void el.offsetWidth;
+    el.classList.add('nope');
+    setTimeout(() => el.classList.remove('nope'), 400);
+  };
   net.onStatus = (st, reason) => {
     if (st === 'reconnecting') banner('RECONNECTING…', 'cyan');
     if (st === 'closed' && online.net === net) {
@@ -762,23 +979,29 @@ async function beginOnline(net: CrownfallNet, st: CfStart): Promise<void> {
   $('#result').classList.add('hidden');
   $('#loading').classList.remove('hidden');
   const fill = $('#load-fill');
-  await preload([...modelsFor([...me, ...them]), ...TOWER_MODELS], (d, t) => (fill.style.width = `${(d / t) * 100}%`));
+  await preload([...modelsFor([...me, ...them]), ...TOWER_MODELS], (d, t) => (fill.style.width = `${(d / t) * 70}%`));
   // Wait for the first snapshot so towers and ids come from the server.
   for (let i = 0; i < 100 && !online.pendingSnap; i++) await new Promise((r) => setTimeout(r, 50));
-  $('#loading').classList.add('hidden');
-  if (online.net !== net) return toMenu();
+  if (online.net !== net) {
+    $('#loading').classList.add('hidden');
+    return toMenu();
+  }
   const flip = st.seat === 'red';
   if (online.pendingSnap) applySnapshot(engine, online.pendingSnap, flip);
   engine.events.length = 0;
-  session?.scene.dispose();
+  const old = session;
+  session = null;
+  old?.scene.dispose();
   const scene = new ArenaScene(engine, $('#stage'));
   scene.onEvent = (ev) => onEvent(ev, engine, false);
+  await scene.warmup({ blue: me, red: them }, (k) => (fill.style.width = `${70 + k * 30}%`));
+  $('#loading').classList.add('hidden');
   const opponent = flip ? st.names.blue : st.names.red;
   session = { engine, scene, ais: [], attract: false, net, flip, battleId: st.battleId, snapAt: performance.now(), snapElixir: engine.blue.elixir, opponent };
   online.loading = false;
   lastCount = -1;
   selected = null;
-  handKey = '';
+  resetHud();
   $('#rival-name').textContent = opponent.toUpperCase();
   $('#hud').classList.remove('hidden');
   renderHand();

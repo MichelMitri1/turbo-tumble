@@ -6,11 +6,13 @@ import { installFullscreenKey } from './ui/fullscreen';
 import type { DeviceAssignment } from './input/InputManager';
 import type { GameMode, SessionConfig } from './game/SessionConfig';
 import type { Difficulty } from '@shared/ai/AIDifficulty';
+import type { SpeedClass } from '@shared/race/SpeedClass';
 
 /**
  * Without parameters the game opens on the main menu. Dev links jump straight in:
  *   ?mode=race|grandprix|timetrial   ?cpu=easy|normal|hard   ?laps=3   ?items=0   ?racers=8
  *   ?char=pip  ?kart=lagoon  ?players=2..4 (P1 WASD, P2 arrows, P3/P4 pads)  ?split=vertical  ?lowgfx
+ *   ?cc=50|100|150|200  ?mirror  ?intro=0 (skip the flyover)  ?debug (pause-menu debug overlay)
  */
 function optionsFromUrl(): GameOptions {
   const q = new URLSearchParams(location.search);
@@ -35,6 +37,8 @@ function optionsFromUrl(): GameOptions {
       difficulty: (q.get('cpu') ?? 'normal') as Difficulty,
       racerCount: Math.min(12, Math.max(1, Number(q.get('racers') ?? 8))),
       split: q.get('split') === 'vertical' ? 'vertical' : 'horizontal',
+      speedClass: ([50, 100, 150, 200].includes(Number(q.get('cc'))) ? Number(q.get('cc')) : 150) as SpeedClass,
+      mirror: q.has('mirror'),
       players: Array.from({ length: count }, (_, i) => ({
         character: i === 0 ? (q.get('char') ?? chars[0]!) : chars[i]!,
         kart: i === 0 ? (q.get('kart') ?? karts[0]!) : karts[i]!,

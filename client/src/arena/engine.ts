@@ -120,6 +120,8 @@ export interface Projectile {
   spellCard: CardDefinition | null;
   towerMul: number;
   done: boolean;
+  /** Charge / ramp bonus hit (big gold damage number). */
+  crit?: boolean;
 }
 
 export interface Area {
@@ -136,6 +138,8 @@ export interface Area {
   roll: { dx: number; dy: number; left: number; hit: Set<number> } | null;
   spawned: number;
   pulses: number;
+  /** Vines: only these units take the area's damage. */
+  grab?: number[];
 }
 
 export type BattleEvent =
@@ -154,6 +158,9 @@ export type BattleEvent =
   | { type: 'charge'; unitId: number }
   | { type: 'ability'; unitId: number; name: string }
   | { type: 'emerge'; unitId: number; x: number; y: number }
+  | { type: 'dmg'; unitId: number; x: number; y: number; amount: number; crit: boolean; tower: boolean }
+  | { type: 'king'; unitId: number; x: number; y: number; team: Team }
+  | { type: 'emote'; team: Team; emote: number }
   | { type: 'announce'; text: string; tone?: 'gold' | 'pink' | 'cyan' };
 
 export interface PlayerState {
@@ -314,7 +321,8 @@ export class BattleEngine {
     const foe = enemyOf(team);
     const leftDown = !this.units.some((u) => u.kind === 'tower' && u.team === foe && u.role === 'left' && !u.dead);
     const rightDown = !this.units.some((u) => u.kind === 'tower' && u.team === foe && u.role === 'right' && !u.dead);
-    const deep = team === 'blue' ? y >= 11 : y <= ARENA_H - 11;
+    // The whole lane opens up back to the fallen tower's row.
+    const deep = team === 'blue' ? y >= 6.5 - 1.5 : y <= ARENA_H - 6.5 + 1.5;
     return deep && ((leftDown && x < 9) || (rightDown && x >= 9));
   }
 
@@ -356,7 +364,7 @@ export class BattleEngine {
     p.hand[i] = p.next;
     p.queue.push(cmd.cardId);
     p.next = p.queue.shift()!;
-    this.events.push({ type: 'play', team: cmd.team, card: card.id, x: cmd.x, y: cmd.y });
+    this.events.push({ type: 'play', team: cmd.team, card: cmd.cardId, x: cmd.x, y: cmd.y });
     this.deployCard(card, cmd.team, cmd.x, cmd.y);
     return true;
   }
@@ -406,9 +414,7 @@ export class BattleEngine {
     for (let i = 0; i < count; i++) {
       const a = this.rand() * Math.PI * 2;
       const r = count > 1 ? 0.4 + this.rand() * 0.5 : 0;
-      const u = this.spawnUnit(card, team, clamp(x + Math.cos(a) * r, 0.5, ARENA_W - 0.5), clamp(y + Math.sin(a) * r, 0.5, ARENA_H - 0.5));
-      u.deploy = 0.35;
-      if (card.count > 1 && spec.card !== card.id) continue;
+      this.spawnUnit(card, team, clamp(x + Math.cos(a) * r, 0.5, ARENA_W - 0.5), clamp(y + Math.sin(a) * r, 0.5, ARENA_H - 0.5)).deploy = 0.35;
     }
   }
 
@@ -460,16 +466,19 @@ export class BattleEngine {
       });
       return;
     }
+    let grab: number[] | undefined;
     if (card.id === 'vines') {
+      // Grabs the toughest few troops; only those take the vine damage.
       const targets = this.enemiesIn(team, x, y, s.radius, 'all').filter((u) => u.kind === 'troop').sort((a, b) => b.hp - a.hp).slice(0, s.maxTargets ?? 3);
       for (const t of targets) {
         t.stun = Math.max(t.stun, s.stun ?? 2);
         t.flying = false;
         setTimeoutSim(this, s.duration ?? 2.3, () => (t.flying = t.card.flying));
       }
+      grab = targets.map((t) => t.id);
     }
     if (!s.duration) this.applySpellHit(card, team, x, y, s.damage);
-    if (s.duration) this.areas.push({ id: NEXT_ID++, card, team, x, y, radius: s.radius, t: 0, duration: s.duration, tick: 0, roll: null, spawned: 0, pulses: 0 });
+    if (s.duration) this.areas.push({ id: NEXT_ID++, card, team, x, y, radius: s.radius, t: 0, duration: s.duration, tick: 0, roll: null, spawned: 0, pulses: 0, grab });
   }
 
   private strikes: Array<{ t: number; id: number; dmg: number; towerMul: number; stun: number; team: Team }> = [];
@@ -622,8 +631,7 @@ export class BattleEngine {
           const c = getCard(u.card.abilities.transform);
           this.spawnUnit(c, u.team, u.x, u.y).deploy = 0.3;
         }
-        u.hp = 0;
-        u.dead = true;
+        u.hp = 0; // reap() emits the death + death spawns
         return;
       }
     }
@@ -798,6 +806,9 @@ export class BattleEngine {
   private think(u: Unit, dt: number): void {
     let target = u.targetId >= 0 ? this.unit(u.targetId) : undefined;
     if (target && !this.validTarget(u, target)) target = undefined;
+    const minRange = u.card.minRange ?? 0;
+    // Mortar: targets inside its dead zone are dropped so it can pick another.
+    if (target && minRange && this.gap(u, target) < minRange) target = undefined;
     const inRange = target ? this.gap(u, target) <= u.range : false;
     // Re-evaluate targets regularly while walking (not mid-fight).
     if (!target || (!inRange && (u.age * 30) % 6 < 1)) {
@@ -828,7 +839,7 @@ export class BattleEngine {
       this.events.push({ type: 'jump', unitId: u.id });
       return;
     }
-    if (gap <= u.range) {
+    if (gap <= u.range && gap >= minRange) {
       u.moving = false;
       this.face(u, target.x - u.x, target.y - u.y);
       u.attackCd -= dt * (u.rage > 0 ? 1.35 : 1) * (u.abilityActive > 0 && u.card.abilities.ability === 'cloak' ? 2 : 1) * (u.slow > 0 ? 1 - u.slowAmt * 0.5 : 1);
@@ -864,12 +875,15 @@ export class BattleEngine {
     const goal = this.waypoint(u, target);
     let speed = u.speed * (u.rage > 0 ? 1.35 : 1) * (u.slow > 0 ? 1 - u.slowAmt : 1);
     if (u.charging) speed *= 2;
-    const dx = goal.x - u.x;
-    const dy = goal.y - u.y;
+    let dx = goal.x - u.x;
+    let dy = goal.y - u.y;
     const l = Math.hypot(dx, dy) || 1;
+    dx /= l;
+    dy /= l;
+    if (!u.flying) [dx, dy] = this.steer(u, target, dx, dy, l);
     const step = Math.min(l, speed * dt);
-    u.x += (dx / l) * step;
-    u.y += (dy / l) * step;
+    u.x += dx * step;
+    u.y += dy * step;
     this.face(u, dx, dy);
     u.moving = true;
     const ch = u.card.abilities.charge;
@@ -880,6 +894,42 @@ export class BattleEngine {
         this.events.push({ type: 'charge', unitId: u.id });
       }
     }
+  }
+
+  /**
+   * Slide around fixed units (towers, buildings — both teams) sitting on the straight
+   * path: aim at the tangent of the obstacle's clearance circle instead of its centre,
+   * so troops dropped behind their own tower walk around it rather than wedging.
+   */
+  private steer(u: Unit, target: Unit, dx: number, dy: number, l: number): [number, number] {
+    let block: Unit | null = null;
+    let blockD = Infinity;
+    for (const o of this.units) {
+      if (o === u || o === target || o.dead || o.kind === 'troop' || o.burrow || o.flying) continue;
+      const ox = o.x - u.x;
+      const oy = o.y - u.y;
+      const along = ox * dx + oy * dy;
+      if (along <= 0 || along > Math.min(l, o.radius + u.radius + 3)) continue;
+      const side = ox * dy - oy * dx;
+      if (Math.abs(side) >= o.radius + u.radius + 0.2) continue;
+      if (along < blockD) {
+        blockD = along;
+        block = o;
+      }
+    }
+    if (!block) return [dx, dy];
+    const ox = block.x - u.x;
+    const oy = block.y - u.y;
+    const d = Math.hypot(ox, oy) || 1;
+    const clear = block.radius + u.radius + 0.2;
+    const theta = Math.atan2(oy, ox);
+    const off = Math.asin(Math.min(1, clear / d)) * (d < clear ? 1.6 : 1);
+    // Which way round: the side we're already on (obstacle left of our heading → pass on its right);
+    // dead centre → the side nearer the arena's middle.
+    const cross = dx * oy - dy * ox;
+    let a = theta - Math.sign(cross) * off;
+    if (Math.abs(cross) < 0.05) a = Math.sign(Math.cos(theta - off)) === Math.sign(9 - block.x) ? theta - off : theta + off;
+    return [Math.cos(a), Math.sin(a)];
   }
 
   /** Ground troops use the bridges; flyers, jumpers and burrowers go straight. */
@@ -940,12 +990,11 @@ export class BattleEngine {
     if (t.hidden) return false;
     if (t.invisible && t.kind === 'troop' && dist(u, t) > u.radius + t.radius + 0.6) return false;
     if (t.dash && t.card.id === 'bandit') return false;
-    const tg = u.card.targets;
+    // Towers shoot anything in range; buildings follow their rule (buildings count as ground).
+    const tg = u.kind === 'tower' ? 'all' : u.card.targets;
     if (tg === 'buildings') return t.kind !== 'troop';
     if (tg === 'ground' && t.flying) return false;
     if (tg === 'air' && !t.flying) return false;
-    if (u.kind === 'tower' && t.kind !== 'troop') return false;
-    if (u.kind === 'building' && t.kind !== 'troop') return false;
     return true;
   }
 
@@ -955,17 +1004,13 @@ export class BattleEngine {
     for (const t of this.units) {
       if (!this.validTarget(u, t)) continue;
       const d = this.gap(u, t);
-      if (d > sight) continue;
+      if (d > sight || d < (u.card.minRange ?? 0)) continue;
       // Troops prefer troops over the tower they happen to see (unless building-only).
       const score = d + (t.kind === 'tower' && u.card.targets !== 'buildings' ? 0.01 : 0);
       if (score < bestD) {
         bestD = score;
         best = t;
       }
-    }
-    if (best && u.card.targets === 'buildings') {
-      // Building-targeters go for the nearest building only if it's on the way.
-      return best;
     }
     return best;
   }
@@ -988,30 +1033,35 @@ export class BattleEngine {
     if (u.dead) return;
     const a = u.card.abilities;
     let dmg = u.damage;
+    let crit = false;
     if (u.charging) {
       dmg *= 2;
+      crit = true;
       u.charging = false;
       u.chargeDist = 0;
     } else if (a.charge) u.chargeDist = 0;
-    if (a.ramp) dmg *= u.rampTime < 2 ? 1 : u.rampTime < 4 ? 3.5 : 11;
+    if (a.ramp && u.rampTime >= 2) {
+      dmg *= u.rampTime < 4 ? 3.5 : 11;
+      crit = true;
+    }
     if (a.buildingBonus && t.kind === 'tower') dmg *= a.buildingBonus;
     const kind = u.card.projectile ?? (u.kind === 'tower' ? (u.role === 'king' ? 'cannonball' : 'arrow') : undefined);
     if (kind === 'flame' || (kind === 'zap' && !a.kamikaze && u.card.id !== 'volt-cannon')) {
       // Beams and zaps land instantly.
       this.events.push({ type: 'zap', fromX: u.x, fromY: u.y, toX: t.x, toY: t.y, team: u.team });
-      this.hitTarget(u, t, dmg, kind);
+      this.hitTarget(u, t, dmg, kind, crit);
       return;
     }
     if (kind && (u.range > 1.6 || a.kamikaze)) {
-      this.launch(u, t, kind, dmg);
+      this.launch(u, t, kind, dmg, crit);
       if (a.kamikaze) u.hp = 0;
       return;
     }
-    this.hitTarget(u, t, dmg, 'melee');
+    this.hitTarget(u, t, dmg, 'melee', crit);
     if (a.kamikaze) u.hp = 0; // Battle Ram's barbarians spill out in reap()
   }
 
-  private launch(u: Unit, t: Unit, kind: ProjectileKind, dmg: number): void {
+  private launch(u: Unit, t: Unit, kind: ProjectileKind, dmg: number, crit = false): void {
     const a = u.card.abilities;
     const speed = { arrow: 18, bolt: 20, spear: 15, dart: 22, cannonball: 14, bomb: 9, boulder: 6, fireball: 11, iceball: 12, magic: 14, zap: 30, axe: 9, rocket: 9, flame: 30, shot: 24, firework: 10, hook: 15, heal: 10 }[kind];
     const lob = kind === 'bomb' || kind === 'firework' || (a.kamikaze && u.card.id.endsWith('spirit'));
@@ -1021,7 +1071,7 @@ export class BattleEngine {
       fromX: u.x, fromY: u.y, tx: t.x, ty: t.y, targetId: t.id, speed, damage: dmg, splash: a.splash ?? 0,
       arc: lob ? 2.2 + d * 0.15 : kind === 'cannonball' ? 0.4 : 0, t: 0, dur: Math.max(0.12, d / speed), homing: !lob && !a.pierce,
       pierce: a.pierce ? { dx: (t.x - u.x) / (d || 1), dy: (t.y - u.y) / (d || 1), left: a.pierce, hit: new Set(), back: kind === 'axe' } : null,
-      airOnly: u.card.targets === 'air', groundOnly: u.card.targets === 'ground' || kind === 'boulder', spellCard: null, towerMul: 1, done: false,
+      airOnly: u.card.targets === 'air', groundOnly: u.card.targets === 'ground' || kind === 'boulder', spellCard: null, towerMul: 1, done: false, crit,
     };
     this.projectiles.push(p);
   }
@@ -1089,7 +1139,7 @@ export class BattleEngine {
       return;
     }
     if (target && dist(target, p) < target.radius + 1.2) {
-      if (src) this.hitTarget(src, target, p.damage, p.kind);
+      if (src) this.hitTarget(src, target, p.damage, p.kind, p.crit);
       else this.damageUnit(target, p.damage, p.team, null);
     }
   }
@@ -1110,28 +1160,28 @@ export class BattleEngine {
   }
 
   /** Single-target hit with on-hit effects (stun, slow, chain, splash around the target). */
-  private hitTarget(src: Unit, t: Unit, dmg: number, kind: string): void {
+  private hitTarget(src: Unit, t: Unit, dmg: number, kind: string, crit = false): void {
     const a = src.card.abilities;
-    if (a.splash && src.card.id !== 'goblin-mech') {
+    if (a.splash) {
       const spin = src.card.id === 'valkyrie' || src.card.id === 'bone-king';
       const cx = spin ? src.x : t.x;
       const cy = spin ? src.y : t.y;
       for (const u of this.units) {
         if (u.dead || u.team === src.team || u.burrow || u.hidden || !this.canHit(src, u)) continue;
         if (Math.hypot(u.x - cx, u.y - cy) > a.splash + u.radius * 0.5) continue;
-        this.damageUnit(u, dmg, src.team, src);
+        this.damageUnit(u, dmg, src.team, src, crit);
         if (a.stun) this.stunUnit(u, a.stun);
         if (a.slow) this.slowUnit(u, a.slow, 2.5);
       }
       this.events.push({ type: 'splash', x: cx, y: cy, radius: a.splash, team: src.team, kind });
     } else {
-      this.damageUnit(t, dmg, src.team, src);
+      this.damageUnit(t, dmg, src.team, src, crit);
       if (a.stun) this.stunUnit(t, a.stun);
       if (a.slow) this.slowUnit(t, a.slow, 2.5);
       if (a.knockback && t.kind === 'troop' && t.mass < 14) this.knock(t, src.x, src.y, a.knockback);
     }
     if (a.chain) this.chainFrom(t, src.team, dmg, a.chain, a.stun ?? 0, src);
-    this.events.push({ type: 'hit', x: t.x, y: t.y, team: src.team, amount: dmg, unitId: t.id, kind });
+    this.events.push({ type: 'hit', x: t.x, y: t.y, team: src.team, amount: dmg, unitId: t.id, kind, crit });
     // Storm Giant zaps back whoever hits him.
     if (t.card.id === 'storm-giant' && !t.dead && dist(src, t) < 3) {
       this.damageUnit(src, 159, t.team, t);
@@ -1203,9 +1253,10 @@ export class BattleEngine {
     u.chargeDist = 0;
   }
 
-  damageUnit(u: Unit, amount: number, from: Team, src: Unit | null): void {
+  damageUnit(u: Unit, amount: number, from: Team, src: Unit | null, crit = false): void {
     if (u.dead || amount <= 0) return;
     if (u.card.id === 'monk' && u.abilityActive > 0) amount *= 0.35;
+    const total = Math.min(amount, Math.max(0, u.hp) + u.shield);
     if (u.shield > 0) {
       const used = Math.min(u.shield, amount);
       u.shield -= used;
@@ -1213,9 +1264,11 @@ export class BattleEngine {
     }
     u.hp -= amount;
     u.hitFlash = 0.12;
+    if (total >= 1) this.events.push({ type: 'dmg', unitId: u.id, x: u.x, y: u.y, amount: Math.round(total), crit, tower: u.kind === 'tower' });
     if (u.kind === 'tower' && u.role === 'king' && !u.active) {
       u.active = true;
       this.events.push({ type: 'announce', text: 'KING ACTIVATED', tone: 'pink' });
+      this.events.push({ type: 'king', unitId: u.id, x: u.x, y: u.y, team: u.team });
     }
     if (u.hp <= 0 && u.kind === 'tower') this.towerDown(u, from);
     if (u.hp <= 0 && src?.card.id === 'hex-witch' && u.kind === 'troop') {
@@ -1234,7 +1287,10 @@ export class BattleEngine {
     } else {
       p.crowns = Math.min(3, p.crowns + 1);
       const king = this.units.find((u) => u.kind === 'tower' && u.role === 'king' && u.team === t.team && !u.dead);
-      if (king && !king.active) king.active = true;
+      if (king && !king.active) {
+        king.active = true;
+        this.events.push({ type: 'king', unitId: king.id, x: king.x, y: king.y, team: king.team });
+      }
     }
     this.events.push({ type: 'tower', x: t.x, y: t.y, team: by, role: t.role! });
     this.events.push({ type: 'death', unitId: t.id, x: t.x, y: t.y, team: t.team, card: t.card.id, kind: 'tower' });
@@ -1282,7 +1338,8 @@ export class BattleEngine {
       if (a.tick <= 0 && a.pulses < pulses) {
         a.tick += every;
         a.pulses++;
-        const hits = this.enemiesIn(a.team, a.x, a.y, a.radius, 'all');
+        let hits = this.enemiesIn(a.team, a.x, a.y, a.radius, a.card.id === 'earthquake' ? 'ground' : 'all');
+        if (a.grab) hits = hits.filter((u) => a.grab!.includes(u.id));
         let per = s.damage / pulses;
         if (a.card.id === 'void') per = hits.length <= 1 ? s.damage / 3 : hits.length <= 4 ? s.damage / 3 / 2.5 : s.damage / 3 / 6;
         for (const u of hits) {
@@ -1297,12 +1354,13 @@ export class BattleEngine {
           }
         }
       }
-      if (s.rage) for (const u of this.units) if (!u.dead && u.team === a.team && dist(u, a) <= a.radius) u.rage = Math.max(u.rage, 0.6);
+      // Rage lingers ~2 s after leaving the puddle.
+      if (s.rage) for (const u of this.units) if (!u.dead && u.team === a.team && dist(u, a) <= a.radius) u.rage = Math.max(u.rage, 2);
       if (s.pull) {
         for (const u of this.enemiesIn(a.team, a.x, a.y, a.radius, 'all')) {
-          if (u.kind !== 'troop' || u.mass >= 18) continue;
+          if (u.kind !== 'troop') continue;
           const d = dist(u, a) || 1;
-          const pull = Math.min(d, 4.2 * dt * (u.mass > 10 ? 0.4 : 1));
+          const pull = Math.min(d, 4.2 * dt * clamp(6 / u.mass, 0.25, 1));
           u.x -= ((u.x - a.x) / d) * pull;
           u.y -= ((u.y - a.y) / d) * pull;
         }
@@ -1321,7 +1379,7 @@ export class BattleEngine {
   }
 
   private enemiesIn(team: Team, x: number, y: number, r: number, which: 'all' | 'ground'): Unit[] {
-    return this.units.filter((u) => !u.dead && u.team !== team && !u.burrow && !(which === 'ground' && u.flying) && Math.hypot(u.x - x, u.y - y) <= r + u.radius * 0.5);
+    return this.units.filter((u) => !u.dead && u.team !== team && !u.burrow && !u.hidden && !(which === 'ground' && u.flying) && Math.hypot(u.x - x, u.y - y) <= r + u.radius * 0.5);
   }
 
   // ------------------------------------------------------------------ physics + cleanup
@@ -1398,11 +1456,17 @@ export class BattleEngine {
     this.events.push({ type: 'announce', text: w === 'draw' ? 'DRAW' : w === 'blue' ? 'VICTORY!' : 'DEFEAT', tone: w === 'blue' ? 'gold' : 'pink' });
   }
 
+  /** Tiebreak: the side whose weakest tower has more hit points wins. */
   private finishByHealth(): void {
-    const low = (t: Team) => Math.min(...this.towers(t).map((u) => u.hp / u.maxHp), 1);
+    const low = (t: Team) => Math.min(...this.towers(t).map((u) => u.hp));
     const b = low('blue');
     const r = low('red');
-    this.finish(Math.abs(b - r) < 1e-6 ? 'draw' : b > r ? 'blue' : 'red');
+    this.finish(Math.abs(b - r) < 1 ? 'draw' : b > r ? 'blue' : 'red');
+  }
+
+  /** Online: a taunt from either player (purely cosmetic). */
+  emote(team: Team, emote: number): void {
+    this.events.push({ type: 'emote', team, emote });
   }
 
   /** A player left: the other one wins. */

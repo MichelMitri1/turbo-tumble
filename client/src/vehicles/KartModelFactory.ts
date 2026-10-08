@@ -1,4 +1,4 @@
-import { CanvasTexture, Group, MeshStandardMaterial, type Mesh, type Object3D, type Texture } from 'three';
+import { CanvasTexture, Color, Group, MeshStandardMaterial, type Mesh, type Object3D, type Texture } from 'three';
 import type { AssetLoader } from '../assets/AssetLoader';
 import { KART_MODEL_SCALE, type CharacterDefinition, type KartBodyDefinition } from '../config/roster';
 
@@ -65,13 +65,14 @@ export function buildKartRig(assets: AssetLoader, body: KartBodyDefinition, char
       m.material = c;
     }
   });
-  // New racers reuse a base driver with its skin colours rotated round the hue wheel.
-  if (driver && character.hue) {
+  // Drivers get their own texture: new racers rotate a base driver's colours round the
+  // hue wheel, and every helmet is dyed in the character's colour so racers read apart.
+  if (driver) {
     driver.traverse((o) => {
       const m = o as Mesh;
       if (!m.isMesh || !(m.material instanceof MeshStandardMaterial)) return;
       const shifted = m.material.clone();
-      if (shifted.map) shifted.map = hueShifted(shifted.map, character.hue!);
+      if (shifted.map) shifted.map = driverTexture(shifted.map, character.hue ?? 0, character.color);
       m.material = shifted;
       materials.push(shifted);
     });
@@ -89,9 +90,12 @@ function findNamed(root: Object3D, name: string): Object3D | undefined {
 
 const shiftedCache = new Map<string, Texture>();
 
-/** Copy of a texture with saturated colours hue-rotated (whites / greys / blacks untouched). */
-function hueShifted(tex: Texture, degrees: number): Texture {
-  const key = `${tex.uuid}:${degrees}`;
+/**
+ * Copy of a driver texture with saturated colours hue-rotated by `degrees`, and the
+ * bright neutral helmet shell dyed towards `helmet` (darks / greys untouched).
+ */
+function driverTexture(tex: Texture, degrees: number, helmet: string): Texture {
+  const key = `${tex.uuid}:${degrees}:${helmet}`;
   const cached = shiftedCache.get(key);
   if (cached) return cached;
   const img = tex.image as CanvasImageSource & { width: number; height: number };
@@ -103,12 +107,24 @@ function hueShifted(tex: Texture, degrees: number): Texture {
   const data = g.getImageData(0, 0, canvas.width, canvas.height);
   const d = data.data;
   const shift = degrees / 360;
+  const hex = new Color(helmet).getHex(); // sRGB, like the texture's pixels
+  // Pastel-ish dye: keep the shell bright so shading still reads.
+  const dr = 0.35 + ((hex >> 16) & 255) / 255 * 0.65, dg = 0.35 + ((hex >> 8) & 255) / 255 * 0.65, db = 0.35 + (hex & 255) / 255 * 0.65;
   for (let i = 0; i < d.length; i += 4) {
     const r = d[i]! / 255, gg = d[i + 1]! / 255, b = d[i + 2]! / 255;
     const max = Math.max(r, gg, b), min = Math.min(r, gg, b);
     const l = (max + min) / 2;
     const delta = max - min;
-    if (delta < 0.12) continue; // keep the white helmet, dark visor and greys
+    if (delta < 0.12) {
+      // Bright neutral = helmet shell → dye it; dark visor and greys stay.
+      if (l > 0.72) {
+        d[i] = r * dr * 255;
+        d[i + 1] = gg * dg * 255;
+        d[i + 2] = b * db * 255;
+      }
+      continue;
+    }
+    if (shift === 0) continue;
     const s = delta / (1 - Math.abs(2 * l - 1));
     let h = max === r ? ((gg - b) / delta) % 6 : max === gg ? (b - r) / delta + 2 : (r - gg) / delta + 4;
     h = (h / 6 + shift + 1) % 1;

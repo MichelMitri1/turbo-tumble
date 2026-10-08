@@ -1,4 +1,4 @@
-import { AdditiveBlending, DoubleSide, Group, IcosahedronGeometry, Mesh, MeshBasicMaterial, NormalBlending, RingGeometry, Vector3 } from 'three';
+import { AdditiveBlending, DoubleSide, FrontSide, Group, IcosahedronGeometry, Mesh, MeshBasicMaterial, NormalBlending, RingGeometry, Vector3, type Blending } from 'three';
 import { SurfaceType } from '@shared/types/surface';
 import type { KartState } from '@shared/vehicles/KartState';
 import type { KartRenderState } from '../vehicles/KartView';
@@ -17,6 +17,10 @@ interface Ring {
   kind: 'ring' | 'core';
 }
 
+/** Shared by every ring / fireball core (meshes and their materials are pooled). */
+const RING_GEO = new RingGeometry(0.8, 1, 48);
+const CORE_GEO = new IcosahedronGeometry(1, 2);
+
 const RAINBOW = ['#ff4f6a', '#ffb52e', '#ffe14d', '#5ce06a', '#3fd8ff', '#9b6bff'];
 const CONFETTI = ['#ff4f9a', '#ffd23f', '#3fd8ff', '#7ddc4a', '#ff8c1a', '#9b6bff', '#ffffff'];
 
@@ -29,11 +33,15 @@ export class Effects {
   private readonly glow = new ParticleSystem(4000, AdditiveBlending);
   private readonly puff = new ParticleSystem(2000, NormalBlending);
   private readonly rings: Ring[] = [];
+  private readonly freeRings: Ring[] = [];
   readonly skids = new SkidMarks();
   private readonly wheel = new Vector3();
   private readonly emitAcc = new Map<number, number>();
   private readonly v = new Vector3();
   private readonly w = new Vector3();
+  /** Scratch for velocity jitter / offsets (avoids a Vector3 per particle). */
+  private readonly u = new Vector3();
+  private readonly back = new Vector3();
   private readonly fwd = new Vector3();
   private readonly right = new Vector3();
   private readonly up = new Vector3();
@@ -54,10 +62,9 @@ export class Effects {
       r.age += dt;
       const t = r.age / r.life;
       if (t >= 1) {
-        this.root.remove(r.mesh);
-        r.mesh.geometry.dispose();
-        (r.mesh.material as MeshBasicMaterial).dispose();
+        r.mesh.visible = false;
         this.rings.splice(i, 1);
+        this.freeRings.push(r);
         continue;
       }
       if (r.kind === 'core') {
@@ -111,7 +118,7 @@ export class Effects {
             for (let n = 0; n < 2; n++) {
               this.glow.spawn({
                 position: p,
-                velocity: this.w.copy(this.fwd).multiplyScalar(-3 - Math.random() * 3).addScaledVector(this.right, side * (1 + Math.random() * 2)).add(new Vector3(0, 2 + Math.random() * 3, 0)),
+                velocity: this.w.copy(this.fwd).multiplyScalar(-3 - Math.random() * 3).addScaledVector(this.right, side * (1 + Math.random() * 2)).add(this.u.set(0, 2 + Math.random() * 3, 0)),
                 color: DRIFT_COLORS[s.driftStage]!,
                 size: [0.32, 0.05],
                 life: 0.22 + Math.random() * 0.12,
@@ -127,7 +134,7 @@ export class Effects {
         const big = s.rocketTimer > 0 ? 2.2 : 1;
         for (const side of [-1, 1]) {
           const p = s.rocketTimer > 0 ? at(0, 1.1, -2.6) : at(side * 0.42, 1.05, -1.25);
-          this.glow.spawn({ position: p, velocity: this.w.copy(this.fwd).multiplyScalar(-6 - Math.random() * 4).add(new Vector3(this.rand(0.6), this.rand(0.6), this.rand(0.6))), color: Math.random() < 0.5 ? '#ffb52e' : '#ff5a1a', size: [0.55 * big, 0.1], life: 0.16, drag: 4 });
+          this.glow.spawn({ position: p, velocity: this.w.copy(this.fwd).multiplyScalar(-6 - Math.random() * 4).add(this.u.set(this.rand(0.6), this.rand(0.6), this.rand(0.6))), color: Math.random() < 0.5 ? '#ffb52e' : '#ff5a1a', size: [0.55 * big, 0.1], life: 0.16, drag: 4 });
           if (Math.random() < 0.3) this.glow.spawn({ position: p, velocity: this.w.copy(this.fwd).multiplyScalar(-4), color: '#fff3c0', size: [0.3 * big, 0.05], life: 0.1 });
           if (s.rocketTimer > 0) break;
         }
@@ -135,7 +142,7 @@ export class Effects {
       // Idle exhaust putts.
       if (s.grounded && Math.abs(s.forwardSpeed) < 6 && s.boostTimer <= 0 && Math.random() < 0.12) {
         const side = Math.random() < 0.5 ? -1 : 1;
-        this.puff.spawn({ position: at(side * 0.42, 1.05, -1.2), velocity: this.w.copy(this.fwd).multiplyScalar(-0.8).add(new Vector3(this.rand(0.3), 0.9, this.rand(0.3))), color: '#c9c6d6', size: [0.25, 0.9], life: 0.7, alpha: 0.35, drag: 1.5 });
+        this.puff.spawn({ position: at(side * 0.42, 1.05, -1.2), velocity: this.w.copy(this.fwd).multiplyScalar(-0.8).add(this.u.set(this.rand(0.3), 0.9, this.rand(0.3))), color: '#c9c6d6', size: [0.25, 0.9], life: 0.7, alpha: 0.35, drag: 1.5 });
       }
       // Off-road dust.
       if (s.grounded && s.surface === SurfaceType.Offroad && Math.abs(s.forwardSpeed) > 6 && Math.random() < 0.7) {
@@ -163,7 +170,7 @@ export class Effects {
     for (let i = 0; i < n; i++) {
       this.glow.spawn({
         position: p,
-        velocity: this.w.copy(forward).multiplyScalar(-2 - Math.random() * 4).add(new Vector3(this.rand(5), 1 + Math.random() * 4, this.rand(5))),
+        velocity: this.w.copy(forward).multiplyScalar(-2 - Math.random() * 4).add(this.u.set(this.rand(5), 1 + Math.random() * 4, this.rand(5))),
         color: i % 3 === 0 ? '#fff3c0' : '#ffb52e',
         size: [0.26, 0.04],
         life: 0.25 + Math.random() * 0.2,
@@ -178,7 +185,7 @@ export class Effects {
     const color = surface === SurfaceType.Offroad || surface === SurfaceType.Dirt ? '#b59a6a' : '#d9d6e2';
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      this.puff.spawn({ position: this.v.copy(position).add(new Vector3(Math.cos(a) * 1.1, 0.2, Math.sin(a) * 1.1)), velocity: this.w.set(Math.cos(a) * 3.5, 0.8, Math.sin(a) * 3.5), color, size: [0.6, 1.8], life: 0.55, alpha: 0.5, drag: 4 });
+      this.puff.spawn({ position: this.v.copy(position).add(this.u.set(Math.cos(a) * 1.1, 0.2, Math.sin(a) * 1.1)), velocity: this.w.set(Math.cos(a) * 3.5, 0.8, Math.sin(a) * 3.5), color, size: [0.6, 1.8], life: 0.55, alpha: 0.5, drag: 4 });
     }
   }
 
@@ -192,7 +199,7 @@ export class Effects {
   /** Respawn: a light column with rising rings. */
   respawnBeam(position: Vector3): void {
     for (let y = 0; y < 12; y += 0.5) {
-      this.glow.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(0.5), y, this.rand(0.5))), velocity: this.w.set(0, 3, 0), color: y % 1 < 0.5 ? '#bff6ff' : '#3fd8ff', size: [0.9, 0.2], life: 0.5 });
+      this.glow.spawn({ position: this.v.copy(position).add(this.u.set(this.rand(0.5), y, this.rand(0.5))), velocity: this.w.set(0, 3, 0), color: y % 1 < 0.5 ? '#bff6ff' : '#3fd8ff', size: [0.9, 0.2], life: 0.5 });
     }
     for (const [y, delay] of [
       [0.2, 0.5],
@@ -204,9 +211,9 @@ export class Effects {
 
   /** Perfect start: blue flame burst out the back + a dust cloud. */
   rocketStart(position: Vector3, forward: Vector3): void {
-    const back = this.v.copy(position).addScaledVector(forward, -1.6).setY(position.y + 0.8).clone();
+    const back = this.back.copy(position).addScaledVector(forward, -1.6).setY(position.y + 0.8);
     for (let i = 0; i < 40; i++) {
-      this.glow.spawn({ position: back, velocity: this.w.copy(forward).multiplyScalar(-6 - Math.random() * 8).add(new Vector3(this.rand(2.5), Math.random() * 2.5, this.rand(2.5))), color: i % 3 ? '#3fd8ff' : '#ffffff', size: [0.7, 0.08], life: 0.35, drag: 3 });
+      this.glow.spawn({ position: back, velocity: this.w.copy(forward).multiplyScalar(-6 - Math.random() * 8).add(this.u.set(this.rand(2.5), Math.random() * 2.5, this.rand(2.5))), color: i % 3 ? '#3fd8ff' : '#ffffff', size: [0.7, 0.08], life: 0.35, drag: 3 });
     }
     for (let i = 0; i < 12; i++) {
       this.puff.spawn({ position: back, velocity: this.w.set(this.rand(3), 0.8 + Math.random(), this.rand(3)), color: '#d9d6e2', size: [0.8, 2.6], life: 0.9, alpha: 0.45, drag: 2 });
@@ -219,7 +226,7 @@ export class Effects {
     const n = Math.round(160 * amount);
     for (let i = 0; i < n; i++) {
       this.puff.spawn({
-        position: this.v.copy(position).add(new Vector3(this.rand(2), 3 + Math.random() * 2, this.rand(2))),
+        position: this.v.copy(position).add(this.u.set(this.rand(2), 3 + Math.random() * 2, this.rand(2))),
         velocity: this.w.set(this.rand(7), 5 + Math.random() * 7, this.rand(7)),
         color: CONFETTI[i % CONFETTI.length]!,
         size: [0.32, 0.26],
@@ -238,29 +245,49 @@ export class Effects {
   }
 
   ring(position: Vector3, radius: number, color: string, life = 0.55, y = 0.3): void {
-    const mesh = new Mesh(
-      new RingGeometry(0.8, 1, 48),
-      new MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: DoubleSide, depthWrite: false, blending: AdditiveBlending }),
-    );
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.copy(position).setY(position.y + y);
-    this.root.add(mesh);
-    this.rings.push({ mesh, age: 0, life, radius, kind: 'ring' });
+    const r = this.takeRing('ring', color, AdditiveBlending, life, radius);
+    r.mesh.rotation.set(-Math.PI / 2, 0, 0);
+    r.mesh.position.copy(position).setY(position.y + y);
+    (r.mesh.material as MeshBasicMaterial).opacity = 0.85;
   }
 
   /** Expanding ball (explosion core). Solid = cartoon fireball, otherwise additive glow. */
   core(position: Vector3, radius: number, color: string, life = 0.45, solid = false): void {
-    const mesh = new Mesh(
-      new IcosahedronGeometry(1, 2),
-      new MeshBasicMaterial({ color, transparent: true, opacity: 1, depthWrite: false, blending: solid ? NormalBlending : AdditiveBlending }),
-    );
-    mesh.position.copy(position);
-    this.root.add(mesh);
-    this.rings.push({ mesh, age: 0, life, radius, kind: 'core' });
+    const r = this.takeRing('core', color, solid ? NormalBlending : AdditiveBlending, life, radius);
+    r.mesh.rotation.set(0, 0, 0);
+    r.mesh.position.copy(position);
+    (r.mesh.material as MeshBasicMaterial).opacity = 1;
+  }
+
+  /** A pooled ring / core mesh (one material each so they can fade independently). */
+  private takeRing(kind: Ring['kind'], color: string, blending: Blending, life: number, radius: number): Ring {
+    const i = this.freeRings.findIndex((r) => r.kind === kind);
+    let r = i >= 0 ? this.freeRings.splice(i, 1)[0]! : null;
+    if (!r) {
+      const mat = new MeshBasicMaterial({ transparent: true, depthWrite: false, side: kind === 'ring' ? DoubleSide : FrontSide });
+      r = { mesh: new Mesh(kind === 'ring' ? RING_GEO : CORE_GEO, mat), age: 0, life, radius, kind };
+      this.root.add(r.mesh);
+    }
+    const mat = r.mesh.material as MeshBasicMaterial;
+    mat.color.set(color);
+    mat.blending = blending;
+    r.mesh.visible = true;
+    r.mesh.scale.setScalar(0.01);
+    r.age = 0;
+    r.life = life;
+    r.radius = radius;
+    this.rings.push(r);
+    return r;
+  }
+
+  /** Make one of each pooled mesh so its shader is compiled up front (see Game.warmup). */
+  warmup(): void {
+    this.ring(this.v.set(0, -1000, 0), 1, '#ffffff', 0.01);
+    this.core(this.v.set(0, -1000, 0), 1, '#ffffff', 0.01, true);
   }
 
   explosion(position: Vector3, radius: number): void {
-    const center = this.v.copy(position).setY(position.y + 1.2).clone();
+    const center = this.back.copy(position).setY(position.y + 1.2);
     this.core(center, radius * 0.7, '#ff7a1a', 0.55, true);
     this.core(center, radius * 0.5, '#ffd23f', 0.4, true);
     this.core(center, radius * 0.35, '#fff6d0', 0.3);
@@ -269,7 +296,7 @@ export class Effects {
       this.glow.spawn({ position: center, velocity: dir.multiplyScalar(6 + Math.random() * radius * 1.6), color: i % 3 === 0 ? '#fff3c0' : i % 3 === 1 ? '#ffb52e' : '#ff4a1a', size: [2.6, 0.3], life: 0.5 + Math.random() * 0.3, drag: 3 });
     }
     for (let i = 0; i < 26; i++) {
-      this.puff.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(1.5), Math.random() * 1.5, this.rand(1.5))), velocity: this.w.set(this.rand(4), 3 + Math.random() * 3, this.rand(4)), color: '#5a5566', size: [1.5, 4.5], life: 1.3, alpha: 0.55, drag: 1.5 });
+      this.puff.spawn({ position: this.v.copy(position).add(this.u.set(this.rand(1.5), Math.random() * 1.5, this.rand(1.5))), velocity: this.w.set(this.rand(4), 3 + Math.random() * 3, this.rand(4)), color: '#5a5566', size: [1.5, 4.5], life: 1.3, alpha: 0.55, drag: 1.5 });
     }
     this.ring(position, radius, '#ffb52e', 0.5);
   }
@@ -303,6 +330,21 @@ export class Effects {
     }
   }
 
+  /** Trick off a lip / ramp: a twinkling star burst around the kart. */
+  trickSparkle(position: Vector3): void {
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * Math.PI * 2;
+      this.glow.spawn({
+        position: this.v.copy(position).add(this.u.set(Math.cos(a) * 1.2, 1 + Math.random() * 0.8, Math.sin(a) * 1.2)),
+        velocity: this.w.set(Math.cos(a) * 3, 1.5 + Math.random() * 2, Math.sin(a) * 3),
+        color: i % 3 === 0 ? '#ffffff' : i % 3 === 1 ? '#ffe14d' : '#3fd8ff',
+        size: [0.5, 0.02],
+        life: 0.45 + Math.random() * 0.2,
+        drag: 2,
+      });
+    }
+  }
+
   miniTurbo(position: Vector3, stage: number): void {
     this.burst(this.v.copy(position).setY(position.y + 0.8), DRIFT_COLORS[stage] ?? '#ffffff', 10 + stage * 8, 4 + stage * 2);
   }
@@ -310,7 +352,7 @@ export class Effects {
   /** Lightning strike column (Zap Storm). */
   strike(position: Vector3): void {
     for (let y = 0; y < 40; y += 1.2) {
-      this.glow.spawn({ position: this.v.copy(position).add(new Vector3(this.rand(0.4), y, this.rand(0.4))), color: y % 2 < 1 ? '#fff9c4' : '#ffe14d', size: [0.9, 0.2], life: 0.25 });
+      this.glow.spawn({ position: this.v.copy(position).add(this.u.set(this.rand(0.4), y, this.rand(0.4))), color: y % 2 < 1 ? '#fff9c4' : '#ffe14d', size: [0.9, 0.2], life: 0.25 });
     }
     this.burst(position, '#ffe14d', 14, 6);
   }

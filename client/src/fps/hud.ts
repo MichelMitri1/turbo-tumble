@@ -1,6 +1,7 @@
 import type { Game, Medal, Soldier } from './sim/game';
 import { MODES } from './sim/game';
 import { STREAKS, WEAPON, type Streak } from './sim/weapons';
+import { icon } from './icons';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -20,42 +21,70 @@ export const MEDAL_NAMES: Record<Medal, string> = {
   collateral: 'COLLATERAL',
 };
 
-const STREAK_ICON: Record<Streak, string> = { uav: '📡', airstrike: '✈️', heli: '🚁' };
+const STREAK_ORDER: Streak[] = ['uav', 'airstrike', 'heli'];
+/** Kill-feed icon for whatever did the killing. */
+const weaponIcon = (w: string) => icon(WEAPON[w]?.cls ?? (w === 'knife' ? 'knife' : w === 'grenade' ? 'grenade' : w === 'airstrike' ? 'airstrike' : w === 'heli' ? 'heli' : 'barrel'), 'zh-feed__ico');
+const SPAWN_PROTECT = 1.5;
+const NUMS = 16;
+
+/** Screen position of a world point (px), or null when behind the camera / off screen. */
+export type Projector = (x: number, y: number, z: number) => [number, number] | null;
 
 export class Hud {
   readonly el: HTMLElement;
   private readonly $ = <T extends HTMLElement = HTMLElement>(s: string) => this.el.querySelector<T>(s)!;
   private mini: HTMLCanvasElement;
   private miniBase: HTMLCanvasElement | null = null;
+  private miniScale = 5;
+  private compass: HTMLCanvasElement;
   private feed: Array<{ el: HTMLElement; t: number }> = [];
   private pops: Array<{ el: HTMLElement; t: number }> = [];
   private hitT = 0;
   private damage: Array<{ el: HTMLElement; t: number; x: number; z: number }> = [];
+  /** Floating damage numbers: a fixed pool of labels, projected every frame. */
+  private nums: Array<{ el: HTMLElement; t: number; x: number; y: number; z: number; dmg: number; target: string }> = [];
   private last: Record<string, string> = {};
+  private centerT = 0;
+  /** Brief edge flash after taking a hit. */
+  private hurtT = 0;
+  private deadKey = '';
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'zh-hud hidden';
     this.el.innerHTML = `
+      <div class="zh-blood" id="h-blood"></div>
+      <div class="zh-dmg" id="h-dmg"></div>
+      <div class="zh-adsvig" id="h-adsvig"></div>
       <div class="zh-scope hidden" id="h-scope"><div class="zh-scope__ret"></div><svg class="zh-scope__chev" viewBox="0 0 40 40"><path d="M8 22 L20 12 L32 22" fill="none" stroke="#ff3a24" stroke-width="2.6" stroke-linejoin="miter"/><path d="M20 12 V30" stroke="#ff3a24" stroke-width="1.2"/></svg></div>
       <div class="zh-mini"><canvas id="h-mini" width="220" height="220"></canvas><div class="zh-mini__label" id="h-uav"></div></div>
       <div class="zh-score"><div class="zh-score__team me"><b id="h-s0">0</b><i id="h-bar0"></i></div><div class="zh-score__mid"><span id="h-time">10:00</span><small id="h-mode">TDM</small></div><div class="zh-score__team them"><b id="h-s1">0</b><i id="h-bar1"></i></div></div>
+      <canvas class="zh-compass" id="h-compass" width="440" height="36"></canvas>
       <div class="zh-flags" id="h-flags"></div>
       <div class="zh-feed" id="h-feed"></div>
       <div class="zh-cross" id="h-cross"><i></i><i></i><i></i><i></i></div>
       <div class="zh-hit" id="h-hit"><i></i><i></i><i></i><i></i></div>
+      <div class="zh-nums" id="h-nums"></div>
       <div class="zh-pops" id="h-pops"></div>
       <div class="zh-enemy" id="h-enemy"></div>
+      <div class="zh-shield hidden" id="h-shield">${icon('shield', 'zh-shield__ico')}<span>SPAWN PROTECTION</span></div>
       <div class="zh-ammo"><div class="zh-ammo__name" id="h-wname"></div><div class="zh-ammo__count"><b id="h-mag">30</b><span id="h-res">/ 90</span></div><div class="zh-ammo__nades" id="h-nades"></div><div class="zh-ammo__reload" id="h-reload">RELOAD</div></div>
       <div class="zh-streaks" id="h-streaks"></div>
-      <div class="zh-dmg" id="h-dmg"></div>
-      <div class="zh-blood" id="h-blood"></div>
       <div class="zh-dead hidden" id="h-dead"></div>
       <div class="zh-board hidden" id="h-board"></div>
       <div class="zh-center" id="h-center"></div>
       <div class="zh-hint" id="h-hint"></div>`;
     parent.appendChild(this.el);
     this.mini = this.$<HTMLCanvasElement>('#h-mini');
+    this.compass = this.$<HTMLCanvasElement>('#h-compass');
+    const numsEl = this.$('#h-nums');
+    for (let i = 0; i < NUMS; i++) {
+      const el = document.createElement('div');
+      el.className = 'zh-num';
+      el.style.display = 'none';
+      numsEl.appendChild(el);
+      this.nums.push({ el, t: 0, x: 0, y: 0, z: 0, dmg: 0, target: '' });
+    }
   }
 
   show(on: boolean): void {
@@ -88,28 +117,50 @@ export class Hud {
       x.fillRect(256 + b.x0 * s, 256 + b.z0 * s, Math.max(1, (b.x1 - b.x0) * s), Math.max(1, (b.z1 - b.z0) * s));
     }
     this.miniBase = c;
-    (this as unknown as { miniScale: number }).miniScale = s;
+    this.miniScale = s;
   }
 
+  /** Hitmarker: pops in large and settles; red X on a kill, yellow on a headshot. */
   hitmarker(kill: boolean, head: boolean): void {
     const h = this.$('#h-hit');
     h.className = `zh-hit on ${kill ? 'kill' : ''} ${head ? 'head' : ''}`;
-    this.hitT = kill ? 0.35 : 0.18;
+    h.getAnimations().forEach((a) => a.cancel());
+    h.animate([{ transform: `scale(${kill ? 1.9 : 1.5})`, filter: 'brightness(2.2)' }, { transform: 'scale(1)', filter: 'brightness(1)' }], { duration: kill ? 220 : 120, easing: 'cubic-bezier(.2,.9,.3,1)' });
+    this.hitT = kill ? 0.45 : 0.2;
+  }
+
+  /** A floating damage number at a world position (hits on the same target in quick succession add up). */
+  damageNumber(target: string, x: number, y: number, z: number, dmg: number, head: boolean, kill: boolean): void {
+    let n = this.nums.find((k) => k.t > 0.45 && k.target === target);
+    if (n) n.dmg += dmg;
+    else {
+      n = this.nums.reduce((a, b) => (b.t < a.t ? b : a));
+      n.dmg = dmg;
+      n.target = target;
+    }
+    n.t = 0.9;
+    n.x = x + (Math.random() - 0.5) * 0.3;
+    n.y = y;
+    n.z = z;
+    n.el.textContent = String(Math.round(n.dmg));
+    n.el.className = `zh-num ${head ? 'head' : ''} ${kill ? 'kill' : ''}`;
+    n.el.style.display = '';
   }
 
   damageFrom(x: number, z: number): void {
+    this.hurtT = 0.4;
     const el = document.createElement('div');
     el.className = 'zh-dmg__arc';
     this.$('#h-dmg').appendChild(el);
     this.damage.push({ el, t: 1.2, x, z });
   }
 
-  killfeed(killer: string, kTeam: number, victim: string, vTeam: number, weapon: string, head: boolean, myTeam: number, ffa: boolean): void {
-    const col = (t: number, name: string) => `<b class="${ffa ? 'neutral' : t === myTeam ? 'ally' : 'enemy'}">${esc(name)}</b>`;
-    const w = WEAPON[weapon]?.name ?? (weapon === 'knife' ? 'Knife' : weapon === 'grenade' ? 'Frag' : weapon === 'airstrike' ? 'Airstrike' : weapon === 'heli' ? 'Attack Heli' : weapon === 'barrel' ? 'Explosion' : weapon);
+  killfeed(killer: string, kTeam: number, victim: string, vTeam: number, weapon: string, head: boolean, myTeam: number, ffa: boolean, kMe: boolean, vMe: boolean): void {
+    const col = (t: number, name: string, me: boolean) => `<b class="${me ? 'you' : ffa ? 'neutral' : t === myTeam ? 'ally' : 'enemy'}">${esc(name)}</b>`;
     const el = document.createElement('div');
-    el.className = 'zh-feed__item';
-    el.innerHTML = killer === victim ? `${col(vTeam, victim)} <i>[${esc(w)}]</i>` : `${col(kTeam, killer)} <i>[${esc(w)}${head ? ' ☠' : ''}]</i> ${col(vTeam, victim)}`;
+    el.className = `zh-feed__item ${kMe || vMe ? 'mine' : ''}`;
+    const how = `${weaponIcon(weapon)}${head ? icon('headshot', 'zh-feed__ico head') : ''}`;
+    el.innerHTML = killer === victim ? `${how} ${col(vTeam, victim, vMe)}` : `${col(kTeam, killer, kMe)} ${how} ${col(vTeam, victim, vMe)}`;
     this.$('#h-feed').prepend(el);
     this.feed.push({ el, t: 6 });
     while (this.feed.length > 6) this.feed.shift()!.el.remove();
@@ -130,7 +181,7 @@ export class Hud {
     c.classList.remove('show');
     void c.offsetWidth;
     c.classList.add('show');
-    (this as unknown as { centerT: number }).centerT = seconds;
+    this.centerT = seconds;
   }
 
   hint(text: string): void {
@@ -141,7 +192,7 @@ export class Hud {
     dt: number,
     g: Game,
     me: Soldier,
-    opts: { spread: number; ads: number; scoped: boolean; scope: '' | 'sniper' | 'acog'; yaw: number; enemyName: string; scoreboard: boolean; pad: boolean; reloadP: number },
+    opts: { spread: number; ads: number; scoped: boolean; scope: '' | 'sniper' | 'acog'; yaw: number; enemyName: string; scoreboard: boolean; pad: boolean; reloadP: number; project: Projector; ping?: (s: Soldier) => number },
   ): void {
     const ffa = g.mode === 'ffa';
     // Score banner.
@@ -167,20 +218,21 @@ export class Hud {
     this.$('#h-mag').classList.toggle('low', w.ammo <= Math.ceil(w.def.mag * 0.25));
     this.set('#h-nades', '◆'.repeat(me.grenades));
     const showReload = me.alive && w.ammo <= Math.ceil(w.def.mag * 0.25) && me.reloadT <= 0 && w.reserve > 0;
-    this.$('#h-reload').classList.toggle('show', showReload);
     this.set('#h-reload', me.reloadT > 0 ? 'RELOADING' : opts.pad ? 'RELOAD □' : 'RELOAD [R]');
-    this.$('#h-reload').classList.toggle('show', showReload || me.reloadT > 0);
-    // Streak tracker.
+    this.$('#h-reload').classList.toggle('show', me.alive && (showReload || me.reloadT > 0));
+    // Killstreak chip: kill pips with the 3 / 5 / 7 rewards marked, then the three streak icons.
     const off = me.loadout.perks.includes('hardline') ? 1 : 0;
-    const streakHtml = (['uav', 'airstrike', 'heli'] as Streak[])
-      .map((s) => {
-        const need = STREAKS[s].kills - off;
-        const ready = me.streaks.includes(s);
-        const got = me.earned.has(s) && !ready;
-        return `<div class="zh-streak ${ready ? 'ready' : ''} ${got ? 'used' : ''}"><span>${STREAK_ICON[s]}</span><small>${ready ? (opts.pad ? 'D-PAD →' : 'PRESS 4') : `${Math.min(me.streak, need)}/${need}`}</small></div>`;
-      })
-      .join('');
-    this.set('#h-streaks', streakHtml, true);
+    const top = STREAKS.heli.kills - off;
+    const marks = new Set(STREAK_ORDER.map((s) => STREAKS[s].kills - off));
+    const pips = Array.from({ length: top }, (_, i) => `<i class="${i < me.streak ? 'on' : ''} ${marks.has(i + 1) ? 'mark' : ''}"></i>`).join('');
+    const icons = STREAK_ORDER.map((s) => {
+      const ready = me.streaks.includes(s);
+      const used = me.earned.has(s) && !ready;
+      return `<span class="zh-streak ${ready ? 'ready' : ''} ${used ? 'used' : ''}">${icon(s, 'zh-streak__ico')}<small>${ready ? (opts.pad ? 'D-PAD →' : 'PRESS 4') : STREAKS[s].kills - off}</small></span>`;
+    }).join('');
+    this.set('#h-streaks', `<div class="zh-streaks__pips">${pips}</div><div class="zh-streaks__row">${icons}</div>`, true);
+    // Spawn protection.
+    this.$('#h-shield').classList.toggle('hidden', !(me.alive && g.phase === 'play' && g.time - me.spawnT < SPAWN_PROTECT));
     // Crosshair: four lines pushed out by the spread; hidden when aiming.
     const cross = this.$('#h-cross');
     // `spread` is the cone's radius as a fraction of half the screen height.
@@ -189,26 +241,47 @@ export class Hud {
     cross.style.opacity = me.alive ? String(Math.max(0, 1 - opts.ads * 3)) : '0';
     this.$('#h-scope').classList.toggle('hidden', !opts.scoped);
     this.$('#h-scope').classList.toggle('acog', opts.scope === 'acog');
+    // ADS: a soft vignette pulls focus to the sight.
+    this.$('#h-adsvig').style.opacity = me.alive && !opts.scoped ? (opts.ads * 0.9).toFixed(2) : '0';
     // Hitmarker.
     if (this.hitT > 0) {
       this.hitT -= dt;
       if (this.hitT <= 0) this.$('#h-hit').className = 'zh-hit';
     }
+    // Damage numbers rise and fade over the target.
+    for (const n of this.nums) {
+      if (n.t <= 0) continue;
+      n.t -= dt;
+      const p = n.t > 0 ? opts.project(n.x, n.y, n.z) : null;
+      if (!p) {
+        if (n.t <= 0) n.el.style.display = 'none';
+        n.el.style.opacity = '0';
+        continue;
+      }
+      const age = 0.9 - n.t;
+      n.el.style.opacity = String(Math.min(1, n.t * 3));
+      n.el.style.transform = `translate(${p[0].toFixed(1)}px, ${(p[1] - age * 40).toFixed(1)}px) translate(-50%, -100%) scale(${age < 0.08 ? 1.35 : 1})`;
+    }
     // Red name when aiming at an enemy.
     this.set('#h-enemy', opts.enemyName);
-    // Damage indicators (relative to where I'm looking).
+    // Damage indicators: a red wedge out at the screen edge in the hit's direction (relative to where I'm looking).
     for (let i = this.damage.length - 1; i >= 0; i--) {
       const d = this.damage[i]!;
       d.t -= dt;
       const ang = Math.atan2(-(d.x - me.m.x), -(d.z - me.m.z)) - opts.yaw;
-      d.el.style.transform = `rotate(${(-ang * 180) / Math.PI}deg)`;
+      const ex = -Math.sin(ang) * innerWidth * 0.42;
+      const ey = -Math.cos(ang) * innerHeight * 0.42;
+      d.el.style.transform = `translate(${ex.toFixed(1)}px, ${ey.toFixed(1)}px) rotate(${(-ang * 180) / Math.PI}deg)`;
       d.el.style.opacity = String(Math.min(1, d.t));
       if (d.t <= 0) {
         d.el.remove();
         this.damage.splice(i, 1);
       }
     }
-    this.$('#h-blood').style.opacity = me.alive ? String(Math.max(0, (65 - me.hp) / 65) * 0.9) : '0';
+    // Edge vignette: grows as health drops (and flashes briefly on a hit), fades as it regenerates.
+    this.hurtT = Math.max(0, this.hurtT - dt);
+    const low = Math.max(0, (65 - me.hp) / 65);
+    this.$('#h-blood').style.opacity = me.alive ? Math.min(1, low + this.hurtT).toFixed(3) : '0';
     // Killfeed / popups age.
     for (const list of [this.feed, this.pops]) {
       for (let i = list.length - 1; i >= 0; i--) {
@@ -221,29 +294,100 @@ export class Hud {
         }
       }
     }
-    const self = this as unknown as { centerT: number };
-    if (self.centerT > 0) {
-      self.centerT -= dt;
-      if (self.centerT <= 0) this.$('#h-center').classList.remove('show');
+    if (this.centerT > 0) {
+      this.centerT -= dt;
+      if (this.centerT <= 0) this.$('#h-center').classList.remove('show');
     }
-    // Death screen.
+    // Death screen: the card is built once per death; only the countdown text changes.
     const dead = this.$('#h-dead');
-    dead.classList.toggle('hidden', me.alive || g.phase === 'over');
-    if (!me.alive && g.phase !== 'over') {
+    const showDead = !me.alive && g.phase !== 'over';
+    dead.classList.toggle('hidden', !showDead);
+    if (showDead) {
       const k = g.soldier(me.killedBy);
-      this.set('#h-dead', `<div class="zh-dead__card"><small>KILLED BY</small><b>${k && k !== me ? esc(k.name) : 'YOURSELF'}</b>${k && k !== me ? `<span>${k.hp > 0 ? Math.ceil(k.hp) : 0} HP left · ${k.weapons[k.cur].def.name}</span>` : ''}</div><div class="zh-dead__spawn">Respawning in ${Math.max(0, me.respawnIn).toFixed(1)}</div><div class="zh-dead__tip">${opts.pad ? 'Press OPTIONS to change class' : 'Press ESC to change class'}</div>`, true);
+      const key = `${me.deaths}|${me.killedBy}|${opts.pad}`;
+      if (key !== this.deadKey) {
+        this.deadKey = key;
+        this.last['#h-dead-t'] = '';
+        dead.innerHTML = `<div class="zh-dead__card"><small>KILLED BY</small><b>${k && k !== me ? esc(k.name) : 'YOURSELF'}</b>${k && k !== me ? `<span>${k.hp > 0 ? Math.ceil(k.hp) : 0} HP left · ${k.weapons[k.cur].def.name}</span>` : ''}</div><div class="zh-dead__spawn">Respawning in <b id="h-dead-t"></b></div><div class="zh-dead__tip">${opts.pad ? 'Press OPTIONS to change class' : 'Press ESC to change class'}</div>`;
+      }
+      this.set('#h-dead-t', String(Math.max(0, Math.ceil(me.respawnIn))));
     }
-    // Scoreboard.
+    // Scoreboard (centre popups hide while it's open).
     this.$('#h-board').classList.toggle('hidden', !opts.scoreboard);
-    if (opts.scoreboard) this.set('#h-board', scoreboard(g, me.id), true);
+    this.el.classList.toggle('board-open', opts.scoreboard);
+    if (opts.scoreboard) this.set('#h-board', scoreboard(g, me.id, opts.ping), true);
     this.drawMinimap(g, me, opts.yaw);
+    this.drawCompass(g, me, opts.yaw);
+  }
+
+  /** Heading strip: ticks every 15°, cardinal letters, flags / UAV-spotted enemies / gunships as markers. */
+  private drawCompass(g: Game, me: Soldier, yaw: number): void {
+    const c = this.compass;
+    const x = c.getContext('2d')!;
+    const W = c.width;
+    const H = c.height;
+    const ppr = W / 2 / (Math.PI / 2); // ±90° visible
+    x.clearRect(0, 0, W, H);
+    const bg = x.createLinearGradient(0, 0, W, 0);
+    bg.addColorStop(0, 'rgba(0,0,0,0)');
+    bg.addColorStop(0.2, 'rgba(0,0,0,0.38)');
+    bg.addColorStop(0.8, 'rgba(0,0,0,0.38)');
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = bg;
+    x.fillRect(0, 0, W, H);
+    // Bearings use the sim's yaw convention: 0 = north (−z), +π/2 = west.
+    const sx = (bearing: number) => {
+      let d = bearing - yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return W / 2 - d * ppr;
+    };
+    x.textAlign = 'center';
+    x.font = '600 11px Rajdhani, sans-serif';
+    for (let deg = 0; deg < 360; deg += 15) {
+      const px = sx((-deg * Math.PI) / 180);
+      if (px < 6 || px > W - 6) continue;
+      const fade = 1 - Math.abs(px - W / 2) / (W / 2);
+      const card = deg % 90 === 0;
+      x.globalAlpha = Math.min(1, fade * 1.6);
+      x.fillStyle = card ? '#fff' : 'rgba(255,255,255,0.7)';
+      if (card) {
+        x.font = '700 15px Rajdhani, sans-serif';
+        x.fillText('NESW'[deg / 90]!, px, 15);
+        x.font = '600 11px Rajdhani, sans-serif';
+      } else if (deg % 45 === 0) x.fillText(String(deg), px, 13);
+      x.fillRect(px - 0.5, card ? 19 : 21, 1, card ? 8 : 5);
+    }
+    x.globalAlpha = 1;
+    const mark = (wx: number, wz: number, color: string, label?: string) => {
+      const px = sx(Math.atan2(-(wx - me.m.x), -(wz - me.m.z)));
+      if (px < 8 || px > W - 8) return;
+      x.fillStyle = color;
+      if (label) {
+        x.font = '700 13px Rajdhani, sans-serif';
+        x.fillText(label, px, 34);
+      } else {
+        x.beginPath();
+        x.moveTo(px, 35);
+        x.lineTo(px - 4, 29);
+        x.lineTo(px + 4, 29);
+        x.closePath();
+        x.fill();
+      }
+    };
+    for (const f of g.flags) mark(f.x, f.z, f.owner === -1 ? '#ddd' : f.owner === me.team ? '#4aa3ff' : '#ff4a3a', f.name);
+    if (g.uavFor(me)) for (const o of g.soldiers) if (o.alive && g.enemies(me, o) && !o.loadout.perks.includes('ghost')) mark(o.m.x, o.m.z, '#ff3a2a');
+    for (const h of g.helis) mark(h.x, h.z, h.team === me.team && g.mode !== 'ffa' ? '#4aa3ff' : '#ff3a2a', '✚');
+    // Centre notch.
+    x.fillStyle = '#ffd23f';
+    x.fillRect(W / 2 - 1, 18, 2, 12);
   }
 
   private drawMinimap(g: Game, me: Soldier, yaw: number): void {
     const c = this.mini;
     const x = c.getContext('2d')!;
     const W = c.width;
-    const s = (this as unknown as { miniScale: number }).miniScale ?? 5;
+    const s = this.miniScale;
     x.save();
     x.clearRect(0, 0, W, W);
     x.beginPath();
@@ -311,10 +455,11 @@ export class Hud {
   }
 }
 
-export function scoreboard(g: Game, meId: string): string {
+/** The scoreboard; with `ping` (online) it gets a PING column. */
+export function scoreboard(g: Game, meId: string, ping?: (s: Soldier) => number): string {
   const row = (s: Soldier) =>
-    `<tr class="${s.id === meId ? 'me' : ''} ${s.alive ? '' : 'dead'}"><td>${esc(s.name)}${s.bot ? ' <i>BOT</i>' : ''}</td><td>${s.score}</td><td>${s.kills}</td><td>${s.deaths}</td><td>${s.assists}</td><td>${s.deaths ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2)}</td></tr>`;
-  const head = '<tr><th></th><th>SCORE</th><th>K</th><th>D</th><th>A</th><th>K/D</th></tr>';
+    `<tr class="${s.id === meId ? 'me' : ''} ${s.alive ? '' : 'dead'}"><td>${esc(s.name)}${s.bot ? ' <i>BOT</i>' : ''}</td><td>${s.score}</td><td>${s.kills}</td><td>${s.deaths}</td><td>${s.assists}</td><td>${s.deaths ? (s.kills / s.deaths).toFixed(2) : s.kills.toFixed(2)}</td>${ping ? `<td class="ping">${s.bot ? 'BOT' : Math.round(ping(s))}</td>` : ''}</tr>`;
+  const head = `<tr><th></th><th>SCORE</th><th>K</th><th>D</th><th>A</th><th>K/D</th>${ping ? '<th>PING</th>' : ''}</tr>`;
   if (g.mode === 'ffa') return `<div class="zh-board__team ffa"><h3>FREE-FOR-ALL</h3><table>${head}${[...g.soldiers].sort((a, b) => b.kills - a.kills || b.score - a.score).map(row).join('')}</table></div>`;
   const me = g.soldier(meId);
   const teams = me?.team === 1 ? [1, 0] : [0, 1];

@@ -13,6 +13,7 @@ interface UnitOpts {
   firstHit?: number;
   speed?: Speed | 'none';
   range?: number;
+  minRange?: number;
   sight?: number;
   count?: number;
   targets?: Targets;
@@ -44,6 +45,7 @@ function unit(type: CardType, id: string, name: string, rarity: Rarity, cost: nu
     firstHit: o.firstHit ?? Math.min(0.6, (o.hitSpeed ?? 1.2) * 0.45),
     speed: o.speed ?? (type === 'building' ? 'none' : 'medium'),
     range: o.range ?? 0.8,
+    minRange: o.minRange,
     sight: o.sight ?? (type === 'building' ? Math.max(o.range ?? 0.8, 5.5) : Math.max(5.5, (o.range ?? 0.8) + 0.5)),
     count: o.count ?? 1,
     targets: o.targets ?? 'ground',
@@ -177,7 +179,7 @@ token('cursed-frog', 'Cursed Frog', { hp: 520, damage: 52, hitSpeed: 1.5, speed:
 troop('phoenix', 'Phoenix', 'Legendary', 4, 'Explodes when it falls — and is reborn from its egg.', { hp: 1050, damage: 217, hitSpeed: 1, speed: 'fast', range: 1.6, targets: 'all', flying: true, radius: 0.6, abilities: { deathDamage: { damage: 217, radius: 2 }, deathSpawn: { card: 'phoenix-egg', count: 1 } } }, { model: 'm-fly-pigeon', height: 1.2, tint: { hue: 0.35, sat: 0.4, emissive: '#ff6a1a', emissiveIntensity: 0.3 } });
 token('phoenix-egg', 'Phoenix Egg', { hp: 198, damage: 0, speed: 'none', radius: 0.45, lifetime: 4.3, abilities: { transform: 'phoenix-reborn' } }, { model: 'proc:egg', height: 0.7 });
 token('phoenix-reborn', 'Phoenix', { hp: 1050, damage: 217, hitSpeed: 1, speed: 'fast', range: 1.6, targets: 'all', flying: true, radius: 0.6 }, { model: 'm-fly-pigeon', height: 1.2, tint: { hue: 0.35, sat: 0.4, emissive: '#ff6a1a', emissiveIntensity: 0.3 } });
-troop('goblin-mech', 'Goblin Mech', 'Legendary', 5, 'A goblin war machine that fires rockets.', { hp: 2600, damage: 220, hitSpeed: 1.2, range: 1.2, radius: 0.8, mass: 16, abilities: { splash: 1 } }, { model: 'm-big-dino', height: 1.9, tint: { color: '#c0d0c8', sat: -0.3 } });
+troop('goblin-mech', 'Goblin Mech', 'Legendary', 5, 'A goblin war machine that fires splash rockets.', { hp: 2600, damage: 220, hitSpeed: 1.5, range: 5, radius: 0.8, mass: 16, projectile: 'rocket', abilities: { splash: 1 } }, { model: 'm-big-dino', height: 1.9, tint: { color: '#c0d0c8', sat: -0.3 } });
 troop('sky-empress', 'Sky Empress', 'Legendary', 6, 'Royal flyer that rains splash attacks.', { hp: 1100, damage: 280, hitSpeed: 1.7, speed: 'fast', range: 3, targets: 'all', flying: true, radius: 0.75, mass: 8, projectile: 'magic', abilities: { splash: 1.3 } }, { model: 'm-fly-alpaking-evolved', height: 1.6 });
 troop('ronin', 'Ronin', 'Legendary', 5, 'A wandering swordsman who dashes between foes.', { hp: 1900, damage: 300, hitSpeed: 1.3, speed: 'fast', radius: 0.55, abilities: { splash: 1, dash: [2.5, 5] } }, { model: 'm-big-ninja', height: 1.5 });
 
@@ -194,7 +196,7 @@ troop('bandit-boss', 'Bandit Boss', 'Champion', 6, 'Dashes in, and ability: vani
 // ============================================================================ buildings
 
 building('cannon', 'Cannon', 'Common', 3, 'Defensive cannon. Ground targets only.', { hp: 824, damage: 212, hitSpeed: 0.9, range: 5.5, projectile: 'cannonball' }, { model: 'p-tower-weapon-cannon', height: 1.2, width: 1.5 });
-building('mortar', 'Mortar', 'Common', 4, 'Lobs shells across half the arena.', { hp: 1369, damage: 266, hitSpeed: 5, firstHit: 4, range: 11.5, projectile: 'bomb', abilities: { splash: 2 } }, { model: 'p-castle-siege-catapult', height: 1.3, width: 1.6 });
+building('mortar', 'Mortar', 'Common', 4, 'Lobs shells across half the arena.', { hp: 1369, damage: 266, hitSpeed: 5, firstHit: 4, range: 11.5, minRange: 3.5, projectile: 'bomb', abilities: { splash: 2 } }, { model: 'p-castle-siege-catapult', height: 1.3, width: 1.6 });
 building('tesla', 'Tesla', 'Common', 4, 'Hides underground until enemies come near.', { hp: 1152, damage: 230, hitSpeed: 1.1, range: 5.5, targets: 'all', projectile: 'zap', abilities: { hides: true } }, { model: 'p-tower-weapon-turret', height: 1.4, width: 1.4, tint: { emissive: '#3fd8ff', emissiveIntensity: 0.15 } });
 building('goblin-hut', 'Goblin Hut', 'Rare', 5, 'Spawns spear goblins.', { hp: 1100, lifetime: 40, abilities: { spawn: { card: 'spear-goblins', count: 1, every: 4.5, first: 1 } } }, { model: 'proc:hut', height: 1.8 });
 building('blaze-tower', 'Blaze Tower', 'Rare', 5, 'Its beam melts tanks the longer it locks on.', { hp: 1749, damage: 41, hitSpeed: 0.4, range: 6, targets: 'all', projectile: 'flame', abilities: { ramp: true } }, { model: 'p-tower-tower-round-crystals', height: 1.7, width: 1.6, tint: { hue: -0.35, emissive: '#ff4a1a', emissiveIntensity: 0.25 } });
@@ -215,16 +217,16 @@ spell('fireball', 'Fireball', 'Rare', 4, 'A blazing ball that knocks back troops
 spell('arrows', 'Arrows', 'Common', 3, 'Three volleys over a wide area.', { radius: 4, damage: 366, towerDamage: 0.25, travel: 'fromKing', waves: 3, fx: 'arrows' }, sp('p-tower-weapon-ammo-arrow', 1));
 spell('rocket', 'Rocket', 'Rare', 6, 'Huge damage to a small area.', { radius: 2, damage: 1484, towerDamage: 0.3, travel: 'fromKing', knockback: 1.2, fx: 'rocket' }, sp('p-tower-weapon-ammo-bullet', 1));
 spell('zap', 'Zap', 'Common', 2, 'Instant shock that stuns briefly.', { radius: 2.5, damage: 192, towerDamage: 0.3, travel: 'instant', stun: 0.5, fx: 'zap' }, sp('proc:bolt', 1));
-spell('rolling-log', 'Rolling Log', 'Legendary', 2, 'Rolls forward, knocking back ground troops.', { radius: 1.95, damage: 290, towerDamage: 0.2, travel: 'roll', rollLength: 10, knockback: 0.8, fx: 'log' }, sp('proc:log', 1));
+spell('rolling-log', 'Rolling Log', 'Legendary', 2, 'Rolls forward, knocking back ground troops.', { radius: 1.95, damage: 290, towerDamage: 0.3, travel: 'roll', rollLength: 10, knockback: 0.8, fx: 'log' }, sp('proc:log', 1));
 spell('freeze', 'Freeze', 'Epic', 4, 'Freezes everything in the area.', { radius: 3, damage: 115, towerDamage: 0.3, travel: 'instant', freeze: 4, fx: 'freeze' }, sp('p-tower-detail-crystal', 1, { color: '#9fe8ff', light: 0.15 }));
 spell('poison', 'Poison', 'Epic', 4, 'A toxic cloud that eats away at troops.', { radius: 3.5, damage: 728, towerDamage: 0.3, travel: 'instant', duration: 8, slow: 0.15, fx: 'poison' }, sp('p-mini-potion', 1, { color: '#7dff6a' }));
 spell('lightning', 'Lightning', 'Epic', 6, 'Strikes the three toughest targets.', { radius: 3.5, damage: 1158, towerDamage: 0.3, travel: 'instant', maxTargets: 3, stun: 0.5, fx: 'lightning' }, sp('proc:bolt', 1));
-spell('rage', 'Rage', 'Epic', 2, 'Your troops move and attack faster.', { radius: 5, damage: 120, towerDamage: 0.3, travel: 'instant', duration: 6, rage: 6, fx: 'rage' }, sp('p-mini-potion', 1, { color: '#c77dff' }));
+spell('rage', 'Rage', 'Epic', 2, 'Your troops move and attack faster.', { radius: 5, damage: 0, travel: 'instant', duration: 6, rage: 6, fx: 'rage' }, sp('p-mini-potion', 1, { color: '#c77dff' }));
 spell('tornado', 'Tornado', 'Epic', 3, 'Drags troops into its centre.', { radius: 5.5, damage: 168, towerDamage: 0.3, travel: 'instant', duration: 1.5, pull: true, fx: 'tornado' }, sp('proc:tornado', 1));
 spell('earthquake', 'Earthquake', 'Rare', 3, 'Shakes the ground — wrecks buildings.', { radius: 3.5, damage: 455, towerDamage: 0.35, travel: 'instant', duration: 3, slow: 0.5, buildingBonus: 3.5, fx: 'quake' }, sp('p-mini-rocks', 1));
 spell('graveyard', 'Graveyard', 'Legendary', 5, 'Skeletons rise all over the area.', { radius: 4, damage: 0, travel: 'instant', duration: 10, spawn: { card: 'skeletons', count: 13 }, fx: 'graveyard' }, sp('p-graveyard-gravestone-round', 1));
 spell('goblin-keg', 'Goblin Keg', 'Epic', 3, 'Flings a barrel of goblins anywhere.', { radius: 1.5, damage: 0, travel: 'fromKing', spawn: { card: 'goblins', count: 3 }, fx: 'barrel' }, sp('p-mini-barrel', 1));
-spell('viking-keg', 'Viking Keg', 'Epic', 2, 'Rolls a barrel, then out pops a barbarian.', { radius: 1.3, damage: 241, towerDamage: 0.2, travel: 'roll', rollLength: 6.5, knockback: 0.6, spawn: { card: 'barbarians', count: 1 }, fx: 'barrel' }, sp('p-mini-barrel', 1, { hue: 0.05 }));
+spell('viking-keg', 'Viking Keg', 'Epic', 2, 'Rolls a barrel, then out pops a barbarian.', { radius: 1.3, damage: 241, towerDamage: 0.3, travel: 'roll', rollLength: 6.5, knockback: 0.6, spawn: { card: 'barbarians', count: 1 }, fx: 'barrel' }, sp('p-mini-barrel', 1, { hue: 0.05 }));
 spell('giant-snowball', 'Giant Snowball', 'Common', 2, 'Knocks back and slows.', { radius: 2.5, damage: 159, towerDamage: 0.3, travel: 'fromKing', slow: 0.35, knockback: 0.9, fx: 'snowball' }, sp('proc:snowball', 1));
 spell('sky-drop', 'Sky Drop', 'Common', 3, 'A crate crashes down and a recruit hops out.', { radius: 3, damage: 437, towerDamage: 0.3, travel: 'drop', spawn: { card: 'shield-recruit', count: 1 }, fx: 'crate' }, sp('p-mini-chest', 1));
 token('shield-recruit', 'Shield Recruit', { hp: 552, damage: 133, hitSpeed: 1.3, abilities: { shield: 240 } }, { model: 'c-bluesoldier-male', height: 1.15, props: [SPEAR, { model: 'p-mini-shield-rectangle', height: 0.5, at: 'back' }] });
@@ -267,29 +269,31 @@ export const AI_DECKS: string[][] = [
   ['colossus-knight', 'iron-titan', 'wizard', 'bone-king', 'freeze', 'goblin-keg', 'blaze-tower', 'heal-spirit'],
 ];
 
-/** Every model a card needs on the battlefield (spawned tokens included). */
-export function modelsFor(cardIds: Iterable<string>): Set<string> {
-  const out = new Set<string>();
+/** Every card that can appear on the battlefield from these decks (tokens, death spawns, squads). */
+export function cardsFor(cardIds: Iterable<string>): Set<string> {
   const seen = new Set<string>();
   const visit = (id: string): void => {
-    if (seen.has(id)) return;
-    seen.add(id);
     const c = CARD_MAP.get(id);
-    if (!c) return;
-    const add = (m: string) => {
-      if (!m.startsWith('proc:')) out.add(m);
-    };
-    add(c.visual.model);
-    for (const p of c.visual.props ?? []) add(p.model);
-    if (c.visual.mount) add(c.visual.mount.model);
+    if (seen.has(id) || !c) return;
+    seen.add(id);
     const a = c.abilities;
     for (const s of [a.spawn, a.deathSpawn, c.spell?.spawn]) if (s) visit(s.card);
     if (a.transform) visit(a.transform);
     for (const s of c.squad ?? []) visit(s.card);
+    if (id === 'hex-witch') visit('cursed-frog');
+    if (id === 'boy-prince') visit('guardian');
+    if (id === 'goblin-hex') visit('goblins');
   };
   for (const id of cardIds) visit(id);
-  if ([...seen].includes('hex-witch')) visit('cursed-frog');
-  if ([...seen].includes('boy-prince')) visit('guardian');
-  if ([...seen].includes('goblin-hex')) visit('goblins');
+  return seen;
+}
+
+/** Every model a card needs on the battlefield (spawned tokens included). */
+export function modelsFor(cardIds: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const id of cardsFor(cardIds)) {
+    const c = CARD_MAP.get(id)!;
+    for (const m of [c.visual.model, ...(c.visual.props ?? []).map((p) => p.model), c.visual.mount?.model]) if (m && !m.startsWith('proc:')) out.add(m);
+  }
   return out;
 }

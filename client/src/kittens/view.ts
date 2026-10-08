@@ -1,25 +1,30 @@
 import type { Card, CardType, DeckId } from './cards';
-import type { Effect, GameEvent, KittensEngine, Prompt } from './engine';
+import type { Effect, GameEvent, KittensEngine, Prompt, Rules } from './engine';
 
 /** What one player is allowed to see. Bots and the UI both work from this. */
 export interface View {
   you: string;
   deck: DeckId;
+  rules: Rules;
   phase: KittensEngine['phase'];
   current: string;
   turns: number;
-  players: Array<{ id: string; name: string; bot: boolean; avatar: number; alive: boolean; count: number; godcat: boolean; connected: boolean }>;
+  /** Turn direction (Reverse flips it). */
+  dir: 1 | -1;
+  players: Array<{ id: string; name: string; bot: boolean; avatar: number; alive: boolean; count: number; godcat: boolean; connected: boolean; out: CardType | null }>;
   hand: Card[];
   drawCount: number;
   kittens: number;
   discardTop: Card | null;
   discardCount: number;
+  /** The whole discard pile, oldest first (public). */
+  discard: Card[];
   godcatOnMat: boolean;
   pending: { by: string; cards: Card[]; effect: Effect; as?: CardType; nopes: number; left: number; passed: boolean } | null;
   /** Your prompt in full; someone else's as { k, player } only. */
   prompt: (Prompt & { mine: true; fanGod?: number; fanCount?: number }) | { mine: false; k: Prompt['k']; player: string; left: number } | null;
   promptLeft: number;
-  /** Draw-pile cards you know: index 0 = top. */
+  /** Draw-pile cards you know: index 0 = top (face-up cards are known to everyone). */
   known: Array<{ index: number; card: Card }>;
   winner: string | null;
   turnLeft: number;
@@ -29,7 +34,7 @@ export interface View {
 export function viewFor(e: KittensEngine, you: string): View {
   const me = e.players.find((p) => p.id === you);
   const known: View['known'] = [];
-  if (me) e.draw.forEach((c, index) => me.knows.has(c.id) && known.push({ index, card: c }));
+  if (me) e.draw.forEach((c, index) => (c.faceUp || me.knows.has(c.id)) && known.push({ index, card: c }));
   const pr = e.prompt;
   let prompt: View['prompt'] = null;
   const left = (d: number) => (d ? Math.max(0, d - e.time) : 0);
@@ -43,15 +48,18 @@ export function viewFor(e: KittensEngine, you: string): View {
   return {
     you,
     deck: e.deckId,
+    rules: e.rules,
     phase: e.phase,
     current: e.currentPlayer.id,
     turns: e.turns,
-    players: e.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, avatar: p.avatar, alive: p.alive, count: p.hand.length, godcat: p.hand.some((c) => c.type === 'godcat'), connected: p.connected })),
+    dir: e.dir,
+    players: e.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, avatar: p.avatar, alive: p.alive, count: p.hand.length, godcat: p.hand.some((c) => c.type === 'godcat'), connected: p.connected, out: p.out?.type ?? null })),
     hand: me ? [...me.hand] : [],
     drawCount: e.draw.length,
     kittens: e.kittensInPile(),
     discardTop: e.discard[e.discard.length - 1] ?? null,
     discardCount: e.discard.length,
+    discard: [...e.discard],
     godcatOnMat: Boolean(e.mat.godcat),
     pending: e.pending ? { by: e.pending.by, cards: e.pending.cards, effect: e.pending.effect, as: e.pending.as, nopes: e.pending.nopes, left: left(e.pending.deadline), passed: e.pending.passed.includes(you) } : null,
     prompt,

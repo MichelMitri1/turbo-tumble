@@ -192,7 +192,8 @@ export class Car {
     const fwdSpeed = this.forwardSpeed;
 
     this.updateDrive(dt, ctl, fwdSpeed);
-    if (!this.onGround) this.updateAir(dt, ctl, this.numContacts === 0);
+    // Air control applies whenever fewer than three wheels touch (like RocketSim).
+    if (!this.onGround) this.updateAir(dt, ctl);
     else this.isFlipping = false;
     this.updateJump(dt, ctl, jumpPressed);
     this.updateAutoFlip(dt, jumpPressed);
@@ -237,6 +238,8 @@ export class Car {
     if (ctl.boost && this.boost > 0) realThrottle = 1;
     let engine = realThrottle;
     let brake = 0;
+    // On a wall the full stop brake never engages: the car rolls down instead of hanging.
+    const onWall = Math.abs(this.groundNormal.z) < 0.9;
     if (!ctl.handbrake) {
       if (Math.abs(realThrottle) >= 0.001) {
         if (absF > C.STOPPING_SPEED && Math.sign(realThrottle) !== Math.sign(fwdSpeed)) {
@@ -245,7 +248,7 @@ export class Car {
         }
       } else {
         engine = 0;
-        brake = absF < C.STOPPING_SPEED ? 1 : C.COAST_BRAKE_FACTOR;
+        brake = absF < C.STOPPING_SPEED && !onWall ? 1 : C.COAST_BRAKE_FACTOR;
       }
     }
     const contactFrac = this.numContacts / 4;
@@ -288,24 +291,29 @@ export class Car {
     if (realThrottle === 0) lat *= C.curve(C.NON_STICKY_FRICTION_CURVE, N.z);
     this.vel.addScaledVector(ls, -vL * Math.min(1, lat * contactFrac));
     // Powerslide also bleeds a bit of forward speed.
-    if (this.handbrakeVal && !engine) this.vel.addScaledVector(fs, -vF * (1 - C.curve(C.HANDBRAKE_LONG_CURVE, slip)) * 0.02 * this.handbrakeVal);
+    if (this.handbrakeVal && !engine) this.vel.addScaledVector(fs, -vF * (1 - C.curve(C.HANDBRAKE_LONG_CURVE, slip)) * 0.004 * this.handbrakeVal);
 
-    // Steering: bicycle model (wheelbase ≈ 85 uu) on Rocket League's steer-angle curve.
-    let steerAngle = C.curve(C.STEER_ANGLE_CURVE, absF);
-    if (this.handbrakeVal) steerAngle += (C.curve(C.POWERSLIDE_STEER_CURVE, absF) - steerAngle) * this.handbrakeVal;
-    const curvature = Math.tan(steerAngle) / WHEELBASE;
+    // Steering: Rocket League's measured curvature table; the powerslide blends
+    // towards its own steer-angle curve (bicycle model, wheelbase ≈ 85 uu, scaled
+    // so both agree without the slide).
+    let curvature = C.curve(C.CURVATURE_CURVE, absF);
+    if (this.handbrakeVal) {
+      const ratio = curvature / (Math.tan(C.curve(C.STEER_ANGLE_CURVE, absF)) / WHEELBASE);
+      const slide = (Math.tan(C.curve(C.POWERSLIDE_STEER_CURVE, absF)) / WHEELBASE) * ratio;
+      curvature += (slide - curvature) * this.handbrakeVal;
+    }
     const targetYaw = -ctl.steer * curvature * vF;
     const yawNow = this.angVel.dot(N);
-    const response = Math.min(1, (this.onGround ? 22 : 6) * dt) * (this.handbrakeVal ? 0.55 : 1);
+    const response = Math.min(1, (this.onGround ? 30 : 6) * dt) * (this.handbrakeVal ? 0.55 : 1);
     this.angVel.addScaledVector(N, (targetYaw - yawNow) * response);
 
-    // Sticky force into the surface.
-    const fullStick = realThrottle !== 0 || absF > C.STOPPING_SPEED;
+    // Sticky force into the surface (kept on walls so a stopped car slides down on its wheels).
+    const fullStick = realThrottle !== 0 || absF > C.STOPPING_SPEED || onWall;
     const sticky = 0.5 + (fullStick ? 1 - Math.abs(N.z) : 0);
     this.vel.addScaledVector(N, sticky * C.GRAVITY * dt);
   }
 
-  private updateAir(dt: number, ctl: Controls, airControl: boolean): void {
+  private updateAir(dt: number, ctl: Controls): void {
     if (this.isFlipping) this.isFlipping = this.hasFlipped && this.flipTime < C.FLIP_TORQUE_TIME;
     let doAir = true;
     let pitchScaleFlip = 1;
@@ -322,7 +330,7 @@ export class Car {
         if (pitchScaleFlip < 1) doAir = true;
       }
     }
-    doAir = doAir && !this.isAutoFlipping && airControl;
+    doAir = doAir && !this.isAutoFlipping;
     if (doAir) {
       let pitchScale = 1;
       if (this.isFlipping) pitchScale = 0;

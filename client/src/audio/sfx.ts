@@ -1,4 +1,4 @@
-import { noise, notes, tone, type SynthCtx } from './synth';
+import { noise, notes, tone, vowel, type SynthCtx } from './synth';
 
 export interface SfxParams {
   /** 0..1 strength (impacts, bumps). */
@@ -283,6 +283,70 @@ export const SFX = {
     tone(c, { type: 'sine', freq: 3620, dur: 0.12, gain: 0.08 });
   },
   poof: (c) => noise(c, { dur: 0.18, gain: 0.25, filter: { type: 'bandpass', freq: 1300, to: 400, q: 0.8 } }),
+
+  /** Shot homing in: a short two-tone radar ping (urgency 0..1 raises the pitch). */
+  incoming: (c, p) => {
+    const k = I(p, 0.5);
+    tone(c, { type: 'square', freq: 1200 + k * 500, dur: 0.07, gain: 0.07, filter: { type: 'lowpass', freq: 4000 } });
+    tone(c, { type: 'sine', freq: 1800 + k * 700, at: 0.06, dur: 0.08, gain: 0.1 });
+  },
+  phantom: (c) => {
+    tone(c, { type: 'sine', freq: 520, to: 260, dur: 0.7, gain: 0.18, vibrato: { rate: 6, depth: 0.05 } });
+    tone(c, { type: 'triangle', freq: 780, to: 390, at: 0.05, dur: 0.6, gain: 0.08, vibrato: { rate: 5, depth: 0.06 } });
+    noise(c, { dur: 0.5, gain: 0.1, filter: { type: 'bandpass', freq: 2500, to: 900, q: 2 } });
+  },
+  steal: (c) => {
+    notes(
+      c,
+      [
+        ['A6', 0, 0.06],
+        ['E7', 0.05, 0.12],
+      ],
+      { type: 'square', gain: 0.07, filter: { type: 'lowpass', freq: 5000 } },
+    );
+    swish(c);
+  },
+  giant: (c) => {
+    tone(c, { type: 'sawtooth', freq: 70, to: 140, dur: 0.9, gain: 0.16, filter: { type: 'lowpass', freq: 700 } });
+    notes(
+      c,
+      [
+        ['C4', 0, 0.18],
+        ['G4', 0.15, 0.18],
+        ['C5', 0.3, 0.5],
+      ],
+      { type: 'square', gain: 0.07, filter: { type: 'lowpass', freq: 1800 } },
+    );
+    noise(c, { dur: 0.8, gain: 0.2, filter: { type: 'lowpass', freq: 300, to: 900 } });
+  },
+  feather: (c) => {
+    noise(c, { dur: 0.45, gain: 0.3, filter: { type: 'bandpass', freq: 600, to: 3800, q: 1.2 } });
+    tone(c, { type: 'sine', freq: 400, to: 1400, dur: 0.35, gain: 0.16 });
+  },
+  trick: (c) => {
+    tone(c, { type: 'sine', freq: 900, to: 1700, dur: 0.12, gain: 0.12 });
+    noise(c, { dur: 0.18, gain: 0.08, filter: { type: 'highpass', freq: 6000 } });
+  },
+  /** Character barks (stage: 0 hit, 1 boost, 2 finish, 3 overtake); pitch comes from the driver. */
+  voice: (c, p) => {
+    const g = 0.2;
+    switch (p.stage ?? 0) {
+      case 0: // "oof!"
+        vowel(c, { dur: 0.22, gain: g, f0: 300, to: 200, from: [650, 1100], end: [380, 760] });
+        break;
+      case 1: // "wa-hoo!"
+        vowel(c, { dur: 0.13, gain: g, f0: 260, to: 360, from: [380, 760], end: [720, 1150] });
+        vowel(c, { at: 0.12, dur: 0.24, gain: g, f0: 390, to: 470, from: [520, 900], end: [340, 720] });
+        break;
+      case 2: // "yeah!"
+        vowel(c, { dur: 0.4, gain: g, f0: 290, to: 420, from: [480, 1900], end: [760, 1250] });
+        break;
+      default: // "see ya!"
+        vowel(c, { dur: 0.11, gain: g * 0.85, f0: 360, to: 380, from: [300, 2300], end: [320, 2200] });
+        vowel(c, { at: 0.12, dur: 0.2, gain: g, f0: 410, to: 320, from: [330, 2100], end: [720, 1200] });
+        break;
+    }
+  },
 
   // ---------------------------------------------------------------- race
   lap: (c) =>

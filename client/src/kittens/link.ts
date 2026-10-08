@@ -1,4 +1,4 @@
-import { KittensEngine, type Action, type GameEvent, type PlayerSetup } from './engine';
+import { KittensEngine, type Action, type GameEvent, type PlayerSetup, type Rules } from './engine';
 import { BotDriver, type BotLevel } from './bots';
 import { redact, viewFor, type View } from './view';
 import type { DeckId } from './cards';
@@ -11,7 +11,8 @@ export interface GameLink {
   onUpdate: ((view: View, events: GameEvent[]) => void) | null;
   onError: ((msg: string) => void) | null;
   send(a: Action): void;
-  tick(dt: number): void;
+  /** `busy`: the table is still animating earlier events (a local game waits for it). */
+  tick(dt: number, busy?: boolean): void;
   /** Pause the local game while a big animation plays (no-op online). */
   hold(seconds: number): void;
   dispose(): void;
@@ -30,11 +31,11 @@ export class LocalLink implements GameLink {
   private held = 0;
   private refresh = 0;
 
-  constructor(opts: { name: string; avatar: number; bots: number; level: BotLevel; deck: DeckId }) {
+  constructor(opts: { name: string; avatar: number; bots: number; level: BotLevel; deck: DeckId } & Rules) {
     const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
     const seats: PlayerSetup[] = [{ id: this.me, name: opts.name, bot: false, avatar: opts.avatar }];
     for (let i = 0; i < opts.bots; i++) seats.push({ id: `bot${i}`, name: names[i]!, bot: true, avatar: (opts.avatar + 1 + i) % 8 });
-    this.engine = new KittensEngine(seats, { deck: opts.deck, nopeWindow: 2.6 });
+    this.engine = new KittensEngine(seats, { deck: opts.deck, fullDeck: opts.fullDeck, anyPairs: opts.anyPairs, imploding: opts.imploding, nopeWindow: 2.6 });
     this.bots = new BotDriver(this.engine, opts.level);
   }
 
@@ -48,8 +49,9 @@ export class LocalLink implements GameLink {
     this.held = Math.max(this.held, seconds);
   }
 
-  tick(dt: number): void {
-    if (this.held > 0) {
+  tick(dt: number, busy = false): void {
+    // Bots (and Nope windows) wait while the table catches up, so plays never outrun what's shown.
+    if (this.held > 0 || busy) {
       this.held -= dt;
     } else {
       this.engine.update(dt);
