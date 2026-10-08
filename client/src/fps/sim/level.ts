@@ -5,7 +5,9 @@
  *
  * Coordinates: metres, y up (same as three.js).
  */
-export type Material = 'concrete' | 'brick' | 'metal' | 'wood' | 'dirt' | 'sand' | 'asphalt' | 'grass' | 'glass' | 'plaster' | 'tile' | 'invisible';
+export type Material =
+  | 'concrete' | 'brick' | 'metal' | 'wood' | 'dirt' | 'sand' | 'asphalt' | 'grass' | 'glass' | 'plaster' | 'tile' | 'invisible'
+  | 'marble' | 'carpet' | 'wallpaper' | 'darkwood' | 'shingle' | 'hedge' | 'facade' | 'paint' | 'fabric';
 
 export interface Box {
   x0: number;
@@ -19,6 +21,10 @@ export interface Box {
   thin?: boolean;
   /** Rendered by a prop model rather than as a textured block. */
   hidden?: boolean;
+  /** Colour multiplier for the texture (painted walls, cars, sofas…). */
+  tint?: string;
+  /** Roofs and ceilings: left off the minimap so you can see inside buildings. */
+  roof?: boolean;
 }
 
 export interface RayHit {

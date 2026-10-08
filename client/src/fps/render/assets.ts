@@ -3,6 +3,7 @@ import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { WEAPONS } from '../sim/weapons';
+import { BACKDROP_MODELS } from './backdrop';
 
 /** Loads and caches the Zero Hour models (meshopt GLBs from tools/fps-assets.mjs). */
 const loader = new GLTFLoader();
@@ -33,7 +34,7 @@ export function loaded(name: string): GLTF | undefined {
 
 /** Everything a match needs. */
 export async function preload(props: string[], onProgress?: (f: number) => void): Promise<void> {
-  const names = ['soldier', 'item-grenade', 'item-knife-1', 'acc-scope-3', 'acc-silencer-1', 'acc-grip', 'acc-flashlight', ...new Set(WEAPONS.map((w) => w.model)), ...new Set(props)];
+  const names = ['soldier', 'item-grenade', 'item-knife-1', 'acc-scope-3', 'acc-silencer-1', 'acc-grip', 'acc-flashlight', ...new Set(WEAPONS.map((w) => w.model)), ...new Set([...props, ...BACKDROP_MODELS])];
   let done = 0;
   await Promise.all(
     names.map((n) =>

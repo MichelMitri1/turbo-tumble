@@ -110,7 +110,7 @@ export class Hud {
     x.fillRect(0, 0, 512, 512);
     x.fillStyle = 'rgba(40,50,55,1)';
     x.fillRect(256 - hx * s, 256 - hz * s, 2 * hx * s, 2 * hz * s);
-    const boxes = [...g.level.boxes].filter((b) => b.mat !== 'invisible').sort((a, b) => a.y1 - b.y1);
+    const boxes = [...g.level.boxes].filter((b) => b.mat !== 'invisible' && !b.roof).sort((a, b) => a.y1 - b.y1);
     for (const b of boxes) {
       const h = Math.min(1, b.y1 / 5);
       x.fillStyle = `rgba(${130 + h * 80},${140 + h * 80},${140 + h * 70},0.9)`;
