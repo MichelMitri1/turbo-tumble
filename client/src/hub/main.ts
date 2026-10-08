@@ -50,7 +50,7 @@ const grid = el('div', 'hub-grid', cards);
 document.getElementById('hub')!.append(
   fullscreen,
   el('header', 'hub-header', [
-    el('div', 'hub-logo', [el('div', 'hub-logo__top hub-display', ["MICHEL'S"]), el('div', 'hub-logo__bottom hub-display', ['ARCADE'])]),
+    el('div', 'hub-logo', [el('div', 'hub-logo__top hub-display', ["MITRIS'"]), el('div', 'hub-logo__bottom hub-display', ['ARCADE'])]),
     el('p', 'hub-sub', ['Pick a game']),
   ]),
   el('main', '', [grid]),
