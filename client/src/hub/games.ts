@@ -99,10 +99,18 @@ export const GAMES: GameEntry[] = [
   {
     id: 'starfall',
     title: 'Starfall',
-    tagline: 'First-person 3D social deduction aboard a spaceship. Complete tasks, find bodies, vote out the impostor — or be one.',
+    tagline: 'Do your tasks, find the bodies, vote out the impostor — or be one. 3 maps, 39 task minigames, vents and sabotages.',
     href: '/starfall/',
-    tags: ['First-person 3D', '7 bots', 'Crew / Impostor', 'Controller'],
-    art: { emoji: '🧑‍🚀', from: '#132f4d', to: '#127f88' },
+    tags: ['Social deduction', 'vs Bots', 'Online · LAN', '4–15 players'],
+    art: { image: '/assets/hub/starfall.webp', emoji: '🧑‍🚀', from: '#132f4d', to: '#c51111' },
+  },
+  {
+    id: 'starfall-3d',
+    title: 'Starfall 3D',
+    tagline: 'Starfall in first person: walk the corridors at eye level, do tasks, vent, vote — and play with 2D players online.',
+    href: '/starfall-3d/',
+    tags: ['First-person 3D', 'Social deduction', 'vs Bots', 'Online · LAN'],
+    art: { image: '/assets/hub/starfall-3d.webp', emoji: '🧑‍🚀', from: '#1b2a4a', to: '#c51111' },
   },
   {
     id: 'cage-kings',

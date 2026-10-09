@@ -1,283 +1,1241 @@
 import './styles.css';
-import { Match, GRID, SCALE, CENTER, REACTOR, ELECTRICAL, VENTS, ROOMS, distance, visible, location, pathTo, type Station, type Pos } from './sim';
-import { ShipView, type Quality } from './view';
-import { ShipAudio } from './audio';
+import { Audio } from './audio';
+import { BOT_NAMES, LocalLink, OnlineLink, type Link } from './link';
 import { StarfallNet } from './net/online';
-import type { SfBegin, SfConfig, SfEvent, SfLobby, SfSnap } from './net/protocol';
+import { SF_MAX, type SfLobby } from './net/protocol';
+import { beanIcon } from './render/art';
+import { WorldRenderer, type DrawOpts } from './render/world';
+import { World3D } from './render3d/world3d';
+import { COLORS, DEFAULT_CONFIG, KILL_RANGE, REPORT_RANGE, USE_RANGE, type Action, type Config, type Event } from './sim/game';
+import { buildMap, MAP, MAPS, type BuiltMap, type SabotageKind, type Spot } from './sim/maps';
+import type { PView, SfView } from './sim/view';
+import { ICON } from './ui/icons';
+import { CamsUI, MapOverlay, VitalsUI } from './ui/mapview';
+import { makePanel, type Panel, type PanelInfo } from './ui/panels';
+import { EjectUI, MeetingUI, killAnim, overScreen, reveal, splash } from './ui/screens';
+
+/**
+ * Starfall: the social-deduction game on a spaceship, a sky HQ and an ice planet.
+ * Menus (vs bots, online / LAN), and the game screen: world, HUD, task panels, meetings.
+ */
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
-app.innerHTML = '<canvas id="scene"></canvas><div id="hud"></div><div id="modal"></div><div id="toast" class="notice hidden"></div>';
-const canvas = document.querySelector<HTMLCanvasElement>('#scene')!, hud = document.querySelector<HTMLDivElement>('#hud')!, modal = document.querySelector<HTMLDivElement>('#modal')!, toast = document.querySelector<HTMLDivElement>('#toast')!;
-let view: ShipView;
-try { view = new ShipView(canvas); } catch { app.innerHTML = '<div class="overlay"><div class="panel"><h2>3D graphics unavailable</h2><p>Enable hardware acceleration in your browser, then reload.</p><a class="link" href="/">Back to arcade</a></div></div>'; throw new Error('WebGL unavailable'); }
-let match: Match | null = null, yaw = 0, pitch = 0, mode: 'home' | 'play' | 'pause' | 'task' | 'meeting' | 'map' | 'result' | 'briefing' = 'home';
-let sensitivity = .0022, volume = .25, fov = 76;
-let quality:Quality = 'balanced';
+/** The 3D page (/starfall-3d/) draws the same game with the 3D renderer. */
+const VIEW3D = document.body.dataset.view === '3d';
+const audio = new Audio();
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const icon = (c: number, size = 64) => beanIcon(COLORS[c]![1], COLORS[c]![2], false, size);
+
+// ---------------------------------------------------------------- saved settings
+
+interface Saved {
+  name: string;
+  color: number;
+  cfg: Config;
+  players: number;
+  role: 'random' | 'crew' | 'impostor';
+  volume: number;
+}
+const saved: Saved = { name: 'Crewmate', color: 0, cfg: { ...DEFAULT_CONFIG }, players: 10, role: 'random', volume: 0.5 };
 try {
-  const p = JSON.parse(localStorage.getItem('starfall:settings') ?? '{}') as { sensitivity?: number; volume?: number; fov?:number; quality?:Quality };
-  if (typeof p.sensitivity === 'number' && Number.isFinite(p.sensitivity)) sensitivity = Math.max(.0007,Math.min(.005,p.sensitivity));
-  if (typeof p.volume === 'number' && Number.isFinite(p.volume)) volume = Math.max(0,Math.min(.7,p.volume));
-  if (typeof p.fov === 'number' && Number.isFinite(p.fov)) fov = Math.max(60,Math.min(100,p.fov));
-  if (p.quality && ['high','balanced','low'].includes(p.quality)) quality=p.quality;
-} catch { /* storage optional */ }
-view.setQuality(quality);view.setFov(fov);
-function save(): void { try { localStorage.setItem('starfall:settings',JSON.stringify({ sensitivity,volume,quality,fov })); } catch { /* storage optional */ } }
-const audio = new ShipAudio();
-function beep(freq = 540, length = .10): void { audio.volume=volume;audio.tone(freq,length); }
-let trackedTask=0,route:Pos[]=[],routeRefresh=0,previousRoom='';
-let net:StarfallNet|null=null,online=false,lastNetInput=0,meetingLines:string[]=[];
-let meetingDialogueToken=0;
-let playerName=localStorage.getItem('starfall:name')||'Captain';
-let localConfig:SfConfig={players:8,impostors:1,bots:7,crewVision:9,impostorVision:13,killCooldown:24,confirmEjects:true};
-let noticeUntil = 0;
-function notify(text: string, seconds = 4): void { toast.textContent = text; toast.classList.remove('hidden'); noticeUntil = performance.now() + seconds*1000; }
-const keys = new Set<string>();
-function show(html: string, home = false): void { modal.innerHTML = `<div class="overlay ${home ? 'home' : ''}">${html}</div>`; focusIndex = 0; document.exitPointerLock?.(); keys.clear(); }
-function buttons(): HTMLElement[] { return [...modal.querySelectorAll<HTMLElement>('button:not(:disabled),a,input')]; }
-function bind(id: string, fn: () => void): void { document.getElementById(id)?.addEventListener('click',fn); }
-function lock(): void { const result = canvas.requestPointerLock?.(); if (result instanceof Promise) void result.catch(() => notify('Mouse capture unavailable. Drag on the view to look, or use a controller.')); }
-function resume(capture = true): void { mode = 'play'; modal.innerHTML = ''; keys.clear(); if (capture && !padConnected()) lock(); }
+  const s = JSON.parse(localStorage.getItem('starfall:v2') ?? '{}') as Partial<Saved>;
+  if (typeof s.name === 'string') saved.name = s.name.slice(0, 12);
+  if (typeof s.color === 'number' && COLORS[s.color]) saved.color = s.color;
+  if (s.cfg && typeof s.cfg === 'object') saved.cfg = { ...DEFAULT_CONFIG, ...s.cfg };
+  if (!MAP[saved.cfg.map]) saved.cfg.map = 'vanguard';
+  if (typeof s.players === 'number') saved.players = Math.max(4, Math.min(SF_MAX, s.players));
+  if (s.role === 'crew' || s.role === 'impostor' || s.role === 'random') saved.role = s.role;
+  if (typeof s.volume === 'number') saved.volume = Math.max(0, Math.min(1, s.volume));
+} catch {
+  /* storage optional */
+}
+audio.volume = saved.volume;
+const save = () => {
+  try {
+    localStorage.setItem('starfall:v2', JSON.stringify(saved));
+  } catch {
+    /* storage optional */
+  }
+};
+
+// ---------------------------------------------------------------- menus
+
+const STEPS: Array<{ k: keyof Config; label: string; min: number; max: number; step: number; fmt: (v: number) => string }> = [
+  { k: 'impostors', label: 'Impostors', min: 1, max: 3, step: 1, fmt: String },
+  { k: 'killCooldown', label: 'Kill Cooldown', min: 10, max: 60, step: 2.5, fmt: (v) => `${v}s` },
+  { k: 'crewVision', label: 'Crewmate Vision', min: 1.375, max: 16.5, step: 1.375, fmt: (v) => `${(v / 5.5).toFixed(2)}x` },
+  { k: 'impostorVision', label: 'Impostor Vision', min: 1.375, max: 16.5, step: 1.375, fmt: (v) => `${(v / 5.5).toFixed(2)}x` },
+  { k: 'emergencies', label: 'Emergency Meetings', min: 0, max: 9, step: 1, fmt: String },
+  { k: 'discussion', label: 'Discussion Time', min: 0, max: 120, step: 15, fmt: (v) => `${v}s` },
+  { k: 'voting', label: 'Voting Time', min: 15, max: 300, step: 15, fmt: (v) => `${v}s` },
+  { k: 'commonTasks', label: 'Common Tasks', min: 0, max: 2, step: 1, fmt: String },
+  { k: 'longTasks', label: 'Long Tasks', min: 0, max: 3, step: 1, fmt: String },
+  { k: 'shortTasks', label: 'Short Tasks', min: 0, max: 5, step: 1, fmt: String },
+];
+const TOGGLES: Array<{ k: 'confirmEjects' | 'anonymousVotes' | 'visualTasks'; label: string }> = [
+  { k: 'confirmEjects', label: 'Confirm Ejects' },
+  { k: 'anonymousVotes', label: 'Anonymous Votes' },
+  { k: 'visualTasks', label: 'Visual Tasks' },
+];
+
+function settingsHtml(cfg: Config, edit: boolean): string {
+  return `<div class="settings">${STEPS.map((s) => `<div class="setting"><span>${s.label}</span><div class="stepper"><button data-k="${s.k}" data-d="-1" ${edit ? '' : 'disabled'}>−</button><b>${s.fmt(cfg[s.k] as number)}</b><button data-k="${s.k}" data-d="1" ${edit ? '' : 'disabled'}>+</button></div></div>`).join('')}
+    ${TOGGLES.map((t) => `<div class="setting"><span>${t.label}</span><div class="seg" style="width:120px"><button data-t="${t.k}" data-v="1" class="${cfg[t.k] ? 'on' : ''}" ${edit ? '' : 'disabled'}>On</button><button data-t="${t.k}" data-v="0" class="${cfg[t.k] ? '' : 'on'}" ${edit ? '' : 'disabled'}>Off</button></div></div>`).join('')}</div>`;
+}
+function bindSettings(root: HTMLElement, cfg: Config, change: (patch: Partial<Config>) => void): void {
+  root.querySelectorAll<HTMLButtonElement>('.stepper button').forEach((b) => {
+    b.onclick = () => {
+      const s = STEPS.find((x) => x.k === b.dataset.k)!;
+      const v = Math.round(((cfg[s.k] as number) + s.step * Number(b.dataset.d)) * 1000) / 1000;
+      audio.play('click');
+      change({ [s.k]: Math.max(s.min, Math.min(s.max, v)) } as Partial<Config>);
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>('[data-t]').forEach((b) => {
+    b.onclick = () => {
+      audio.play('click');
+      change({ [b.dataset.t!]: b.dataset.v === '1' } as Partial<Config>);
+    };
+  });
+}
+
+/** Little previews of each map for the map picker. */
+const previews = new Map<string, { map: BuiltMap; world: WorldRenderer }>();
+function drawPreview(c: HTMLCanvasElement, id: string): void {
+  let p = previews.get(id);
+  if (!p) {
+    const map = buildMap(MAP[id]!);
+    previews.set(id, (p = { map, world: new WorldRenderer(map) }));
+  }
+  const W = (c.width = c.clientWidth * 2 || 560);
+  const H = (c.height = c.clientHeight * 2 || 350);
+  const b = p.map.def.bounds;
+  const s = Math.min(W / (b[2] - b[0]), H / (b[3] - b[1])) * 0.95;
+  const empty: SfView = { me: 0, map: id, cfg: DEFAULT_CONFIG, time: 0, phase: 'play', phaseT: 0, players: [], bodies: [], tasks: [], progress: 0, killCd: 0, ventCd: 0, vent: -1, emergencies: 0, emergencyCd: 0, sabotageCd: 0, impostors: 1, partners: [], doors: [], doorCd: {}, sabotage: null, holding: -1, meeting: null, lastEject: null, winner: '', why: '' };
+  p.world.draw(c.getContext('2d')!, W, H, empty, 0, { cx: (b[0] + b[2]) / 2, cy: (b[1] + b[3]) / 2, scale: s, eye: null, ghosts: false, tasks: [], alerts: [], names: false });
+}
+function mapsHtml(sel: string, edit: boolean): string {
+  return `<div class="maps">${MAPS.map((m) => `<button class="mapcard ${m.id === sel ? 'on' : ''}" data-map="${m.id}" ${edit ? '' : 'disabled'}><canvas></canvas><b>${m.name}</b><small>${m.tagline}</small></button>`).join('')}</div>`;
+}
+function bindMaps(root: HTMLElement, change: (id: string) => void): void {
+  root.querySelectorAll<HTMLButtonElement>('.mapcard').forEach((b) => {
+    requestAnimationFrame(() => drawPreview(b.querySelector('canvas')!, b.dataset.map!));
+    b.onclick = () => {
+      audio.play('click');
+      change(b.dataset.map!);
+    };
+  });
+}
+function colorsHtml(sel: number, taken: number[] = []): string {
+  return `<div class="colors">${COLORS.map((_, i) => `<button data-c="${i}" class="${i === sel ? 'on' : ''} ${taken.includes(i) && i !== sel ? 'taken' : ''}" title="${COLORS[i]![0]}"><img src="${icon(i, 48)}"></button>`).join('')}</div>`;
+}
+
+function screen(html: string): HTMLElement {
+  app.innerHTML = `<div class="menu">${html}</div><div class="topbar"><a class="chip" href="/">← Arcade</a></div>`;
+  return app.querySelector('.menu')!;
+}
+
 function home(): void {
-  if(net){void net.leave();net=null;}online=false;match = null; mode = 'home'; hud.innerHTML = ''; view.setup(new Match('crew'));
-  show(`<div class="home-shell"><section class="home-inner"><div class="eyebrow"><i></i> MITRIS’ ARCADE / DEEP SPACE DIVISION</div><h1>STAR<span>FALL</span></h1><p class="home-lead">A first-person social deception mission aboard the Aurora-09. Every crewmate remembers. Every story can be questioned.</p><div class="ship-readout"><div><b>04</b><span>DECKS ONLINE</span></div><div><b>12</b><span>MAX CREW</span></div><div><b>∞</b><span>POSSIBLE LIES</span></div></div><div class="mode-grid"><button id="online" class="mode-card featured"><small>01 / MULTIPLAYER</small><strong>Board with friends</strong><span>Private codes · public rooms · same-Wi-Fi LAN</span><em>ONLINE / LAN →</em></button><button id="bots" class="mode-card"><small>02 / CUSTOM</small><strong>Command a bot crew</strong><span>Set roles, vision, cooldowns and crew size</span><em>BUILD MISSION →</em></button></div><div class="practice-row"><button id="crew"><b>CREW DRILL</b><span>Tasks + investigation</span></button><button id="impostor"><b>IMPOSTOR DRILL</b><span>Eliminate + deceive</span></button></div><div class="home-links"><button id="help">How to play</button><button id="settings">Settings</button><a class="link" href="/">← Arcade deck</a></div><div id="pad"></div></section><aside class="intel-card"><div class="intel-scan"></div><div class="eyebrow">SOCIAL AI / ACTIVE</div><h3>THE CREW REMEMBERS</h3><p>Bots track routes, tasks, bodies, claims, contradictions and witnesses. Question them in meetings—or become the person they quietly follow.</p><ul><li><span></span>Context-aware meeting chat</li><li><span></span>Independent suspicion models</li><li><span></span>Evidence-based voting</li><li><span></span>Adaptive tailing behavior</li></ul><div class="signal"><i></i><b>AURORA NETWORK</b><span>READY</span></div></aside></div><div class="corner-brand">RESEARCH VESSEL // AURORA-09 · BUILD 09</div>`,true);
-  bind('online',onlineMenu);bind('bots',botSetup);bind('crew',()=>start('crew')); bind('impostor',()=>start('impostor')); bind('help',help); bind('settings',()=>settings());
-}
-function botSetup():void{
-  const draw=()=>{show(`<div class="panel"><div class="eyebrow">CUSTOM MISSION / SOLO WITH BOTS</div><h2>Game rules</h2><label class="settings-row">Total players <input id="players" type="range" min="4" max="12" value="${localConfig.players}"><b>${localConfig.players}</b></label><label class="settings-row">Impostors <select id="imps"><option value="1">1</option><option value="2" ${localConfig.impostors===2?'selected':''}>2</option></select></label><label class="settings-row">Crew view distance <input id="cv" type="range" min="3" max="18" value="${localConfig.crewVision}"><b>${localConfig.crewVision}m</b></label><label class="settings-row">Impostor view distance <input id="iv" type="range" min="4" max="24" value="${localConfig.impostorVision}"><b>${localConfig.impostorVision}m</b></label><label class="settings-row">Kill cooldown <input id="kc" type="range" min="10" max="60" value="${localConfig.killCooldown}"><b>${localConfig.killCooldown}s</b></label><label class="settings-row">Confirm ejected role <input id="ce" type="checkbox" ${localConfig.confirmEjects?'checked':''}></label><div class="actions"><button id="random-role" class="primary">Random role</button><button id="crew-role">Choose crew</button><button id="imp-role">Choose impostor</button><button id="back">Back</button></div></div>`);
-    const range=(id:keyof SfConfig)=>{const input=document.getElementById(id==='players'?'players':id==='crewVision'?'cv':id==='impostorVision'?'iv':'kc')as HTMLInputElement;const suffix=id==='players'?'':'m';input.oninput=()=>{(localConfig as unknown as Record<string,number>)[id]=Number(input.value);const label=input.nextElementSibling;if(label)label.textContent=input.value+(id==='killCooldown'?'s':suffix);};};range('players');range('crewVision');range('impostorVision');range('killCooldown');
-    (document.getElementById('imps')as HTMLSelectElement).onchange=e=>{localConfig.impostors=Number((e.target as HTMLSelectElement).value)as 1|2;};(document.getElementById('ce')as HTMLInputElement).onchange=e=>localConfig.confirmEjects=(e.target as HTMLInputElement).checked;
-    bind('random-role',()=>start(Math.random()<localConfig.impostors/localConfig.players?'impostor':'crew'));bind('crew-role',()=>start('crew'));bind('imp-role',()=>start('impostor'));bind('back',home);
-  };draw();
-}
-async function onlineMenu():Promise<void>{
-  show(`<div class="panel"><div class="eyebrow">ONLINE / LAN</div><h2>Board with friends</h2><label class="settings-row">Callsign <input id="name" maxlength="16" value="${playerName}"></label><label class="settings-row">Invite code <input id="code" maxlength="6" placeholder="ABCDEF"></label><div class="actions"><button id="create" class="primary">Create private room</button><button id="join">Join code</button><button id="quick">Quick match</button><button id="back">Back</button></div><p id="net-status" class="hint">Checking ship relay…</p></div>`);
-  const status=document.getElementById('net-status')!,n=document.getElementById('name')as HTMLInputElement,code=document.getElementById('code')as HTMLInputElement;
-  const fresh=()=>{playerName=n.value.trim().slice(0,16)||'Captain';localStorage.setItem('starfall:name',playerName);net=new StarfallNet();net.onLobby=onlineLobby;net.onBegin=beginOnline;net.onSnap=applyOnlineSnap;net.onEvent=onlineEvent;net.onError=m=>notify(m);net.onClosed=()=>{if(online){online=false;notify('Connection to the ship relay was lost.');home();}};return net;};
-  const busy=async(fn:()=>Promise<void>)=>{status.textContent='Connecting to ship relay…';try{await fn();}catch(e){status.textContent=e instanceof Error?e.message:'Could not connect.';}};
-  bind('create',()=>void busy(()=>fresh().create(playerName,0)));bind('join',()=>void busy(()=>fresh().join(code.value,playerName,0)));bind('quick',()=>void busy(()=>fresh().quick(playerName,0)));bind('back',home);
-  const probe=await new StarfallNet().probe();status.textContent=probe.ok?(probe.lan?.length?`LAN relay ready · ${probe.lan.join(' · ')}`:'Online relay ready'):'Relay is offline. Start the arcade server for online or LAN rooms.';
-}
-function onlineLobby(l:SfLobby):void{
-  online=true;const host=net?.sessionId===l.hostId,c=l.config;
-  show(`<div class="panel wide"><div class="eyebrow">PRIVATE ROOM / INVITE CODE</div><div class="lobby-code">${l.code}</div><p class="muted">Share this code with friends. Empty seats launch as bots.</p><div class="meeting-grid"><div><h3>Boarding manifest</h3><div class="roster">${l.players.map(p=>`<div><span class="dot" style="background:#${COLORS_HEX[p.color%12]}"></span><b>${p.name}</b>${p.id===l.hostId?' · HOST':''}</div>`).join('')} ${Array.from({length:c.bots},(_,i)=>`<div class="muted">BOT ${i+1} · READY</div>`).join('')}</div></div><div><h3>Mission rules</h3><label class="settings-row">Players <input data-cfg="players" type="range" min="4" max="12" value="${c.players}" ${host?'':'disabled'}><b>${c.players}</b></label><label class="settings-row">Impostors <select data-cfg="impostors" ${host?'':'disabled'}><option>1</option><option ${c.impostors===2?'selected':''}>2</option></select></label><label class="settings-row">Crew view <input data-cfg="crewVision" type="range" min="3" max="18" value="${c.crewVision}" ${host?'':'disabled'}><b>${c.crewVision}m</b></label><label class="settings-row">Impostor view <input data-cfg="impostorVision" type="range" min="4" max="24" value="${c.impostorVision}" ${host?'':'disabled'}><b>${c.impostorVision}m</b></label><label class="settings-row">Kill cooldown <input data-cfg="killCooldown" type="range" min="10" max="60" value="${c.killCooldown}" ${host?'':'disabled'}><b>${c.killCooldown}s</b></label><label class="settings-row">Confirm ejected role <input data-cfg="confirmEjects" type="checkbox" ${c.confirmEjects?'checked':''} ${host?'':'disabled'}></label></div></div><div class="actions">${host?'<button id="launch" class="primary">Launch mission</button>':'<span class="status">Waiting for host…</span>'}<button id="leave">Leave room</button></div></div>`);
-  modal.querySelectorAll<HTMLInputElement|HTMLSelectElement>('[data-cfg]').forEach(el=>el.onchange=()=>net?.config({[el.dataset.cfg!]:el instanceof HTMLInputElement&&el.type==='checkbox'?el.checked:Number(el.value)}));bind('launch',()=>net?.start());bind('leave',home);
-}
-const COLORS_HEX=['52d8ef','f35c5c','608bff','58d099','b18bff','f2c64e','e5eafa','ff9a7d','2e4e9d','68717b','95df53','e958a0'];
-function beginOnline(b:SfBegin):void{
-  online=true;localConfig=b.config;match=new Match(b.role,Math.random,{count:b.people.length,humanCount:b.people.filter(p=>!p.bot).length,names:b.people.map(p=>p.name),impostorIds:[b.me]});match.people.forEach((p,i)=>{p.impostor=false;p.color=b.people[i]?.color??p.color;p.bot=b.people[i]?.bot??p.bot;});if(b.role==='impostor')for(const id of [b.me,...b.partners])if(match.people[id])match.people[id]!.impostor=true;match.localId=b.me;match.killCooldown=b.config.killCooldown;view.setup(match);view.setVision(b.role==='impostor'?b.config.impostorVision:b.config.crewVision);yaw=0;pitch=0;trackedTask=0;renderHud();roleReveal(b.role,b.partners);
-}
-function roleReveal(role:'crew'|'impostor',partners:number[]=[]):void{
-  mode='briefing';const names=partners.map(id=>match?.people[id]?.name).filter(Boolean).join(' and ');
-  show(`<div class="role-reveal ${role}"><div class="scanlines"></div><div class="eyebrow">YOUR ASSIGNMENT IS</div><h2>${role==='impostor'?'IMPOSTOR':'CREWMATE'}</h2><p>${role==='impostor'?(names?`${names} ${partners.length>1?'are':'is'} your partner. You can identify each other.`:'You work alone. Blend in and take the ship.'):'Complete your tasks. Find the impostors. Trust what you witness.'}</p><button id="deploy" class="primary">Enter the ship</button></div>`);bind('deploy',()=>resume());
-}
-function help(): void { show(`<div class="panel"><div class="eyebrow">CREW HANDBOOK / 01</div><h2>Trust your eyes.</h2><div class="howto"><div><h3>Crew</h3><p>Complete six tasks around the ship. Report bodies, question witnesses in chat, then eject the impostor. If killed, continue tasks as a ghost.</p></div><div><h3>Impostor</h3><p>Eliminate isolated crew. Sabotage lights or the reactor, use vents, and avoid witnesses. Win when only one crew member remains.</p></div><div><h3>Keyboard & mouse</h3><p>WASD: move · mouse: look<br>E: use · R: report · Q: eliminate<br>F: vent · Z: lights · X: reactor<br>M: map · Esc: pause</p></div><div><h3>Controller</h3><p>Left stick: move · right stick: look<br>A/✕: use · Y/△: report · X/□: eliminate<br>B/○: vent · LB: lights · RB: reactor<br>View/Share: map · Start: pause<br>D-pad + A/✕: operate all panels</p></div></div><p class="hint">An emergency console is in Commons. Each survivor can call one meeting. During discussion, type questions like “Atlas, where were you?”, “who reported?”, or “what did you see?” Bots answer from their simulated tasks and sightings.</p><button id="back" class="primary">Understood</button></div>`); bind('back',home); }
-function settings(returnTo:()=>void=home): void {
-  show(`<div class="panel"><div class="eyebrow">DISPLAY / AUDIO / INPUT</div><h2>Flight preferences</h2><div class="settings-row"><span>Graphics quality</span><button id="quality">${quality.toUpperCase()}</button></div><p class="hint">High: dynamic shadows + bloom + sharper resolution.<br>Balanced: bloom and contact shadows. Low: reduced resolution, no bloom.</p><label class="settings-row">Field of view<input id="fov" type="range" min="60" max="100" step="2" value="${fov}"></label><label class="settings-row">Look sensitivity<input id="sensitivity" type="range" min="0.0007" max="0.005" step="0.0001" value="${sensitivity}"></label><label class="settings-row">Audio volume<input id="volume" type="range" min="0" max="0.7" step="0.05" value="${volume}"></label><p class="hint">A steady camera: no forced camera shake or head bob. Controller settings use D-pad left/right.</p><button id="back" class="primary">Save & return</button></div>`);
-  bind('quality',()=>{const values:Quality[]=['balanced','high','low'];quality=values[(values.indexOf(quality)+1)%3]!;view.setQuality(quality);document.getElementById('quality')!.textContent=quality.toUpperCase();save();});
-  document.getElementById('fov')!.oninput=e=>{fov=Number((e.target as HTMLInputElement).value);view.setFov(fov);save();};
-  document.getElementById('sensitivity')!.oninput = e => { sensitivity = Number((e.target as HTMLInputElement).value); save(); };
-  document.getElementById('volume')!.oninput = e => { volume = Number((e.target as HTMLInputElement).value); save(); };
-  bind('back',returnTo);
-}
-function start(role: 'crew' | 'impostor'): void {
-  online=false;const opts={count:localConfig.players,impostors:localConfig.impostors,humanCount:1};match = new Match(role,Math.random,opts);match.killCooldown=localConfig.killCooldown;view.setup(match);view.setVision(role==='impostor'?localConfig.impostorVision:localConfig.crewVision); yaw = 0; pitch = 0; trackedTask=0;route=[];routeRefresh=0;previousRoom='';renderHud();beep();
-  const partners=match.people.filter(p=>p.impostor&&p.id!==0).map(p=>p.id);roleReveal(role,partners);
-}
-function renderHud(): void { hud.innerHTML = `<div class="visor-frame"></div><div class="topbar"><div class="hud-card"><div class="badge">AURORA-09 / <span id="role"></span></div><div id="room" class="room"></div><div class="bar"><i id="progress"></i></div><div id="tasks"></div></div><div class="hud-card"><div class="badge">SHIP STATUS</div><div id="alarm" class="status"></div><div id="alive" class="taskline"></div></div></div><div class="crosshair"></div><div id="objective" class="objective"></div><div id="prompt" class="prompt hidden"></div><div class="action-dock"><button id="act-use"><span>E</span>USE</button><button id="act-report"><span>R</span>REPORT</button><button id="act-kill" class="danger hidden"><span>Q</span>KILL</button><button id="act-vent" class="hidden"><span>F</span>VENT</button></div><div class="bottom"><div class="controls" id="controls"></div><button id="pause">Pause / Esc</button></div>`; bind('pause',pause);bind('act-use',use);bind('act-report',report);bind('act-kill',eliminate);bind('act-vent',vent); }
-function pause(): void { if (!match || mode !== 'play') return; mode = 'pause'; show('<div class="panel"><div class="eyebrow">SIMULATION PAUSED</div><h2>Take a breath.</h2><p class="muted">The crew, task progress, and sabotage timers are paused.</p><div class="actions"><button id="resume" class="primary">Resume mission</button><button id="flight-settings">Settings</button><button id="quit">Return to hangar</button></div></div>'); bind('resume',()=>resume()); bind('flight-settings',()=>settings(()=>{mode='play';pause();})); bind('quit',home); }
-type Target = { label: string; action: () => void };
-function nearest(): Target | null {
-  if (!match) return null; const m = match, p = m.player;
-  if (p.alive && m.sabotage && distance(p,m.sabotage === 'reactor' ? REACTOR : ELECTRICAL)<2.8 && visible(p,m.sabotage === 'reactor'?REACTOR:ELECTRICAL)) return { label:'Restore '+(m.sabotage==='reactor'?'reactor containment':'electrical power'), action:()=>taskPanel({ name:'Restore '+m.sabotage, room:location(p), kind:'power',done:false,x:p.x,z:p.z },()=>online?net?.action({k:'fix'}):m.fix()) };
-  const t = m.tasks.findIndex(t=>!t.done && distance(p,t)<2.8 && visible(p,t));
-  if(t>=0) return { label:(p.impostor?'Fake task: ':'')+m.tasks[t]!.name,action:()=>taskPanel(m.tasks[t]!,()=>online?net?.action({k:'task',index:t}):m.complete(t)) };
-  if(p.alive && !p.emergency && !m.sabotage && distance(p,CENTER)<3) return { label:'Call emergency meeting',action:()=>{ if(online)net?.action({k:'emergency'});else if(m.callMeeting(p))processEvents(); } };
-  return null;
-}
-function use(): void { if (mode==='play') nearest()?.action(); }
-function cycleTask():void {
-  if(!match)return;
-  for(let i=1;i<=match.tasks.length;i++){const next=(trackedTask+i)%match.tasks.length;if(!match.tasks[next]!.done){trackedTask=next;routeRefresh=0;beep(480,.06);break;}}
-}
-function updateObjective():void {
-  if(!match)return;const element=document.getElementById('objective');if(!element)return;
-  const m=match,p=m.player;
-  if(m.tasks[trackedTask]?.done)cycleTask();
-  const task=m.tasks[trackedTask];
-  const target=m.sabotage?(m.sabotage==='reactor'?REACTOR:ELECTRICAL):task&&!task.done?task:null;
-  if(!target||(!m.sabotage&&p.impostor)){element.innerHTML='<span class="badge">'+(p.impostor?'BLEND IN · WATCH FOR WITNESSES':'TASKS COMPLETE · FIND THE IMPOSTOR')+'</span>';return;}
-  if(performance.now()>routeRefresh){route=pathTo(p,target);routeRefresh=performance.now()+650;}
-  while(route.length&&distance(p,route[0]!)<.7)route.shift();
-  const next=route[0]??target,dx=next.x-p.x,dz=next.z-p.z;
-  const side=Math.cos(yaw)*dx-Math.sin(yaw)*dz,ahead=-Math.sin(yaw)*dx-Math.cos(yaw)*dz;
-  const angle=Math.atan2(side,ahead)*180/Math.PI;
-  const meters=route.length?distance(p,route[0]!)+Math.max(0,route.length-1)*SCALE:distance(p,target);
-  element.innerHTML=`<span class="nav-arrow" style="transform:rotate(${angle}deg)">↑</span><div><span class="badge">${m.sabotage?'PRIORITY REPAIR':'TRACKING · '+(padConnected()?'D-PAD UP':'T')+' TO CHANGE'}</span><strong>${m.sabotage?(m.sabotage==='reactor'?'Reactor containment':'Electrical power'):task!.room}</strong><small>${Math.ceil(meters)} m via corridors</small></div>`;
-}
-function report(): void { if(!match || mode!=='play')return; const body=match.bodies.find(b=>!b.reported&&distance(match!.player,b)<3&&visible(match!.player,b)); if(body){if(online)net?.action({k:'report',body:body.id});else if(match.callMeeting(match.player,body))processEvents();}else notify('No reportable body nearby.'); }
-function eliminate(): void { if(!match || mode!=='play'||!match.player.impostor)return; const victim=match.people.filter(p=>p.alive&&!p.impostor&&distance(match!.player,p)<2.25&&visible(match!.player,p)).sort((a,b)=>distance(match!.player,a)-distance(match!.player,b))[0]; if(online){if(victim)net?.action({k:'kill',target:victim.id});else notify(match.cooldown>0?`Elimination ready in ${Math.ceil(match.cooldown)}s.`:'Get closer to a crew member.');}else if(victim&&match.kill(match.player,victim)){beep(110,.22);notify(`${victim.name} eliminated. Leave before someone arrives.`);}else notify(match.cooldown>0?`Elimination ready in ${Math.ceil(match.cooldown)}s.`:'Get within 2 metres of a crew member.'); }
-function sabotage(kind:'lights'|'reactor'):void{if(!match||mode!=='play'||!match.player.impostor||!match.player.alive)return;if(online)net?.action({k:'sabotage',kind});else if(!match.triggerSabotage(kind))notify(`Sabotage ${match.sabotage?'already active':`ready in ${Math.ceil(match.sabotageCooldown)}s`}.`);}
-function vent():void{if(!match||mode!=='play'||!match.player.impostor||!match.player.alive)return;const m=match;const i=VENTS.findIndex(v=>distance(m.player,v)<2);if(i<0){notify('Find a floor vent. Locations are marked on your map.');return;}if(online)net?.action({k:'vent'});else{for(const p of m.people)if(p.id!==0&&p.alive&&distance(p,m.player)<10&&visible(p,m.player))p.evidence[0]=1;Object.assign(m.player,VENTS[(i+1)%VENTS.length]);}beep(180,.15);notify('Vent transit complete.');}
-function openMap():void{if(!match||mode!=='play')return;mode='map';const m=match;let cells='';GRID.forEach((row,z)=>row.forEach((v,x)=>{if(v)cells+=`<rect x="${x*20}" y="${z*20}" width="19" height="19" fill="#203b52"/>`;}));const labels=ROOMS.map(r=>`<text x="${(r.x+r.w/2)*20}" y="${(r.z+r.h/2)*20}" fill="#b5ccdf" font-size="10" text-anchor="middle">${r.name}</text>`).join('');const dots=m.tasks.filter(t=>!t.done).map(t=>`<circle cx="${t.x/SCALE*20}" cy="${t.z/SCALE*20}" r="5" fill="#f5cc67"/>`).join('');const vents=m.player.impostor?VENTS.map(v=>`<rect x="${v.x/SCALE*20-4}" y="${v.z/SCALE*20-4}" width="8" height="8" fill="#ff7289"/>`).join(''):'';
-  show(`<div class="panel"><div class="eyebrow">DECK 01 / MISSION PAUSED</div><h2>Ship schematic</h2><svg class="map" viewBox="0 0 580 460" role="img" aria-label="Ship map with your position and task locations">${cells}${labels}${dots}${vents}<circle cx="${m.player.x/SCALE*20}" cy="${m.player.z/SCALE*20}" r="6" fill="#76eada" stroke="white" stroke-width="2"/></svg><div class="map-key"><span>● You</span><span style="color:#f5cc67">● Tasks</span>${m.player.impostor?'<span class="red">■ Vents</span>':''}</div><div class="actions"><button id="close-map" class="primary">Back to mission</button></div></div>`);bind('close-map',()=>resume());}
-
-let taskCleanup = ():void=>{};
-function taskPanel(station:Station,complete:()=>void):void{
-  if(!match)return;mode='task';let disposed=false;
-  show(`<div class="panel"><div class="eyebrow">${station.room.toUpperCase()} / SERVICE TERMINAL</div><h2>${station.name}</h2><div id="task-content"></div><p id="task-status" class="hint"></p><button id="cancel-task">Close terminal</button></div>`);
-  const content=document.getElementById('task-content')!,status=document.getElementById('task-status')!;
-  const finish=()=>{if(disposed)return;disposed=true;taskCleanup();complete();beep(820,.17);notify(match?.player.impostor?'Terminal sequence completed.':'System restored.');resume();};
-  const close=()=>{disposed=true;taskCleanup();resume();};bind('cancel-task',close);taskCleanup=()=>{};
-  if(station.kind==='sequence'){
-    let step=0;const order=[...Array(6)].map((_,i)=>i+1).sort(()=>Math.random()-.5);content.innerHTML='<p class="muted">Validate the data packets in ascending order, 1 through 6.</p><div class="task-grid">'+order.map(n=>`<button data-number="${n}">${n}</button>`).join('')+'</div><div class="task-progress"><span style="width:0"></span></div>';
-    content.querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.onclick=()=>{if(Number(b.dataset.number)===step+1){step++;b.disabled=true;beep(350+step*90);(content.querySelector('.task-progress span')as HTMLElement).style.width=step/6*100+'%';if(step===6)finish();}else{status.textContent='Out of order. Start again at 1.';step=0;content.querySelectorAll('button').forEach(b=>b.disabled=false);(content.querySelector('.task-progress span')as HTMLElement).style.width='0';beep(140);}});
-  }else if(station.kind==='power'){
-    const switches=Array<boolean>(6).fill(true);
-    const toggle=(i:number)=>{for(const n of [i,(i+1)%6,(i+5)%6])switches[n]=!switches[n];};
-    for(let i=0;i<4;i++)toggle(Math.floor(Math.random()*6));if(switches.every(Boolean))toggle(0);
-    content.innerHTML='<p class="muted">Bring all six circuits online. Each switch also toggles its two neighbors (1 and 6 are connected).</p><div class="task-grid circuit-grid">'+switches.map((s,i)=>`<button data-switch="${i}" class="${s?'active':''}" aria-pressed="${s}"><small>CIRCUIT 0${i+1}</small><span>${s?'ONLINE':'OFFLINE'}</span></button>`).join('')+'</div>';
-    content.querySelectorAll<HTMLButtonElement>('button').forEach((b,i)=>b.onclick=()=>{toggle(i);content.querySelectorAll<HTMLButtonElement>('button').forEach((button,j)=>{button.classList.toggle('active',switches[j]);button.setAttribute('aria-pressed',String(switches[j]));button.innerHTML=`<small>CIRCUIT 0${j+1}</small><span>${switches[j]?'ONLINE':'OFFLINE'}</span>`;});beep(450);status.textContent=`${switches.filter(Boolean).length} / 6 circuits online`;if(switches.every(Boolean))finish();});
-  }else if(station.kind==='tune'){
-    let value=0;const target=4+Math.floor(Math.random()*5);content.innerHTML=`<p class="muted">Match the carrier frequency to <b>${target*10} MHz</b>.</p><div class="actions"><button id="minus">− 10 MHz</button><button id="plus">+ 10 MHz</button></div><h2 id="frequency">0 MHz</h2><button id="confirm-frequency" class="primary">Lock frequency</button>`;
-    const update=()=>{document.getElementById('frequency')!.textContent=value*10+' MHz';beep(200+value*45);};bind('minus',()=>{value=Math.max(0,value-1);update();});bind('plus',()=>{value=Math.min(10,value+1);update();});bind('confirm-frequency',()=>{if(value===target)finish();else{status.textContent='Signal mismatch. Adjust the frequency.';beep(120);}});
-  }else if(station.kind==='scan'){
-    let progress=0,timer=0;content.innerHTML='<p class="muted">Remain inside the scanner until the biometric pass completes.</p><div class="scan-bed"><div class="scan-person"></div><i></i></div><div class="task-progress"><span></span></div><button id="begin-scan" class="primary">Begin scan</button>';
-    bind('begin-scan',()=>{(document.getElementById('begin-scan')as HTMLButtonElement).disabled=true;status.textContent='Scanning life signs…';timer=window.setInterval(()=>{progress=Math.min(100,progress+4);(content.querySelector('.task-progress span')as HTMLElement).style.width=progress+'%';beep(250+progress*3,.025);if(progress>=100){clearInterval(timer);finish();}},90);});taskCleanup=()=>clearInterval(timer);
-  }else if(station.kind==='swipe'){
-    let position=0;content.innerHTML='<p class="muted">Move the authorization card through the reader at a steady pace.</p><div class="card-reader"><div class="card-track"><button id="auth-card">AURORA ACCESS</button></div></div><div class="actions"><button id="swipe-step">Slide card →</button></div>';
-    const step=()=>{position++;const card=document.getElementById('auth-card')!;card.style.transform=`translateX(${Math.min(position,5)*70}px)`;beep(280+position*60,.06);status.textContent=position<5?'Keep a steady pace…':'Authorization accepted.';if(position>=5)setTimeout(finish,250);};bind('swipe-step',step);bind('auth-card',step);
-  }else{
-    const colors=['#f45b69','#ffd166','#58d099','#63cfff'];let selected=-1,done=0;const shuffled=[0,1,2,3].sort(()=>Math.random()-.5);content.innerHTML='<p class="muted">Connect each colored lead to its matching terminal.</p><div class="wire-board"><div>'+colors.map((c,i)=>`<button data-wire="${i}" style="--wire:${c}">LEAD ${i+1}</button>`).join('')+'</div><div>'+shuffled.map(i=>`<button data-port="${i}" style="--wire:${colors[i]}">PORT ${i+1}</button>`).join('')+'</div></div>';
-    content.querySelectorAll<HTMLButtonElement>('[data-wire]').forEach(b=>b.onclick=()=>{selected=Number(b.dataset.wire);content.querySelectorAll('[data-wire]').forEach(x=>x.classList.toggle('active',x===b));status.textContent='Choose the matching port.';});
-    content.querySelectorAll<HTMLButtonElement>('[data-port]').forEach(b=>b.onclick=()=>{if(selected<0){status.textContent='Select a lead first.';return;}if(Number(b.dataset.port)===selected){b.disabled=true;(content.querySelector(`[data-wire="${selected}"]`)as HTMLButtonElement).disabled=true;done++;selected=-1;beep(650,.08);status.textContent=`${done} / 4 leads routed`;if(done===4)finish();}else{selected=-1;content.querySelectorAll('[data-wire]').forEach(x=>x.classList.remove('active'));status.textContent='Wrong terminal. Trace the colors again.';beep(130);}});
-  }
-}
-function appendMeetingLine(line:string,id?:number):void{
-  const log=document.getElementById('meeting-log');if(!log)return;const split=line.indexOf(':'),prefix=split>0?line.slice(0,split):'',person=id===undefined?match?.people.find(p=>p.name===prefix):match?.people[id],effectiveId=person?.id;const row=document.createElement('p');row.className='chat-line'+(effectiveId===match?.localId?' self':'')+(person?.bot?' bot':'');
-  const speaker=person?.name??(prefix||'SHIP'),message=id!==undefined?line:(split>0?line.slice(split+1).trim():line);const badge=document.createElement('span');badge.className='chat-avatar';badge.style.background=person?`#${person.color.toString(16).padStart(6,'0')}`:'#496174';const body=document.createElement('span'),name=document.createElement('strong');name.textContent=speaker+(person?.bot?' · BOT':'')+': ';body.append(name,document.createTextNode(message));row.append(badge,body);log.append(row);log.scrollTop=log.scrollHeight;
-}
-function sendMeetingChat():void{
-  if(!match||mode!=='meeting'||!match.player.alive)return;const input=document.getElementById('meeting-chat')as HTMLInputElement|null,text=input?.value.replace(/\s+/g,' ').trim().slice(0,160)??'';if(!text)return;if(input)input.value='';
-  meetingDialogueToken++;
-  if(online){net?.action({k:'chat',text});return;}appendMeetingLine(text,match.player.id);const replies=match.chatReplies(text,match.player);replies.forEach((reply,i)=>setTimeout(()=>{if(mode==='meeting')appendMeetingLine(reply.text,reply.id);},260+i*380));
-}
-function meeting(lines?:string[]):void{
-  if(!match)return;taskCleanup();mode='meeting';const m=match;
-  const dialogue=lines??m.discussion();
-  show(`<div class="panel wide meeting-panel"><div class="eyebrow">EMERGENCY ASSEMBLY / <span id="meeting-time">${Math.ceil(m.meetingTime||60)}</span>s TO VOTE</div><h2>Discuss. Question. Decide.</h2><p class="meeting-reason"><b>${m.meetingBody===null?'EMERGENCY':'BODY REPORTED'}</b> ${m.meetingReason}</p><div class="meeting-grid"><div class="discussion-column"><div class="log" id="meeting-log" aria-live="polite"><div class="chat-waiting"><i></i><span>Crew channel opened</span></div></div>${m.player.alive?'<form id="chat-form" class="chat-compose"><input id="meeting-chat" maxlength="160" autocomplete="off" aria-label="Message the crew" placeholder="Message the crew…"><button class="primary" type="submit">Send</button></form>':'<p class="ghost-chat">Ghosts cannot speak to the living crew.</p>'}<p class="hint">Ask by name or color: “Blue, where were you?” · “Who saw Red?” · “Where was the body?”</p></div><div class="vote-column"><div class="vote-heading"><span>VOTE BOARD</span><small>Choose only when you are ready</small></div><div class="votes">${m.people.filter(p=>p.alive).map(p=>`<button data-vote="${p.id}" ${!m.player.alive?'disabled':''}><span class="dot" style="background:#${p.color.toString(16).padStart(6,'0')}"></span>${p.name}${p.impostor&&m.player.impostor&&p.id!==m.player.id?' · PARTNER':''}</button>`).join('')}</div><div class="actions"><button id="skip" class="primary">${m.player.alive?'Skip vote':'Resolve crew vote'}</button></div></div></div></div>`);
-  const dialogueToken=++meetingDialogueToken;dialogue.forEach((line,i)=>setTimeout(()=>{if(mode!=='meeting'||match!==m||meetingDialogueToken!==dialogueToken)return;document.querySelector('.chat-waiting')?.remove();appendMeetingLine(line);},320+i*620));const form=document.getElementById('chat-form')as HTMLFormElement|null;form?.addEventListener('submit',e=>{e.preventDefault();document.querySelector('.chat-waiting')?.remove();sendMeetingChat();});
-  modal.querySelectorAll<HTMLButtonElement>('[data-vote]').forEach(b=>b.onclick=()=>resolveVote(Number(b.dataset.vote)));bind('skip',()=>resolveVote(-1));beep(290,.3);
-}
-function resolveVote(choice:number):void{if(!match||match.phase!=='meeting')return;if(online){net?.action({k:'vote',target:choice});show(`<div class="panel"><div class="eyebrow">VOTE LOCKED</div><h2>Waiting for the crew…</h2><p class="muted">Your vote cannot be changed.</p></div>`);return;}const m=match;const r=m.vote(choice);const summary=Object.entries(r.tally).map(([id,n])=>`${Number(id)<0?'Skip':m.people[Number(id)]!.name}: ${n}`).join(' · ');const text=r.ejected?`${r.ejected.name} was ejected. ${r.ejected.impostor?'They were the impostor.':'They were crew.'}`:'No one was ejected.';
-  if(m.phase==='result'){processEvents();return;}mode='briefing';show(`<div class="panel"><div class="eyebrow">VOTE RESULTS</div><h2>${text}</h2><p class="muted">${summary}</p><p class="hint">${!m.player.alive?'As a ghost, complete your remaining tasks. You can no longer report or vote.':'The remaining crew return to their stations.'}</p><button id="continue" class="primary">Return to ship</button></div>`);bind('continue',()=>resume());}
-function end():void{if(!match)return;mode='result';const win=match.winner===(match.player.impostor?'IMPOSTOR':'CREW'),impostors=match.people.filter(p=>p.impostor).map(p=>p.name).join(' · ')||'Awaiting final telemetry';show(`<div class="panel"><div class="eyebrow">MISSION DEBRIEF</div><h2 class="role ${win?'':'red'}">${win?'VICTORY':'DEFEAT'}</h2><h3>${match.winner} WINS</h3><p class="muted">${match.result}</p><p class="hint">Impostor${match.people.filter(p=>p.impostor).length===1?'':'s'}: ${impostors}<br>Time aboard: ${Math.floor(match.elapsed/60)}m ${Math.floor(match.elapsed%60)}s · Systems restored: ${Math.round(match.progress*100)}%</p><div class="actions"><button id="again" class="primary">New mission</button><button id="hangar">Hangar</button></div></div>`);bind('again',()=>start(match!.player.impostor?'impostor':'crew'));bind('hangar',home);beep(win?880:160,.4);}
-function processEvents():void{if(!match)return;for(const e of match.events.splice(0)){if(e.type==='meeting')meeting();else if(e.type==='result')end();else{notify(e.text,6);beep(e.type==='death'?120:260,.3);}}}
-function applyOnlineSnap(s:SfSnap):void{
-  if(!match)return;match.elapsed=s.t;match.phase=s.phase;match.cooldown=s.cooldown;match.sabotage=s.sabotage;match.sabotageTime=s.sabotageTime;match.meetingTime=s.meetingTime;match.meetingReason=s.meetingReason;match.winner=s.winner;match.result=s.result;
-  for(const row of s.people){const p=match.people[row[0]];if(!p)continue;p.x=row[1];p.z=row[2];p.yaw=row[3];p.alive=!!(row[4]&1);if(row[4]&2)p.impostor=true;}
-  match.bodies=s.bodies.map(b=>({id:b[0],x:b[1],z:b[2],reported:!!b[3]}));match.tasks.forEach((t,i)=>t.done=!!s.tasks[i]);
-}
-function onlineEvent(e:SfEvent):void{
-  if(!match)return;
-  if(e.k==='meeting'){match.phase='meeting';match.meetingReason=e.text;meetingLines=e.lines??[];meeting(meetingLines);beep(250,.35);}
-  else if(e.k==='eject')ejectAnimation(e);
-  else if(e.k==='kill'){notify(e.text,4);beep(110,.2);}
-  else if(e.k==='sabotage'){notify(e.text,5);beep(260,.3);}
-  else if(e.k==='chat'){meetingDialogueToken++;document.querySelector('.chat-waiting')?.remove();appendMeetingLine(e.text,e.id);}
-  else if(e.k==='result'){match.result=e.text;if(!modal.querySelector('.eject-scene'))end();}
-}
-function ejectAnimation(e:SfEvent):void{
-  if(!match)return;mode='briefing';const person=e.id===undefined?null:match.people[e.id];const reveal=e.confirmed&&person?(e.impostor?'They were an impostor.':'They were not an impostor.'):'Their role remains unknown.';
-  show(`<div class="eject-scene"><div class="stars-layer"></div>${person?`<div class="ejected-bean" style="--suit:#${person.color.toString(16).padStart(6,'0')}"><i></i></div>`:''}<h2>${e.text}</h2><p>${person?reveal:'The vote ended in a tie.'}</p></div>`);
-  setTimeout(()=>{if(match?.phase==='result')end();else resume(false);},4200);
-}
-function updateHud():void{if(!match||!document.getElementById('room'))return;const m=match,p=m.player;document.getElementById('room')!.textContent=location(p);document.getElementById('role')!.textContent=!p.alive?'GHOST':p.impostor?'IMPOSTOR':'CREW';document.getElementById('progress')!.style.width=m.progress*100+'%';document.getElementById('tasks')!.innerHTML=p.impostor?`<div class="taskline alarm">ELIMINATE · ${m.cooldown>0?Math.ceil(m.cooldown)+'s':'READY'}</div><div class="taskline">Sabotage · ${m.sabotageCooldown>0?Math.ceil(m.sabotageCooldown)+'s':'READY'}</div>`:m.tasks.map(t=>`<div class="taskline ${t.done?'done':''}">${t.done?'✓':'◇'} ${t.room}</div>`).join('');document.getElementById('alive')!.textContent=`${m.people.filter(p=>p.alive).length} life signs · Crew tasks ${Math.round(m.progress*100)}%`;const alarm=document.getElementById('alarm')!;alarm.classList.toggle('alarm',!!m.sabotage);alarm.textContent=m.sabotage?`${m.sabotage.toUpperCase()} · ${Math.ceil(m.sabotageTime)}s`:'All systems nominal';
-  const target=nearest();const body=p.alive&&m.bodies.some(b=>!b.reported&&distance(p,b)<3&&visible(p,b));const prompt=document.getElementById('prompt')!;prompt.classList.toggle('hidden',mode!=='play'||(!target&&!body));prompt.textContent=body?(padConnected()?'Y / △':'R')+' · Report body':target?(padConnected()?'A / ✕':'E')+' · '+target.label:'';
-  document.getElementById('controls')!.innerHTML=padConnected()?'<b>LS</b> Move · <b>RS</b> Look · <b>A</b> Use · <b>Y</b> Report<br><b>View</b> Map · <b>Start</b> Pause'+(p.impostor?'<br><b>X</b> Eliminate · <b>B</b> Vent · <b>LB/RB</b> Sabotage':''):'<b>WASD</b> Move · <b>Mouse</b> Look · <b>E</b> Use · <b>R</b> Report<br><b>M</b> Map · <b>Esc</b> Pause'+(p.impostor?'<br><b>Q</b> Eliminate · <b>F</b> Vent · <b>Z/X</b> Sabotage':'');
-  hud.querySelector('.crosshair')?.classList.toggle('ready',!!target||!!body);
-  const killTarget=p.impostor&&p.alive&&m.cooldown<=0&&m.people.some(other=>other.alive&&!other.impostor&&distance(p,other)<2.25&&visible(p,other));
-  const ventReady=p.impostor&&p.alive&&VENTS.some(v=>distance(p,v)<2);
-  document.getElementById('act-use')?.toggleAttribute('disabled',!target);document.getElementById('act-report')?.toggleAttribute('disabled',!body);
-  document.getElementById('act-kill')?.classList.toggle('hidden',!p.impostor);document.getElementById('act-kill')?.toggleAttribute('disabled',!killTarget);
-  document.getElementById('act-kill')?.querySelector('span')?.replaceChildren(document.createTextNode(m.cooldown>0?String(Math.ceil(m.cooldown)):(padConnected()?'X':'Q')));
-  document.getElementById('act-vent')?.classList.toggle('hidden',!p.impostor);document.getElementById('act-vent')?.toggleAttribute('disabled',!ventReady);
-  hud.classList.toggle('is-ghost',!p.alive);hud.classList.toggle('is-alarm',!!m.sabotage);
-  const room=location(p);if(previousRoom!==room){previousRoom=room;document.getElementById('room')?.animate([{opacity:.15,transform:'translateY(5px)'},{opacity:1,transform:'none'}],{duration:450});}
-  updateObjective();
+  const m = screen(`
+    <div class="logo"><img src="${icon(saved.color, 240)}" alt=""><h1 class="disp">STAR<span>FALL</span>${VIEW3D ? '<em>3D</em>' : ''}</h1></div>
+    <p class="tag">Crewmates do tasks · Impostors sabotage · Nobody trusts anybody</p>
+    <div class="panel">
+      <div class="big-btns">
+        <button class="btn btn--go" id="local">Play vs Bots<small>4–15 players · 3 maps</small></button>
+        <button class="btn btn--blue" id="online">Online / LAN<small>friends + bots fill seats</small></button>
+      </div>
+      <div class="actions"><button class="btn btn--ghost btn--sm" id="how">How to Play</button><button class="btn btn--ghost btn--sm" id="opts">Sound</button></div>
+    </div>`);
+  (m.querySelector('#local') as HTMLElement).onclick = localSetup;
+  (m.querySelector('#online') as HTMLElement).onclick = () => onlineMenu();
+  (m.querySelector('#how') as HTMLElement).onclick = howTo;
+  (m.querySelector('#opts') as HTMLElement).onclick = () => soundMenu(home);
 }
 
-addEventListener('keydown',e=>{if(e.target instanceof HTMLInputElement&&e.target.type!=='range'){if(e.code==='Escape')e.target.blur();return;}if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.repeat)return;keys.add(e.code);if(mode==='play'){const actions:Record<string,()=>void>={KeyE:use,KeyR:report,KeyQ:eliminate,KeyF:vent,KeyZ:()=>sabotage('lights'),KeyX:()=>sabotage('reactor'),KeyM:openMap,KeyT:cycleTask,Escape:pause};actions[e.code]?.();}else if(e.code==='Escape'){if(mode==='pause'||mode==='map'||mode==='task'){taskCleanup();resume();}}});
-addEventListener('keyup',e=>keys.delete(e.code));
-function pauseOnBlur(): void {
-  keys.clear();
-  if (mode === 'task') { taskCleanup(); mode = 'play'; }
-  if (mode === 'play') pause();
+function soundMenu(back: () => void): void {
+  const m = screen(`<div class="panel"><h2 class="disp">Sound</h2><div class="row"><label>Volume</label><input id="vol" type="range" min="0" max="1" step="0.05" value="${saved.volume}"></div><div class="actions"><button class="btn" id="back">Done</button></div></div>`);
+  (m.querySelector('#vol') as HTMLInputElement).oninput = (e) => {
+    saved.volume = Number((e.target as HTMLInputElement).value);
+    audio.volume = saved.volume;
+    audio.play('click');
+    save();
+  };
+  (m.querySelector('#back') as HTMLElement).onclick = back;
 }
-addEventListener('blur',pauseOnBlur);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseOnBlur();});
-let dragging=false;
-canvas.addEventListener('pointerdown',e=>{if(mode!=='play')return;if(e.pointerType==='mouse')lock();dragging=true;canvas.setPointerCapture(e.pointerId);});canvas.addEventListener('pointerup',()=>dragging=false);canvas.addEventListener('pointercancel',()=>dragging=false);
-addEventListener('mousemove',e=>{if(mode!=='play'||(document.pointerLockElement!==canvas&&!dragging))return;yaw-=e.movementX*sensitivity;pitch=Math.max(-1.35,Math.min(1.35,pitch-e.movementY*sensitivity));});
-document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElement!==canvas&&mode==='play'&&!padConnected())pause();});
-function padConnected():Gamepad|null{return [...(navigator.getGamepads?.()??[])].find(p=>p?.connected)??null;}
-let prevButtons:boolean[]=[],focusIndex=0,navWait=0;
-const dead=(v:number)=>Math.abs(v)<.18?0:Math.sign(v)*(Math.abs(v)-.18)/.82;
-function padPoll(dt: number): { x: number; z: number } {
-  const pad = padConnected();
-  if (!pad) { if (prevButtons.length && mode === 'play') pause(); prevButtons = []; return {x:0,z:0}; }
-  const pressed = (i: number) => !!pad.buttons[i]?.pressed && !prevButtons[i];
-  if (mode === 'play') {
-    yaw -= dead(pad.axes[2]??0)*dt*2.3*(sensitivity/.0022);
-    pitch = Math.max(-1.35,Math.min(1.35,pitch-dead(pad.axes[3]??0)*dt*1.7*(sensitivity/.0022)));
-    if (pressed(0)) use(); if (pressed(3)) report(); if (pressed(2)) eliminate(); if (pressed(1)) vent();
-    if (pressed(4)) sabotage('lights'); if (pressed(5)) sabotage('reactor'); if (pressed(8)) openMap(); if (pressed(9)) pause();
-    if (pressed(12)) cycleTask();
-  } else {
-    navWait -= dt; const elements = buttons();
-    const direction = (pad.buttons[13]?.pressed || (pad.axes[1]??0)>.6) ? 1 : (pad.buttons[12]?.pressed || (pad.axes[1]??0)<-.6) ? -1 : 0;
-    if (direction && navWait<=0) { focusIndex = (focusIndex+direction+elements.length)%Math.max(1,elements.length); navWait=.22; }
-    focusIndex = Math.min(focusIndex,Math.max(0,elements.length-1));
-    elements.forEach((el,i)=>el.classList.toggle('padfocus',i===focusIndex));
-    const selected = elements[focusIndex];
-    if (selected instanceof HTMLInputElement && selected.type==='range' && (pressed(14)||pressed(15))) {
-      selected.value = String(Number(selected.value)+(pressed(15)?1:-1)*Number(selected.step)); selected.dispatchEvent(new Event('input'));
+
+function howTo(): void {
+  const m = screen(`<div class="panel panel--wide"><h2 class="disp">How to Play</h2>
+    <div class="howto">
+      <div><h3>Crewmates</h3><p>Finish your tasks around the ship (yellow on your map) to fill the task bar. Report bodies, call emergency meetings, talk it out and vote the impostors off. Dead? Keep doing tasks as a ghost.</p></div>
+      <div><h3>Impostors</h3><p>Blend in, fake tasks, kill when nobody’s looking. Hop through vents, shut doors, cut the lights and sabotage the reactor or oxygen — if the crew can’t fix it in time, you win.</p></div>
+      <div><h3>Keyboard & mouse</h3><p><kbd>WASD</kbd> move (or hold the mouse) · <kbd>E</kbd>/<kbd>Space</kbd> use · <kbd>R</kbd> report · <kbd>Q</kbd> kill · <kbd>V</kbd> vent · <kbd>Tab</kbd> map / sabotage · <kbd>Esc</kbd> close / pause</p></div>
+      <div><h3>Controller</h3><p>Left stick move · <kbd>A</kbd> use · <kbd>Y</kbd> report · <kbd>X</kbd> kill · <kbd>RB</kbd> vent · <kbd>View</kbd> map · <kbd>B</kbd> close · in tasks the stick moves a cursor and <kbd>A</kbd> clicks.</p></div>
+      <div><h3>Sabotages</h3><p>Reactor / seismic: two people hold both hand scanners at once. Oxygen: enter the code at both keypads. Lights: flip all five switches up. Comms: tune the dial.</p></div>
+      <div><h3>Meetings</h3><p>Discuss, then vote (or skip). Most votes is ejected; ties and skips eject nobody. Bots talk too — ask them “where were you?”, or call someone out by name or colour.</p></div>
+    </div><div class="actions"><button class="btn" id="back">Got it</button></div></div>`);
+  (m.querySelector('#back') as HTMLElement).onclick = home;
+}
+
+function localSetup(): void {
+  const cfg = saved.cfg;
+  const draw = () => {
+    const m = screen(`<div class="panel panel--wide">
+      <h2 class="disp">Play vs Bots</h2>
+      <div class="row"><label>Name</label><input id="name" maxlength="12" value="${esc(saved.name)}"></div>
+      <div class="row"><label>Colour</label>${colorsHtml(saved.color)}</div>
+      ${mapsHtml(cfg.map, true)}
+      <div class="row"><label>Players</label><div class="seg" id="players">${[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => `<button data-n="${n}" class="${saved.players === n ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+      <div class="row"><label>Your role</label><div class="seg" id="role">${(['random', 'crew', 'impostor'] as const).map((r) => `<button data-r="${r}" class="${saved.role === r ? 'on' : ''}">${r === 'random' ? 'Random' : r === 'crew' ? 'Crewmate' : 'Impostor'}</button>`).join('')}</div></div>
+      ${settingsHtml(cfg, true)}
+      <div class="actions"><button class="btn" id="back">Back</button><button class="btn btn--go" id="go" style="font-size:26px">Start ▶</button></div>
+    </div>`);
+    const name = m.querySelector('#name') as HTMLInputElement;
+    name.oninput = () => {
+      saved.name = name.value.replace(/[^\p{L}\p{N} _.\-!?']/gu, '').slice(0, 12);
+      save();
+    };
+    m.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => (b.onclick = () => ((saved.color = Number(b.dataset.c)), save(), draw())));
+    m.querySelectorAll<HTMLButtonElement>('[data-n]').forEach((b) => (b.onclick = () => ((saved.players = Number(b.dataset.n)), save(), draw())));
+    m.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((b) => (b.onclick = () => ((saved.role = b.dataset.r as Saved['role']), save(), draw())));
+    bindMaps(m, (id) => ((cfg.map = id), save(), draw()));
+    bindSettings(m, cfg, (p) => (Object.assign(cfg, p), save(), draw()));
+    (m.querySelector('#back') as HTMLElement).onclick = home;
+    (m.querySelector('#go') as HTMLElement).onclick = startLocal;
+  };
+  draw();
+}
+
+function startLocal(): void {
+  const n = saved.players;
+  const free = [...COLORS.keys()].filter((c) => c !== saved.color).sort(() => Math.random() - 0.5);
+  const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+  const people = [{ name: saved.name || 'Crewmate', color: saved.color, bot: false }, ...Array.from({ length: n - 1 }, (_, i) => ({ name: names[i]!, color: free[i]!, bot: true }))];
+  const link = new LocalLink(saved.cfg, people, { role: saved.role });
+  new Session(link, { again: startLocal, quit: localSetup });
+}
+
+// ---------------------------------------------------------------- online
+
+let net: StarfallNet | null = null;
+
+function onlineMenu(msg = ''): void {
+  if (net) void net.leave();
+  net = null;
+  const m = screen(`<div class="panel">
+    <h2 class="disp">Online / LAN</h2>
+    <p class="sub">Play with friends — empty seats become bots</p>
+    <div class="row"><label>Name</label><input id="name" maxlength="12" value="${esc(saved.name)}"></div>
+    <div class="row"><label>Colour</label>${colorsHtml(saved.color)}</div>
+    <div class="big-btns"><button class="btn btn--go" id="create">Create Room<small>private code</small></button><button class="btn btn--blue" id="quick">Quick Match<small>public lobby</small></button></div>
+    <div class="row"><label>Join code</label><div style="display:flex;gap:8px"><input id="code" maxlength="6" placeholder="ABCDEF" style="flex:1;text-transform:uppercase"><button class="btn btn--sm" id="join">Join</button></div></div>
+    <p class="hint" id="status">${esc(msg) || 'Checking the server…'}</p>
+    <div class="actions"><button class="btn btn--sm" id="back">Back</button></div></div>`);
+  const name = m.querySelector('#name') as HTMLInputElement;
+  name.oninput = () => {
+    saved.name = name.value.replace(/[^\p{L}\p{N} _.\-!?']/gu, '').slice(0, 12);
+    save();
+  };
+  m.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => (b.onclick = () => ((saved.color = Number(b.dataset.c)), save(), onlineMenu(msg))));
+  const status = m.querySelector('#status') as HTMLElement;
+  const go = async (fn: (n: StarfallNet) => Promise<void>) => {
+    status.textContent = 'Connecting…';
+    const n = new StarfallNet();
+    n.onLobby = (l) => lobby(n, l);
+    n.onBegin = (b) => {
+      session?.dispose();
+      new Session(new OnlineLink(n, b.me, b.map), { quit: () => onlineMenu(), lobby: () => n.lobby && lobby(n, n.lobby) });
+    };
+    n.onError = (e) => toast(e);
+    n.onClosed = (reason) => {
+      if (net === n) {
+        net = null;
+        session?.dispose();
+        onlineMenu(reason ?? 'Disconnected.');
+      }
+    };
+    try {
+      net = n;
+      await fn(n);
+    } catch (e) {
+      net = null;
+      status.textContent = e instanceof Error ? e.message : 'Could not connect.';
     }
-    if (pressed(0) && selected) selected.click();
-    if ((pressed(1)||pressed(9)) && (mode==='pause'||mode==='map'||mode==='task')) { taskCleanup(); resume(false); }
-  }
-  prevButtons = pad.buttons.map(b=>b.pressed);
-  return {x:dead(pad.axes[0]??0),z:dead(pad.axes[1]??0)};
+  };
+  (m.querySelector('#create') as HTMLElement).onclick = () => void go((n) => n.create(saved.name, saved.color));
+  (m.querySelector('#quick') as HTMLElement).onclick = () => void go((n) => n.quick(saved.name, saved.color));
+  (m.querySelector('#join') as HTMLElement).onclick = () => void go((n) => n.join((m.querySelector('#code') as HTMLInputElement).value, saved.name, saved.color));
+  (m.querySelector('#back') as HTMLElement).onclick = () => {
+    net = null;
+    home();
+  };
+  if (!msg)
+    void new StarfallNet().probe().then((p) => {
+      status.textContent = p.ok ? (p.lan?.length ? `LAN server ready · others join at ${p.lan.map((ip) => `${ip}`).join(' / ')}` : 'Server ready.') : 'The game server is offline — start it to play online or on LAN.';
+    });
 }
-let last=performance.now(),uiTime=0;
-function frame(now: number): void {
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
-  const pad = padPoll(dt);
-  let moving=false,x=0,z=0;
-  if (match && (mode === 'play' || mode === 'task')) {
-    if (mode === 'play') {
-      x = Number(keys.has('KeyD')) - Number(keys.has('KeyA')) + pad.x;
-      z = Number(keys.has('KeyS')) - Number(keys.has('KeyW')) + pad.z;
-      const mag = Math.max(1, Math.hypot(x,z)); x /= mag; z /= mag;
-      moving=Math.abs(x)+Math.abs(z)>.1;
-      const speed = match.player.alive ? 4.3 : 5.6;
-      match.move(match.player, (Math.cos(yaw)*x + Math.sin(yaw)*z)*speed*dt, (-Math.sin(yaw)*x + Math.cos(yaw)*z)*speed*dt);
+
+function lobby(n: StarfallNet, l: SfLobby): void {
+  if (session) return; // a game is on screen; the lobby shows after it
+  const host = n.sessionId === l.hostId;
+  const cfg = l.config;
+  const total = l.players.length + cfg.bots;
+  const m = screen(`<div class="panel panel--wide">
+    <p class="sub">Room code${l.lan ? ' · LAN' : ''}</p><div class="code">${l.code}</div>
+    <div class="roster">${l.players.map((p) => `<div class="${p.connected ? '' : 'off'}"><img src="${icon(p.color, 48)}">${esc(p.name)}${p.id === l.hostId ? ' <em>HOST</em>' : ''}</div>`).join('')}${Array.from({ length: cfg.bots }, () => `<div class="off"><img src="${beanIcon('#9aa3ad', '#6b7480', false, 48)}">Bot</div>`).join('')}</div>
+    <div class="row"><label>Your colour</label>${colorsHtml(l.players.find((p) => p.id === n.sessionId)?.color ?? 0, l.players.map((p) => p.color))}</div>
+    ${mapsHtml(cfg.map, host)}
+    <div class="row"><label>Bots</label><div class="stepper"><button id="bm" ${host ? '' : 'disabled'}>−</button><b>${cfg.bots}</b><button id="bp" ${host ? '' : 'disabled'}>+</button><span class="hint">${total} / ${SF_MAX} players</span></div></div>
+    ${settingsHtml(cfg, host)}
+    <div class="actions"><button class="btn" id="leave">Leave</button>${host ? `<button class="btn btn--go" id="start" ${total < 4 ? 'disabled' : ''} style="font-size:26px">Start ▶</button>` : '<span class="hint">Waiting for the host to start…</span>'}</div>
+  </div>`);
+  m.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => (b.onclick = () => ((saved.color = Number(b.dataset.c)), save(), n.look(saved.name, saved.color))));
+  bindMaps(m, (id) => n.config({ map: id }));
+  bindSettings(m, cfg, (p) => n.config(p));
+  const bm = m.querySelector('#bm') as HTMLButtonElement;
+  const bp = m.querySelector('#bp') as HTMLButtonElement;
+  bm.onclick = () => n.config({ bots: cfg.bots - 1 });
+  bp.onclick = () => n.config({ bots: cfg.bots + 1 });
+  (m.querySelector('#leave') as HTMLElement).onclick = () => onlineMenu();
+  (m.querySelector('#start') as HTMLElement | null)?.addEventListener('click', () => n.start());
+}
+
+let toastEl: HTMLElement | null = null;
+let toastT = 0;
+function toast(text: string, secs = 2.2, color = '#fff'): void {
+  if (!toastEl || !toastEl.isConnected) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'toast disp off';
+    toastEl.style.zIndex = '70';
+    toastEl.style.position = 'fixed';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.textContent = text;
+  toastEl.style.color = color;
+  toastEl.classList.remove('off');
+  toastT = secs;
+}
+
+// ---------------------------------------------------------------- the game screen
+
+let session: Session | null = null;
+
+type UseTarget =
+  | { kind: 'task'; task: number; at: Spot }
+  | { kind: 'sab'; sab: SabotageKind; station: number; at: Spot }
+  | { kind: 'button' | 'admin' | 'cams' | 'vitals'; at: Spot }
+  | null;
+
+const SAB_TEXT: Record<SabotageKind, string> = { reactor: 'Reactor Meltdown', o2: 'Oxygen Depleted', lights: 'Fix Lights', comms: 'Comms Sabotaged', seismic: 'Seismic Stabilizers' };
+
+class Session {
+  private canvas: HTMLCanvasElement;
+  private world: WorldRenderer;
+  private world3d: World3D | null = null;
+  private hud: HTMLElement;
+  private layer: HTMLElement;
+  private raf = 0;
+  private last = performance.now();
+  private t = 0;
+  private keys = new Set<string>();
+  private mouse: { x: number; y: number } | null = null;
+  /** First person (3D page): where you're looking. */
+  private yaw = 0;
+  private pitch = -0.12;
+  private touchLook: { id: number; x: number; y: number } | null = null;
+  private joy: [number, number] = [0, 0];
+  private pad = { prev: [] as boolean[], cursor: [300, 300] as [number, number], lastAxis: [0, 0] };
+  private visR = 5;
+  private disposed = false;
+  // UI pieces.
+  private panel: { p: Panel; el: HTMLElement; canvas: HTMLCanvasElement; task: number; cursor: HTMLElement } | null = null;
+  private overlay: { kind: 'map' | 'sabotage' | 'admin' | 'cams' | 'vitals'; ui: MapOverlay | CamsUI | VitalsUI } | null = null;
+  private meeting: MeetingUI | null = null;
+  private eject: EjectUI | null = null;
+  private ejectLeft = 0;
+  private over: HTMLElement | null = null;
+  private pause: HTMLElement | null = null;
+  private stopReveal: (() => void) | null = null;
+  private stopSplash: (() => void) | null = null;
+  private meetingAt = 0;
+  private ventsOpen = new Map<number, number>();
+  private phase = '';
+  private hudKey = '';
+  private onKey = (e: KeyboardEvent) => this.key(e, true);
+  private onKeyUp = (e: KeyboardEvent) => this.key(e, false);
+  private onResize = () => this.resize();
+
+  constructor(private link: Link, private opts: { again?: () => void; quit: () => void; lobby?: () => void }) {
+    session = this;
+    if (import.meta.env.DEV) (window as unknown as { __sf: Session }).__sf = this;
+    app.innerHTML = '<canvas id="scene"></canvas><div class="hud"></div><div class="layer"></div>';
+    this.canvas = app.querySelector('#scene')!;
+    this.hud = app.querySelector('.hud')!;
+    this.layer = app.querySelector('.layer')!;
+    this.world = new WorldRenderer(link.map);
+    if (VIEW3D) {
+      this.world3d = new World3D(link.map, app);
+      this.canvas.classList.add('over3d');
     }
-    if(online){lastNetInput-=dt;if(lastNetInput<=0){lastNetInput=.05;net?.input({x,z,yaw});}}else{match.step(dt);processEvents();}
-  } else if (match && mode === 'meeting') {
-    if(!online)match.meetingTime -= dt;
-    const el = document.getElementById('meeting-time');
-    if (el) el.textContent = String(Math.max(0,Math.ceil(match.meetingTime)));
-    if (!online&&match.meetingTime <= 0) resolveVote(-1);
+    this.buildHud();
+    link.onEvents = (e) => this.events(e);
+    link.onError = (m) => {
+      if (m !== 'Not now.') toast(m, 1.6, '#ffd2d2');
+    };
+    addEventListener('keydown', this.onKey);
+    addEventListener('keyup', this.onKeyUp);
+    addEventListener('resize', this.onResize);
+    addEventListener('blur', () => this.keys.clear());
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (VIEW3D) {
+        // First person: click to grab the mouse; on touch, drag to look.
+        if (e.pointerType === 'mouse') {
+          if (this.canLook()) void Promise.resolve(this.canvas.requestPointerLock?.()).catch(() => undefined);
+        } else this.touchLook = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (e.pointerType === 'mouse' && e.button === 0) this.mouse = { x: e.clientX, y: e.clientY };
+    });
+    addEventListener('pointermove', (e) => {
+      if (VIEW3D) {
+        if (document.pointerLockElement === this.canvas) this.look(e.movementX * 0.0024, e.movementY * 0.0024);
+        else if (this.touchLook && e.pointerId === this.touchLook.id) {
+          this.look((e.clientX - this.touchLook.x) * 0.006, (e.clientY - this.touchLook.y) * 0.006);
+          this.touchLook = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        }
+        return;
+      }
+      if (this.mouse) this.mouse = { x: e.clientX, y: e.clientY };
+    });
+    addEventListener('pointerup', (e) => {
+      this.mouse = null;
+      if (this.touchLook?.id === e.pointerId) this.touchLook = null;
+    });
+    this.resize();
+    this.raf = requestAnimationFrame(this.frame);
   }
-  view.render(match,yaw,pitch,now/1000);
-  audio.volume=volume;audio.update(dt,moving&&!!match?.player.alive,mode==='play'||mode==='task',match?.sabotage==='reactor');
-  uiTime -= dt;
-  if (uiTime <= 0) {
-    uiTime = .12; updateHud();
-    const p = document.getElementById('pad');
-    if (p) p.textContent = padConnected() ? '● Controller connected — D-pad to navigate, A / ✕ to select' : 'Connect a controller and press any button to join.';
+
+  // ------------------------------------------------------------ HUD
+
+  private buildHud(): void {
+    const touch = matchMedia('(pointer: coarse)').matches;
+    this.hud.innerHTML = `
+      <div class="taskbox"><div class="taskbar"><i style="width:0"></i><span>TOTAL TASKS COMPLETED</span></div><button class="btn btn--sm tabbtn">Tasks</button><div class="tasklist"></div></div>
+      <div class="topright"><button class="iconbtn" data-a="map" title="Map (Tab)">${ICON.map}</button><button class="iconbtn" data-a="menu" title="Menu (Esc)">${ICON.gear}</button></div>
+      <div class="actions-hud">
+        <button class="act" data-a="vent" title="Vent (V)">${ICON.vent}<span>VENT</span><b></b></button>
+        <button class="act kill" data-a="kill" title="Kill (Q)">${ICON.kill}<span>KILL</span><b></b></button>
+        <button class="act sab" data-a="sabotage" title="Sabotage (Tab)">${ICON.sabotage}<span>SABOTAGE</span><b></b></button>
+        <button class="act" data-a="use" title="Use (E)">${ICON.use}<span>USE</span><b></b></button>
+        <button class="act report" data-a="report" title="Report (R)">${ICON.report}<span>REPORT</span><b></b></button>
+      </div>
+      <div class="ventnav"></div>
+      <div class="ghostnote hidden"></div>
+      <div class="alert hidden"></div>
+      ${VIEW3D ? '<div class="crosshair"></div><div class="lookhint hidden">Click to look around</div>' : ''}
+      ${touch ? '<div class="joy"><i></i></div>' : ''}`;
+    this.hud.querySelectorAll<HTMLElement>('[data-a]').forEach((b) => {
+      b.onclick = () => this.command(b.dataset.a!);
+    });
+    const list = this.hud.querySelector('.tasklist') as HTMLElement;
+    (this.hud.querySelector('.tabbtn') as HTMLElement).onclick = () => list.classList.toggle('collapsed');
+    const joy = this.hud.querySelector('.joy') as HTMLElement | null;
+    if (joy) {
+      const knob = joy.querySelector('i') as HTMLElement;
+      let id = -1;
+      const set = (e: PointerEvent) => {
+        const r = joy.getBoundingClientRect();
+        let dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+        let dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+        const l = Math.hypot(dx, dy);
+        if (l > 1) {
+          dx /= l;
+          dy /= l;
+        }
+        this.joy = [dx, dy];
+        knob.style.transform = `translate(${dx * 45}px, ${dy * 45}px)`;
+      };
+      joy.addEventListener('pointerdown', (e) => {
+        id = e.pointerId;
+        joy.setPointerCapture(id);
+        set(e);
+      });
+      joy.addEventListener('pointermove', (e) => e.pointerId === id && set(e));
+      const end = () => {
+        id = -1;
+        this.joy = [0, 0];
+        knob.style.transform = '';
+      };
+      joy.addEventListener('pointerup', end);
+      joy.addEventListener('pointercancel', end);
+    }
   }
-  if (now > noticeUntil) toast.classList.add('hidden');
-  requestAnimationFrame(frame);
+
+  private get v(): SfView | null {
+    return this.link.view;
+  }
+  private get mePos(): [number, number] {
+    const v = this.v!;
+    return this.link.pos(v.players[v.me]!);
+  }
+
+  /** What "Use" would do right now. */
+  private useTarget(): UseTarget {
+    const v = this.v;
+    if (!v || v.phase !== 'play') return null;
+    const me = v.players[v.me]!;
+    const [x, y] = this.mePos;
+    const d = (s: Spot) => Math.hypot(s.x - x, s.y - y);
+    const def = this.link.map.def;
+    let best: UseTarget = null;
+    let bd = Infinity;
+    const offer = (t: NonNullable<UseTarget>, range: number) => {
+      const dd = d(t.at);
+      if (dd <= range && dd < bd) {
+        bd = dd;
+        best = t;
+      }
+    };
+    const s = v.sabotage;
+    if (s && me.alive) {
+      const spots = (def.sabotage as Record<string, Spot[] | undefined>)[s.kind] ?? [];
+      spots.forEach((at, i) => {
+        if ((s.kind === 'o2' || s.kind === 'comms') && s.done[i]) return;
+        offer({ kind: 'sab', sab: s.kind, station: i, at }, USE_RANGE + 0.4);
+      });
+      if (best) return best;
+    }
+    if (!me.impostor)
+      v.tasks.forEach((t, i) => {
+        if (t.done) return;
+        offer({ kind: 'task', task: i, at: t.spots[t.step]! }, USE_RANGE + 0.3);
+      });
+    if (best) return best;
+    if (me.alive) {
+      offer({ kind: 'button', at: def.button }, 2.4);
+      if (def.admin) offer({ kind: 'admin', at: def.admin }, USE_RANGE + 0.6);
+      if (def.security) offer({ kind: 'cams', at: def.security }, USE_RANGE + 0.6);
+      if (def.vitalsAt) offer({ kind: 'vitals', at: def.vitalsAt }, USE_RANGE + 0.6);
+    }
+    return best;
+  }
+  private killTarget(): number {
+    const v = this.v;
+    if (!v || v.phase !== 'play') return -1;
+    const me = v.players[v.me]!;
+    if (!me.impostor || !me.alive || v.vent >= 0) return -1;
+    const [x, y] = this.mePos;
+    let best = -1;
+    let bd = KILL_RANGE;
+    for (const p of v.players) {
+      if (p.id === v.me || !p.alive || p.hidden || p.impostor) continue;
+      const [px, py] = this.link.pos(p);
+      const dd = Math.hypot(px - x, py - y);
+      if (dd <= bd && this.link.map.grid.sees(x, y, px, py)) {
+        bd = dd;
+        best = p.id;
+      }
+    }
+    return best;
+  }
+  private reportTarget(): number {
+    const v = this.v;
+    if (!v || v.phase !== 'play' || !v.players[v.me]!.alive) return -1;
+    const [x, y] = this.mePos;
+    for (const b of v.bodies) if (Math.hypot(b.x - x, b.y - y) <= REPORT_RANGE - 0.2 && this.link.map.grid.sees(x, y, b.x, b.y)) return b.id;
+    return -1;
+  }
+  private ventNear(): number {
+    const v = this.v;
+    if (!v || v.phase !== 'play') return -1;
+    const me = v.players[v.me]!;
+    if (!me.impostor || !me.alive) return -1;
+    if (v.vent >= 0) return v.vent;
+    const [x, y] = this.mePos;
+    return this.link.map.def.vents.findIndex((vt) => Math.hypot(vt.x - x, vt.y - y) <= USE_RANGE);
+  }
+
+  private command(a: string): void {
+    const v = this.v;
+    if (!v) return;
+    audio.play('click');
+    switch (a) {
+      case 'menu':
+        return this.togglePause();
+      case 'map':
+        return this.openOverlay(v.players[v.me]!.impostor ? 'sabotage' : 'map');
+      case 'sabotage':
+        return this.openOverlay('sabotage');
+      case 'kill': {
+        const t = this.killTarget();
+        if (t >= 0) this.link.act({ k: 'kill', target: t });
+        return;
+      }
+      case 'report': {
+        const b = this.reportTarget();
+        if (b >= 0) this.link.act({ k: 'report', body: b });
+        return;
+      }
+      case 'vent': {
+        const i = this.ventNear();
+        if (i < 0) return;
+        this.link.act({ k: 'vent', op: v.vent >= 0 ? 'exit' : 'enter' });
+        audio.play('vent');
+        this.ventsOpen.set(i, 1);
+        return;
+      }
+      case 'use':
+        return this.use();
+    }
+  }
+
+  private use(): void {
+    const v = this.v!;
+    if (v.vent >= 0) return this.command('vent');
+    const t = this.useTarget();
+    if (!t) {
+      if (this.ventNear() >= 0) this.command('vent');
+      return;
+    }
+    const me = v.players[v.me]!;
+    const color = COLORS[me.color]!;
+    switch (t.kind) {
+      case 'task': {
+        const task = v.tasks[t.task]!;
+        const spot = task.spots[task.step]!;
+        const next = task.spots[task.step + 1];
+        const info: PanelInfo = { kind: spot.kind, label: spot.label, key: `${task.def}:${task.step}`, color: color[1], colorName: color[0].toUpperCase(), room: next ? this.link.map.roomAt(next.x, next.y) || 'Hallway' : undefined };
+        return this.openPanel(info, t.task);
+      }
+      case 'sab': {
+        const kind = t.sab === 'reactor' ? 'reactor-fix' : t.sab;
+        return this.openPanel({ kind, label: SAB_TEXT[t.sab], key: `sab:${t.sab}`, station: t.station }, -1);
+      }
+      case 'button':
+        return void this.link.act({ k: 'emergency' });
+      case 'admin':
+        return this.openOverlay('admin');
+      case 'cams':
+        return this.openOverlay('cams');
+      case 'vitals':
+        return this.openOverlay('vitals');
+    }
+  }
+
+  // ------------------------------------------------------------ panels & overlays
+
+  private openPanel(info: PanelInfo, task: number): void {
+    this.closeAll();
+    const el = document.createElement('div');
+    el.className = 'ov';
+    el.innerHTML = '<div class="mgame"><canvas width="600" height="600"></canvas><button class="closex">✕</button><div class="pcursor hidden"></div></div>';
+    this.layer.appendChild(el);
+    const canvas = el.querySelector('canvas')!;
+    const dpr = Math.min(2, devicePixelRatio);
+    canvas.width = canvas.height = Math.round(600 * dpr);
+    const host = {
+      done: () => {
+        if (task >= 0) this.link.act({ k: 'task', task });
+      },
+      close: () => this.closePanel(),
+      act: (a: Action) => this.link.act(a),
+      sound: (s: Parameters<Audio['play']>[0]) => audio.play(s),
+      view: () => this.link.view,
+    };
+    const p = makePanel(host, info);
+    const cursor = el.querySelector('.pcursor') as HTMLElement;
+    this.panel = { p, el, canvas, task, cursor };
+    const at = (e: PointerEvent): [number, number] => {
+      const r = canvas.getBoundingClientRect();
+      return [((e.clientX - r.left) / r.width) * 600, ((e.clientY - r.top) / r.height) * 600];
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      canvas.setPointerCapture(e.pointerId);
+      p.down(...at(e));
+    });
+    canvas.addEventListener('pointermove', (e) => p.move(...at(e)));
+    canvas.addEventListener('pointerup', (e) => p.up(...at(e)));
+    canvas.addEventListener('pointercancel', (e) => p.up(...at(e)));
+    (el.querySelector('.closex') as HTMLElement).onclick = () => this.closePanel();
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target === el) this.closePanel();
+    });
+    if (task >= 0) this.link.act({ k: 'busy', kind: info.kind as Exclude<PanelInfo['kind'], 'lights' | 'o2' | 'reactor-fix' | 'seismic' | 'comms'> });
+    if (this.link instanceof OnlineLink) this.link.frozen = true;
+    this.pad.cursor = [300, 300];
+    audio.play('use');
+  }
+
+  private closePanel(): void {
+    const pn = this.panel;
+    if (!pn) return;
+    pn.p.release();
+    pn.el.remove();
+    this.panel = null;
+    if (pn.task >= 0 && this.v?.phase === 'play') this.link.act({ k: 'busy', kind: '' });
+    if (this.link instanceof OnlineLink) this.link.frozen = false;
+  }
+
+  private openOverlay(kind: 'map' | 'sabotage' | 'admin' | 'cams' | 'vitals'): void {
+    if (this.overlay?.kind === kind) return this.closeOverlay();
+    this.closeAll();
+    const v = this.v;
+    if (!v || (v.phase !== 'play' && kind !== 'map')) return;
+    const def = this.link.map.def;
+    const close = () => this.closeOverlay();
+    let ui: MapOverlay | CamsUI | VitalsUI;
+    if (kind === 'cams')
+      ui = new CamsUI(this.layer, def, (ctx, W, H, cam, v, t) => {
+        const o = { eye: null, ghosts: false, tasks: [], alerts: [], pos: (p: PView) => this.link.pos(p) };
+        if (this.world3d) this.world3d.renderCam(ctx, W, H, v, t, cam, o);
+        else this.world.draw(ctx, W, H, v, t, { ...o, cx: cam.x, cy: cam.y, scale: Math.min(W / 14, H / 9), names: true });
+      }, close);
+    else if (kind === 'vitals') ui = new VitalsUI(this.layer, close);
+    else ui = new MapOverlay(this.layer, def, kind, (a) => this.link.act(a), close);
+    this.overlay = { kind, ui };
+    if (this.link instanceof OnlineLink) this.link.frozen = kind !== 'map' && kind !== 'sabotage';
+  }
+  private closeOverlay(): void {
+    this.overlay?.ui.dispose();
+    this.overlay = null;
+    if (this.link instanceof OnlineLink) this.link.frozen = !!this.panel;
+  }
+  private closeAll(): void {
+    this.closePanel();
+    this.closeOverlay();
+  }
+
+  private togglePause(): void {
+    if (this.pause) {
+      this.pause.remove();
+      this.pause = null;
+      if (this.link instanceof LocalLink) this.link.paused = false;
+      return;
+    }
+    const el = document.createElement('div');
+    el.className = 'ov';
+    el.style.zIndex = '60';
+    el.innerHTML = `<div class="panel pause"><h2 class="disp">${this.link.online ? 'Menu' : 'Paused'}</h2>
+      <div class="row"><label>Volume</label><input type="range" min="0" max="1" step="0.05" value="${saved.volume}"></div>
+      <button class="btn btn--green" data-p="resume">Resume</button><button class="btn" data-p="help">Controls</button><button class="btn btn--go" data-p="quit">${this.link.online ? 'Leave Game' : 'Quit to Menu'}</button></div>`;
+    this.layer.appendChild(el);
+    this.pause = el;
+    if (this.link instanceof LocalLink) this.link.paused = true;
+    (el.querySelector('input') as HTMLInputElement).oninput = (e) => {
+      saved.volume = Number((e.target as HTMLInputElement).value);
+      audio.volume = saved.volume;
+      save();
+    };
+    el.querySelector<HTMLElement>('[data-p=resume]')!.onclick = () => this.togglePause();
+    el.querySelector<HTMLElement>('[data-p=help]')!.onclick = () => toast('WASD move · E use · R report · Q kill · V vent · Tab map', 4);
+    el.querySelector<HTMLElement>('[data-p=quit]')!.onclick = () => {
+      this.dispose();
+      if (this.link.online && net) {
+        void net.leave();
+        net = null;
+      }
+      this.opts.quit();
+    };
+  }
+
+  // ------------------------------------------------------------ input
+
+  private key(e: KeyboardEvent, down: boolean): void {
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (down) this.keys.add(k);
+    else this.keys.delete(k);
+    if (!down || e.repeat) return;
+    if (this.panel) {
+      if (k === 'Escape') this.closePanel();
+      else this.panel.p.key(e.key);
+      return;
+    }
+    if (k === 'Tab') e.preventDefault();
+    if (k === 'Escape') {
+      if (this.overlay) return this.closeOverlay();
+      if (this.meeting?.chatting) return this.meeting.toggleChat(false);
+      return this.togglePause();
+    }
+    const v = this.v;
+    if (!v) return;
+    if (v.phase === 'meeting') {
+      if (k === 'Enter' && this.meeting) this.meeting.toggleChat(true);
+      return;
+    }
+    if (v.vent >= 0 && ['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) {
+      const dir: Record<string, [number, number]> = { w: [0, -1], ArrowUp: [0, -1], s: [0, 1], ArrowDown: [0, 1], a: [-1, 0], ArrowLeft: [-1, 0], d: [1, 0], ArrowRight: [1, 0] };
+      return this.ventHop(this.toWorld(...dir[k]!));
+    }
+    if (k === 'e' || k === ' ') this.command('use');
+    else if (k === 'q') this.command('kill');
+    else if (k === 'r') this.command('report');
+    else if (k === 'v') this.command('vent');
+    else if (k === 'Tab' || k === 'm') this.command('map');
+  }
+
+  /** In a vent: hop to the linked vent most in that direction. */
+  private ventHop(dir: [number, number]): void {
+    const v = this.v!;
+    const vents = this.link.map.def.vents;
+    const cur = vents[v.vent];
+    if (!cur) return;
+    let best = -1;
+    let bs = 0.3;
+    for (const to of cur.links) {
+      const t = vents[to]!;
+      const l = Math.hypot(t.x - cur.x, t.y - cur.y) || 1;
+      const s = ((t.x - cur.x) * dir[0] + (t.y - cur.y) * dir[1]) / l;
+      if (s > bs) {
+        bs = s;
+        best = to;
+      }
+    }
+    if (best >= 0) {
+      this.link.act({ k: 'vent', op: 'move', to: best });
+      audio.play('vent');
+    }
+  }
+
+  private gamepad(dt: number): [number, number] {
+    const g = navigator.getGamepads?.().find((x) => x && x.connected);
+    if (!g) return [0, 0];
+    const btn = (i: number) => !!g.buttons[i]?.pressed;
+    const edge = (i: number) => btn(i) && !this.pad.prev[i];
+    let ax = g.axes[0] ?? 0;
+    let ay = g.axes[1] ?? 0;
+    if (btn(14)) ax = -1;
+    if (btn(15)) ax = 1;
+    if (btn(12)) ay = -1;
+    if (btn(13)) ay = 1;
+    if (Math.hypot(ax, ay) < 0.2) ax = ay = 0;
+    const out: [number, number] = [ax, ay];
+    if (this.panel) {
+      // A virtual cursor for the task panels.
+      const c = this.pad.cursor;
+      c[0] = Math.max(0, Math.min(600, c[0] + ax * 520 * dt));
+      c[1] = Math.max(0, Math.min(600, c[1] + ay * 520 * dt));
+      const cur = this.panel.cursor;
+      cur.classList.remove('hidden');
+      cur.style.left = `${(c[0] / 6).toFixed(2)}%`;
+      cur.style.top = `${(c[1] / 6).toFixed(2)}%`;
+      this.panel.p.move(c[0], c[1]);
+      if (edge(0)) this.panel.p.down(c[0], c[1]);
+      if (!btn(0) && this.pad.prev[0]) this.panel?.p.up(c[0], c[1]);
+      if (edge(1)) this.closePanel();
+      out[0] = out[1] = 0;
+    } else {
+      const v = this.v;
+      if (v?.vent !== undefined && v.vent >= 0 && Math.hypot(ax, ay) > 0.7 && Math.hypot(this.pad.lastAxis[0]!, this.pad.lastAxis[1]!) < 0.7) this.ventHop(this.toWorld(ax, ay));
+      // Right stick looks around (first person).
+      if (VIEW3D) {
+        const lx = Math.abs(g.axes[2] ?? 0) > 0.15 ? g.axes[2]! : 0;
+        const ly = Math.abs(g.axes[3] ?? 0) > 0.15 ? g.axes[3]! : 0;
+        this.look(lx * 2.6 * dt, ly * 1.8 * dt);
+      }
+      if (edge(0)) this.command('use');
+      if (edge(2)) this.command('kill');
+      if (edge(3)) this.command('report');
+      if (edge(5)) this.command('vent');
+      if (edge(8)) this.command('map');
+      if (edge(9)) this.command('menu');
+      if (edge(1)) {
+        if (this.overlay) this.closeOverlay();
+        else if (this.pause) this.togglePause();
+      }
+    }
+    this.pad.lastAxis = [ax, ay];
+    this.pad.prev = g.buttons.map((b) => b.pressed);
+    return out;
+  }
+
+  private look(dx: number, dy: number): void {
+    this.yaw += dx;
+    this.pitch = Math.max(-1.25, Math.min(0.9, this.pitch - dy));
+  }
+  /** Mouse-look only while walking around (menus and panels need the cursor). */
+  private canLook(): boolean {
+    const v = this.v;
+    return !!v && (v.phase === 'play' || v.phase === 'intro') && !this.panel && !this.overlay && !this.pause;
+  }
+  /** Screen-relative input (forward / right) → a direction on the map, in first person. */
+  private toWorld(dx: number, dy: number): [number, number] {
+    if (!VIEW3D) return [dx, dy];
+    const f = -dy;
+    const r = dx;
+    return [Math.cos(this.yaw) * r + Math.sin(this.yaw) * f, Math.sin(this.yaw) * r - Math.cos(this.yaw) * f];
+  }
+
+  private steer(dt: number): void {
+    let dx = 0;
+    let dy = 0;
+    const k = this.keys;
+    if (k.has('a') || k.has('ArrowLeft')) dx -= 1;
+    if (k.has('d') || k.has('ArrowRight')) dx += 1;
+    if (k.has('w') || k.has('ArrowUp')) dy -= 1;
+    if (k.has('s') || k.has('ArrowDown')) dy += 1;
+    const [gx, gy] = this.gamepad(dt);
+    dx += gx + this.joy[0];
+    dy += gy + this.joy[1];
+    if (VIEW3D) {
+      [dx, dy] = this.toWorld(dx, dy);
+      if (!this.canLook() && document.pointerLockElement) document.exitPointerLock();
+    }
+    if (this.mouse && !dx && !dy) {
+      const mx = this.mouse.x - innerWidth / 2;
+      const my = this.mouse.y - innerHeight / 2;
+      const l = Math.hypot(mx, my);
+      if (l > 20) {
+        dx = mx / l;
+        dy = my / l;
+      }
+    }
+    const v = this.v;
+    const blocked = !v || v.phase !== 'play' || !!this.panel || (!!this.overlay && this.overlay.kind !== 'map' && this.overlay.kind !== 'sabotage') || !!this.pause || v.vent >= 0;
+    if (blocked) dx = dy = 0;
+    this.link.steer(dx, dy);
+  }
+
+  // ------------------------------------------------------------ events & phases
+
+  private events(evs: Event[]): void {
+    const v = this.v;
+    if (!v) return;
+    for (const e of evs) {
+      switch (e.k) {
+        case 'kill':
+          audio.play('kill');
+          if (e.victim === v.me) {
+            this.closeAll();
+            killAnim(this.layer, v.players[e.killer]!.color, v.players[e.victim]!.color);
+            setTimeout(() => toast('You are dead. Finish your tasks as a ghost!', 3), 1700);
+          }
+          break;
+        case 'meeting':
+          this.closeAll();
+          audio.play(e.reason === 'body' ? 'report' : 'emergency');
+          this.stopSplash?.();
+          this.stopSplash = splash(this.layer, v, e.reason, e.caller, e.body);
+          this.meetingAt = performance.now();
+          break;
+        case 'votes':
+          audio.play('vote');
+          break;
+        case 'eject':
+          this.ejectLeft = e.left;
+          break;
+        case 'sabotage': {
+          audio.play('sabotage');
+          const me = v.players[v.me]!;
+          if (!me.impostor) toast(e.kind === 'lights' ? 'The lights are out!' : e.kind === 'comms' ? 'Comms sabotaged!' : `${SAB_TEXT[e.kind]}!`, 2.4, '#ff6b6b');
+          break;
+        }
+        case 'fixed':
+          audio.play('fixed');
+          break;
+        case 'doors':
+          audio.play('door');
+          break;
+        case 'task':
+          if (e.id === v.me) {
+            audio.play(e.done ? 'task' : 'taskStep');
+            if (e.done) toast('Task complete!', 1.4, '#7dff7d');
+          }
+          break;
+        case 'vent': {
+          const i = this.link.map.def.vents.findIndex((vt) => Math.hypot(vt.x - e.x, vt.y - e.y) < 0.5);
+          if (i >= 0) this.ventsOpen.set(i, 1);
+          if (e.id !== v.me) audio.play('vent');
+          break;
+        }
+        case 'over':
+          break;
+      }
+    }
+  }
+
+  private phaseChange(v: SfView): void {
+    const ph = v.phase;
+    if (ph === this.phase) return;
+    const was = this.phase;
+    this.phase = ph;
+    if (ph === 'intro') {
+      audio.play('reveal');
+      this.stopReveal = reveal(this.layer, v, () => {
+        this.stopReveal = null;
+      });
+    } else this.stopReveal?.();
+    if (ph !== 'meeting') {
+      this.meeting?.dispose();
+      this.meeting = null;
+    }
+    if (ph === 'eject') {
+      audio.play('eject');
+      this.eject = new EjectUI(this.layer, v, this.link.map.def.theme, this.ejectLeft);
+    } else if (was === 'eject') {
+      this.eject?.dispose();
+      this.eject = null;
+    }
+    if (ph === 'over') {
+      this.closeAll();
+      const me = v.players[v.me]!;
+      audio.play((v.winner === 'impostor') === me.impostor ? 'win' : 'lose');
+      const buttons = this.link.online
+        ? [{ label: 'Back to Lobby', cls: 'btn--go', fn: () => (this.dispose(), this.opts.lobby?.()) }, { label: 'Leave', fn: () => (this.dispose(), this.opts.quit()) }]
+        : [{ label: 'Play Again', cls: 'btn--go', fn: () => (this.dispose(), this.opts.again?.()) }, { label: 'Menu', fn: () => (this.dispose(), this.opts.quit()) }];
+      this.over = overScreen(this.layer, v, buttons);
+    }
+  }
+
+  // ------------------------------------------------------------ the frame
+
+  private resize(): void {
+    const dpr = Math.min(2, devicePixelRatio);
+    this.canvas.width = Math.round(innerWidth * dpr);
+    this.canvas.height = Math.round(innerHeight * dpr);
+    this.world3d?.resize();
+  }
+
+  private frame = (now: number): void => {
+    if (this.disposed) return;
+    this.raf = requestAnimationFrame(this.frame);
+    const dt = Math.min(0.1, (now - this.last) / 1000);
+    this.last = now;
+    this.t += dt;
+    if (toastT > 0) {
+      toastT -= dt;
+      if (toastT <= 0) toastEl?.classList.add('off');
+    }
+    this.steer(dt);
+    this.link.tick(dt);
+    const v = this.v;
+    if (!v) return;
+    this.phaseChange(v);
+    for (const [i, o] of this.ventsOpen) {
+      const n = o - dt * 2.5;
+      if (n <= 0) this.ventsOpen.delete(i);
+      else this.ventsOpen.set(i, n);
+    }
+    // Meeting tablet after the splash.
+    if (v.phase === 'meeting' && !this.meeting && performance.now() - this.meetingAt > 2300) this.meeting = new MeetingUI(this.layer, v.me, (a) => this.link.act(a), audio);
+    if (this.meeting) this.meeting.update(v);
+    this.eject?.update(dt);
+    // Panels that no longer make sense close themselves.
+    if (this.panel && (v.phase !== 'play' || (!v.players[v.me]!.alive && this.panel.task < 0))) this.closePanel();
+    if (this.panel) {
+      this.panel.p.update(dt);
+      const ctx = this.panel?.canvas.getContext('2d');
+      if (ctx && this.panel) {
+        const s = this.panel.canvas.width / 600;
+        ctx.setTransform(s, 0, 0, s, 0, 0);
+        ctx.clearRect(0, 0, 600, 600);
+        this.panel.p.render(ctx);
+      }
+    }
+    if (this.overlay && v.phase !== 'play') this.closeOverlay();
+    this.draw(v, dt);
+    this.updateHud(v);
+  };
+
+  private draw(v: SfView, dt: number): void {
+    const ctx = this.canvas.getContext('2d')!;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const me = v.players[v.me]!;
+    const [mx, my] = this.mePos;
+    const dpr = Math.min(2, devicePixelRatio);
+    const scale = Math.max(innerWidth / 19, innerHeight / 10.7) * dpr;
+    const sab = v.sabotage;
+    // Vision (lights shrink it for the crew; ghosts see everything).
+    const target = !me.alive ? 40 : me.impostor ? v.cfg.impostorVision : sab?.kind === 'lights' ? v.cfg.crewVision * 0.25 : v.cfg.crewVision;
+    this.visR += (target - this.visR) * Math.min(1, dt * 2.5);
+    const tasks: Spot[] = !me.impostor ? v.tasks.filter((t) => !t.done).map((t) => t.spots[t.step]!) : [];
+    const alerts: Spot[] = sab ? ((this.link.map.def.sabotage as Record<string, Spot[] | undefined>)[sab.kind] ?? []).filter((_, i) => !((sab.kind === 'o2' || sab.kind === 'comms') && sab.done[i])) : [];
+    const use = this.useTarget();
+    const local = this.link instanceof LocalLink ? null : (this.link as OnlineLink).self();
+    const opts: DrawOpts = {
+      cx: mx,
+      cy: my - 0.4,
+      scale,
+      eye: me.alive ? { x: mx, y: my, r: this.visR } : null,
+      ghosts: !me.alive,
+      tasks: v.sabotage?.kind === 'comms' ? [] : tasks,
+      alerts,
+      target: this.killTarget(),
+      ventGlow: v.vent < 0 ? this.ventNear() : -1,
+      useGlow: use?.at ?? null,
+      pos: (p: PView) => {
+        if (local && p.id === v.me) {
+          p.left = local.left;
+          p.moving = local.moving;
+        }
+        return this.link.pos(p);
+      },
+      ventsOpen: this.ventsOpen,
+      names: true,
+    };
+    if (this.world3d) {
+      ctx.clearRect(0, 0, W, H);
+      this.world3d.render(v, dt, this.t, [mx, my], { ...(opts as Required<Pick<DrawOpts, 'pos'>> & DrawOpts), fp: { yaw: this.yaw, pitch: this.pitch, low: v.vent >= 0 } });
+    } else this.world.draw(ctx, W, H, v, this.t, opts);
+    // Arrows to the sabotage stations at the screen edge.
+    ctx.save();
+    for (const a of alerts) {
+      let sx = (a.x - mx) * scale + W / 2;
+      let sy = (a.y - (my - 0.4)) * scale + H / 2;
+      let ang: number;
+      if (this.world3d) {
+        // First person: on screen → no arrow; otherwise point by its bearing (up = ahead).
+        const [px, py, front] = this.world3d.project(a.x, a.y, 0.5);
+        sx = px * dpr;
+        sy = py * dpr;
+        if (front && sx > 40 && sx < W - 40 && sy > 40 && sy < H - 40) continue;
+        const fx = Math.sin(this.yaw);
+        const fy = -Math.cos(this.yaw);
+        const bx = a.x - mx;
+        const by = a.y - my;
+        ang = Math.atan2(fx * by - fy * bx, fx * bx + fy * by) - Math.PI / 2;
+      } else {
+        if (sx > 40 && sx < W - 40 && sy > 40 && sy < H - 40) continue;
+        ang = Math.atan2(sy - H / 2, sx - W / 2);
+      }
+      const r = Math.min(W / 2 - 50 * dpr, H / 2 - 50 * dpr) / Math.max(Math.abs(Math.cos(ang)) * (Math.min(W, H) / W), Math.abs(Math.sin(ang)) * (Math.min(W, H) / H));
+      const ax = W / 2 + Math.cos(ang) * Math.min(r, W / 2 - 50 * dpr);
+      const ay = H / 2 + Math.sin(ang) * Math.min(r, H / 2 - 50 * dpr);
+      ctx.translate(ax, ay);
+      ctx.rotate(ang);
+      ctx.fillStyle = Math.sin(this.t * 8) > 0 ? '#ff3b3b' : '#ff9090';
+      ctx.strokeStyle = '#0b0b14';
+      ctx.lineWidth = 4 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(26 * dpr, 0);
+      ctx.lineTo(-14 * dpr, -18 * dpr);
+      ctx.lineTo(-6 * dpr, 0);
+      ctx.lineTo(-14 * dpr, 18 * dpr);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    ctx.restore();
+    // Overlays that draw every frame.
+    if (this.overlay?.ui instanceof MapOverlay) this.overlay.ui.update(v, { x: mx, y: my }, v.sabotage?.kind === 'comms' ? [] : tasks, alerts, this.t);
+    else if (this.overlay?.ui instanceof CamsUI) this.overlay.ui.update(v, this.t);
+    else if (this.overlay?.ui instanceof VitalsUI) this.overlay.ui.update(v);
+    audio.siren(dt, !!sab && sab.t > 0 && v.phase === 'play');
+  }
+
+  private updateHud(v: SfView): void {
+    const me = v.players[v.me]!;
+    const hud = this.hud;
+    const playing = v.phase === 'play' || v.phase === 'intro';
+    hud.style.display = playing ? '' : 'none';
+    if (!playing) return;
+    const map = this.link.map;
+    const sab = v.sabotage;
+    // Task bar.
+    const bar = hud.querySelector('.taskbar i') as HTMLElement;
+    const label = hud.querySelector('.taskbar span') as HTMLElement;
+    bar.style.width = `${(v.progress ?? 0) * 100}%`;
+    label.textContent = v.progress === null ? 'COMMS SABOTAGED' : 'TOTAL TASKS COMPLETED';
+    // Task list.
+    const lines: string[] = [];
+    if (sab) {
+      const spots = (map.def.sabotage as Record<string, Spot[] | undefined>)[sab.kind] ?? [];
+      const n = spots.length;
+      const fixed = sab.kind === 'lights' ? sab.switches.filter(Boolean).length : sab.done.filter(Boolean).length;
+      const total = sab.kind === 'lights' ? 5 : n;
+      lines.push(`<div class="red">${SAB_TEXT[sab.kind]}${sab.t > 0 ? ` in ${Math.ceil(sab.t)}s` : ''}${sab.kind === 'reactor' || sab.kind === 'seismic' ? '' : ` (${fixed}/${total})`}</div>`);
+      if (sab.kind === 'o2') lines.push(`<div class="red">Code: ${sab.code}</div>`);
+    }
+    if (me.impostor) {
+      lines.push(`<div class="imp">${me.alive ? 'Sabotage and kill everyone.' : 'You are dead. You can still sabotage.'}</div><div class="imp">Fake Tasks:</div>`);
+    } else if (!me.alive) lines.push('<div>You are dead. Finish your tasks!</div>');
+    if (sab?.kind === 'comms' && !me.impostor) lines.push('<div class="red">Comms Sabotaged</div>');
+    else
+      for (const t of v.tasks) {
+        const at = t.spots[Math.min(t.step, t.spots.length - 1)]!;
+        const room = map.roomAt(at.x, at.y) || 'Hallway';
+        const steps = t.spots.length > 1 ? ` (${t.done ? t.spots.length : t.step}/${t.spots.length})` : '';
+        const name = t.spots.length > 1 && !t.done ? at.label : t.name;
+        lines.push(`<div class="${t.done ? 'done' : t.step > 0 ? 'part' : ''}">${esc(room)}: ${esc(name)}${steps}</div>`);
+      }
+    const list = hud.querySelector('.tasklist') as HTMLElement;
+    const html = lines.join('');
+    if (list.innerHTML !== html) list.innerHTML = html;
+    // Buttons.
+    const use = this.useTarget();
+    const kill = this.killTarget();
+    const report = this.reportTarget();
+    const vent = this.ventNear();
+    const set = (a: string, show: boolean, on: boolean, num = '', lab?: string, svg?: string) => {
+      const b = hud.querySelector(`[data-a="${a}"]`) as HTMLElement;
+      b.style.display = show ? '' : 'none';
+      b.classList.toggle('off', !on);
+      (b.querySelector('b') as HTMLElement).textContent = num;
+      if (lab) {
+        const sp = b.querySelector('span') as HTMLElement;
+        if (sp.textContent !== lab) {
+          sp.textContent = lab;
+          b.querySelector('svg')!.outerHTML = svg!;
+        }
+      }
+    };
+    const useLab = use?.kind === 'admin' ? ['ADMIN', ICON.admin] : use?.kind === 'cams' ? ['SECURITY', ICON.cams] : use?.kind === 'vitals' ? ['VITALS', ICON.vitals] : ['USE', ICON.use];
+    const ventUse = !use && vent >= 0;
+    set('use', true, !!use || ventUse || v.vent >= 0, '', useLab[0], useLab[1]);
+    set('report', me.alive, report >= 0);
+    set('kill', me.impostor && me.alive, kill >= 0 && v.killCd <= 0, v.killCd > 0 ? String(Math.ceil(v.killCd)) : '');
+    set('vent', me.impostor && me.alive, vent >= 0);
+    set('sabotage', me.impostor, true, '');
+    const ghost = hud.querySelector('.ghostnote') as HTMLElement;
+    ghost.classList.toggle('hidden', me.alive);
+    const hint = hud.querySelector('.lookhint') as HTMLElement | null;
+    hint?.classList.toggle('hidden', !!document.pointerLockElement || matchMedia('(pointer: coarse)').matches || !this.canLook());
+    ghost.textContent = me.impostor ? 'You are a ghost — sabotage from the map.' : 'You are a ghost — you can go through walls.';
+    (hud.querySelector('.alert') as HTMLElement).classList.toggle('hidden', !(sab && sab.t > 0));
+    // Vent arrows.
+    const nav = hud.querySelector('.ventnav') as HTMLElement;
+    const key = `${v.vent}`;
+    if (key !== this.hudKey) {
+      this.hudKey = key;
+      nav.innerHTML = '';
+      const cur = map.def.vents[v.vent];
+      if (cur)
+        for (const to of cur.links) {
+          const t = map.def.vents[to]!;
+          const ang = Math.atan2(t.y - cur.y, t.x - cur.x);
+          const b = document.createElement('button');
+          b.textContent = '➜';
+          b.style.left = `calc(50% + ${Math.cos(ang) * 130}px)`;
+          b.style.top = `calc(50% + ${Math.sin(ang) * 130}px)`;
+          b.style.transform = `translate(-50%, -50%) rotate(${ang}rad)`;
+          b.onclick = () => {
+            this.link.act({ k: 'vent', op: 'move', to });
+            audio.play('vent');
+          };
+          nav.appendChild(b);
+        }
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    this.closeAll();
+    this.stopReveal?.();
+    this.stopSplash?.();
+    this.meeting?.dispose();
+    this.eject?.dispose();
+    this.over?.remove();
+    removeEventListener('keydown', this.onKey);
+    removeEventListener('keyup', this.onKeyUp);
+    removeEventListener('resize', this.onResize);
+    this.link.steer(0, 0);
+    this.link.dispose();
+    this.world3d?.dispose();
+    if (session === this) session = null;
+  }
 }
-home();requestAnimationFrame(frame);
+
+home();
