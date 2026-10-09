@@ -25,6 +25,8 @@ export interface Box {
   tint?: string;
   /** Roofs and ceilings: left off the minimap so you can see inside buildings. */
   roof?: boolean;
+  /** Player clip (zombie windows): blocks movement, never bullets or sight. */
+  clip?: boolean;
 }
 
 export interface RayHit {
@@ -64,6 +66,17 @@ export class Level {
         if (!l) this.grid.set(k, (l = []));
         l.push(b);
       }
+  }
+
+  /** Take a box out (a bought door, a cleared pile of debris). */
+  remove(b: Box): void {
+    const i = this.boxes.indexOf(b);
+    if (i < 0) return;
+    this.boxes.splice(i, 1);
+    for (const l of this.grid.values()) {
+      const k = l.indexOf(b);
+      if (k >= 0) l.splice(k, 1);
+    }
   }
 
   /** Boxes overlapping an xz rectangle. */
@@ -106,7 +119,7 @@ export class Level {
         for (const b of l) {
           if (this.marks.get(b) === s) continue;
           this.marks.set(b, s);
-          if (skipThin && b.thin) continue;
+          if ((skipThin && b.thin) || b.clip) continue;
           const h = rayBox(ox, oy, oz, dx, dy, dz, b, best.t);
           if (h) best = h;
         }

@@ -8,6 +8,8 @@ import { wreckage } from './maps/wreckage';
 import { terminal } from './maps/terminal';
 import { refinery } from './maps/refinery';
 import { farmstead } from './maps/farmstead';
+import { nachtkino } from './maps/nachtkino';
+import type { ZMapMeta } from './zmap';
 import { Level } from './level';
 import { P } from './player';
 import type { MapDef, SpawnPoint } from './mapkit';
@@ -46,4 +48,8 @@ function moreSpawns(m: MapDef): MapDef {
 
 /** Multiplayer maps (each built from boxes + props, see mapkit.ts). */
 export const MAPS: MapDef[] = [atomic(), freight(), culdesac(), downtown(), wreckage(), terminal(), refinery(), farmstead(), manor(), outpost()].map(moreSpawns);
-export const MAP = Object.fromEntries(MAPS.map((m) => [m.id, m])) as Record<string, MapDef>;
+/** Zombies maps (not in the multiplayer rotation): the MapDef plus its zombies layout. */
+const NK = nachtkino();
+export const ZMAPS: Array<{ map: MapDef; z: ZMapMeta }> = [NK];
+export const ZMAP = Object.fromEntries(ZMAPS.map((m) => [m.map.id, m.z])) as Record<string, ZMapMeta>;
+export const MAP = Object.fromEntries([...MAPS, ...ZMAPS.map((m) => m.map)].map((m) => [m.id, m])) as Record<string, MapDef>;

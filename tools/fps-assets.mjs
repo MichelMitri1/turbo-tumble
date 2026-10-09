@@ -105,6 +105,10 @@ const GUNS = [
   'AssaultRifle2_1', 'AssaultRifle2_3', 'AssaultRifle_3', 'AssaultRifle_5', 'Bullpup_1', 'Bullpup_3',
   'SubmachineGun_1', 'SubmachineGun_3', 'SubmachineGun_5', 'Shotgun_1', 'Shotgun_4', 'Shotgun_SawedOff',
   'SniperRifle_2', 'SniperRifle_4', 'SniperRifle_5', 'Pistol_1', 'Pistol_5', 'Revolver_2',
+  // Zombies arsenal (wall buys + the mystery box).
+  'AssaultRifle_1', 'AssaultRifle_2', 'AssaultRifle_4', 'AssaultRifle2_2', 'AssaultRifle2_4', 'Bullpup_2', 'SubmachineGun_2', 'SubmachineGun_4',
+  'Shotgun_2', 'Shotgun_3', 'Shotgun_ShortStock', 'SniperRifle_1', 'SniperRifle_3', 'SniperRifle_6', 'Pistol_2', 'Pistol_3', 'Pistol_4', 'Pistol_6',
+  'Revolver_1', 'Revolver_3', 'Revolver_4',
 ];
 const ACCESSORIES = ['Scope_1', 'Scope_2', 'Scope_3', 'Silencer_1', 'Silencer_Short', 'Grip', 'Bipod', 'Flashlight'];
 for (const g of GUNS) {
@@ -138,6 +142,21 @@ const PROPS = [
 for (const p of PROPS) {
   const doc = await io.read(join(src, 'q/shooter/Environment/glTF', `${p}.gltf`));
   await finish(doc, `prop-${p.toLowerCase().replace(/_/g, '-')}`);
+}
+// Zombies: the undead (male / female), the hellhound (a wolf, re-skinned at runtime), launchers.
+const ZKEEP = ['Walk', 'Run', 'Punch', 'SwordSlash', 'Death', 'RecieveHit', 'Jump', 'StandUp', 'Idle', 'Defeat'];
+for (const [f, name] of [['q/chars/glTF/Zombie_Male.gltf', 'zombie-male'], ['q/chars/glTF/Zombie_Female.gltf', 'zombie-female']]) {
+  const doc = await io.read(join(src, f));
+  for (const a of doc.getRoot().listAnimations()) if (!ZKEEP.includes(a.getName().replace(/^.*\|/, ''))) a.dispose();
+  await finish(doc, name);
+}
+{
+  const doc = await io.read(join(src, 'q/animals/glTF/Wolf.gltf'));
+  await finish(doc, 'hellhound');
+}
+for (const p of ['RocketLauncher', 'GrenadeLauncher', 'ShortCannon']) {
+  const doc = await io.read(join(src, 'q/shooter/Guns/glTF', `${p}.gltf`));
+  await finish(doc, `gun-${p.toLowerCase()}`);
 }
 for (const p of ['Grenade', 'Knife_1']) {
   const doc = await io.read(join(src, 'q/shooter/Guns/glTF', `${p}.gltf`));

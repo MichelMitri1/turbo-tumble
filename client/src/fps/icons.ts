@@ -29,6 +29,7 @@ const P: Record<string, string> = {
   tdm: '<path d="M4 4l9 9M4 4h4M4 4v4M20 4l-9 9M20 4h-4M20 4v4M7 15l-3 3 2 2 3-3M17 15l3 3-2 2-3-3"/>',
   ffa: '<path d="M6 10a6 6 0 0 1 12 0c0 3-2 4-2 6H8c0-2-2-3-2-6z"/><path d="M9 19h6M10 11h.01M14 11h.01"/>',
   dom: '<path d="M6 21V3M6 4h11l-3 4 3 4H6"/>',
+  zombies: '<path d="M6 11a6 6 0 0 1 12 0v3l-1.5 1.5V19h-9v-3.5L6 14z"/><circle cx="9.5" cy="11.5" r="1.4"/><circle cx="14.5" cy="11.5" r="1.4"/><path d="M10 19v-2M12 19v-2M14 19v-2"/>',
   kc: '<rect x="7" y="4" width="10" height="15" rx="3"/><circle cx="12" cy="7.5" r="1"/><path d="M10 12h4M10 15h4"/>',
   // Weapon classes (kill feed): side profiles, muzzle to the right.
   ar: '<path d="M2 10h15l3-1h2v3h-5l-1 2h-3l-1 4H9l1-4H6l-2 3H2z"/><path d="M12 14l-1 3"/>',

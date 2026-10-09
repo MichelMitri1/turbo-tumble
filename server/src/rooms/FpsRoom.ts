@@ -1,10 +1,10 @@
 import { Room, ServerError, type Client } from '@colyseus/core';
 import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type SoldierSetup } from '../../../client/src/fps/sim/game';
 import { BotBrain } from '../../../client/src/fps/sim/bots';
-import { MAP } from '../../../client/src/fps/sim/maps';
+import { MAP, ZMAP } from '../../../client/src/fps/sim/maps';
 import { DEFAULT_CLASSES, fixLoadout, type Loadout } from '../../../client/src/fps/sim/weapons';
 import type { Input } from '../../../client/src/fps/sim/player';
-import { FP_MAX, FP_VERSION, FpMsg, unpackInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from '../../../client/src/fps/net/protocol';
+import { FP_MAX, FP_ZM_MAX, FP_VERSION, FpMsg, unpackInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from '../../../client/src/fps/net/protocol';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
 
@@ -21,7 +21,9 @@ interface Member {
 
 const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk', 'Wolf', 'Viper', 'Echo', 'Bishop', 'Reyes', 'Kowalski', 'Novak', 'Ortiz', 'Sasha', 'Dmitri'];
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Soldier';
-const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'tag', 'over', 'reload', 'melee', 'grenadeThrow', 'unitShot', 'unitDown', 'bite', 'flashed', 'stunned']);
+const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'tag', 'over', 'reload', 'melee', 'grenadeThrow', 'unitShot', 'unitDown', 'bite', 'flashed', 'stunned',
+  // Zombies.
+  'zround', 'zroundEnd', 'zpts', 'zbuy', 'zdeny', 'zboard', 'zhit', 'zdown', 'zrevived', 'zbleed', 'zperk', 'zpower', 'zdrop', 'zgrab', 'zbox', 'zpap', 'zswing', 'zthunder', 'zspawn', 'zdoor', 'zover']);
 
 /** Sanitise a loadout from a client (unknown ids fall back to defaults). */
 function safeLoadout(l: Loadout | undefined): Loadout {
@@ -50,14 +52,25 @@ export class FpsRoom extends Room {
   private overTimer = 0;
   private readonly botInputs = new Map<string, Input>();
 
-  override onCreate(o: FpJoin): void {
+  override onCreate(o: Partial<FpJoin>): void {
     this.roomId = claimRoomCode();
     void this.setPrivate(o?.visibility !== 'public');
     void this.setMetadata({ code: this.roomId, game: 'zerohour' });
+    // A zombies lobby starts in zombies (the host can still switch modes).
+    if (o?.kind === 'zombies') {
+      this.config = { ...this.config, mode: 'zombies', map: 'nachtkino', bots: 0 };
+      this.maxClients = FP_ZM_MAX;
+    }
     this.onMessage(FpMsg.Config, (c, cfg: Partial<FpConfig>) => {
       if (c.sessionId !== this.hostId || this.phase !== 'lobby') return;
-      if (cfg.mode && ['tdm', 'ffa', 'dom', 'kc'].includes(cfg.mode)) this.config.mode = cfg.mode;
-      if (cfg.map && MAP[cfg.map]) this.config.map = cfg.map;
+      if (cfg.mode && ['tdm', 'ffa', 'dom', 'kc', 'zombies'].includes(cfg.mode)) this.config.mode = cfg.mode;
+      if (cfg.map && MAP[cfg.map] && !ZMAP[cfg.map]) this.config.map = cfg.map;
+      // Zombies has its own map; multiplayer never runs on it.
+      if (this.config.mode === 'zombies') this.config.map = 'nachtkino';
+      else if (ZMAP[this.config.map]) this.config.map = 'culdesac';
+      // Four survivors in zombies (the matchmaker then opens a new lobby for the fifth).
+      this.maxClients = this.config.mode === 'zombies' ? Math.max(FP_ZM_MAX, this.members.size) : FP_MAX;
+      if (this.config.mode === 'zombies') for (const m of this.members.values()) m.team = 0;
       if (typeof cfg.bots === 'number') this.config.bots = Math.max(0, Math.min(9, Math.round(cfg.bots)));
       if (cfg.skill && ['recruit', 'regular', 'hardened', 'veteran'].includes(cfg.skill)) this.config.skill = cfg.skill;
       this.sendLobby();
@@ -111,6 +124,7 @@ export class FpsRoom extends Room {
 
   override onJoin(client: Client, o: FpJoin): void {
     if (o?.version !== FP_VERSION) throw new ServerError(4000, 'Game version mismatch — refresh the page.');
+    if (this.config.mode === 'zombies' && this.members.size >= FP_ZM_MAX) throw new ServerError(4002, 'Lobby full (zombies is up to 4 players).');
     if (this.phase === 'playing' && this.game) {
       // Join in progress: drop straight into the smaller team.
       const t0 = this.game.soldiers.filter((s) => s.team === 0 && !s.bot).length;
@@ -133,7 +147,7 @@ export class FpsRoom extends Room {
     }
     if (this.members.size >= FP_MAX) throw new ServerError(4002, 'Lobby full.');
     const t0 = [...this.members.values()].filter((m) => m.team === 0).length;
-    const team: 0 | 1 = t0 <= this.members.size - t0 ? 0 : 1;
+    const team: 0 | 1 = this.config.mode === 'zombies' || t0 <= this.members.size - t0 ? 0 : 1;
     this.members.set(client.sessionId, { id: client.sessionId, name: clean(o?.name), team, loadout: safeLoadout(o?.loadout), camos: o?.camos ?? {}, connected: true, ping: 0 });
     if (!this.hostId) this.hostId = client.sessionId;
     this.sendLobby();
@@ -162,7 +176,8 @@ export class FpsRoom extends Room {
     if (this.game) {
       // A bot takes over the seat.
       const s = this.game.soldier(client.sessionId);
-      if (s) {
+      if (s && this.game.horde) s.connected = false;
+      else if (s) {
         s.bot = true;
         s.remote = false;
         s.name = `${s.name} (bot)`;
@@ -195,7 +210,8 @@ export class FpsRoom extends Room {
       const l = DEFAULT_CLASSES[Math.floor(Math.random() * DEFAULT_CLASSES.length)]!;
       setups.push({ id: `bot${bi++}`, name: names.pop() ?? `Bot${bi}`, team, bot: true, loadout: l, camos: { [l.primary]: camoPool[Math.floor(Math.random() * camoPool.length)]! } });
     };
-    if (c.mode === 'ffa') for (let i = setups.length; i < Math.max(2, c.bots * 2); i++) addBot(0);
+    if (c.mode === 'zombies') for (const s of setups) s.team = 0; // everyone together, no bots
+    else if (c.mode === 'ffa') for (let i = setups.length; i < Math.max(2, c.bots * 2); i++) addBot(0);
     else for (const t of [0, 1] as const) for (let i = setups.filter((s) => s.team === t).length; i < c.bots; i++) addBot(t);
     this.game = new Game(c.map, { mode: c.mode }, setups);
     for (const s of this.game.soldiers) s.remote = !s.bot;
@@ -272,6 +288,8 @@ export class FpsRoom extends Room {
       uav: [...g.uav.entries()].filter(([, t]) => t > g.time).map(([k, t]) => [k, r(t - g.time, 10)] as [string, number]),
       barrels: g.barrels.map((b) => (b.alive ? 1 : 0)),
       board: sendBoard ? g.soldiers.map((s) => [this.ids.indexOf(s.id), s.kills, s.deaths, s.assists, s.score, this.members.get(s.id)?.ping ?? 0]) : undefined,
+      zm: g.horde?.snap(this.ids),
+      w: g.horde ? g.soldiers.map((s) => [this.ids.indexOf(s.id), s.weapons[0].def.id, s.weapons[1].def.id] as [number, string, string]) : undefined,
     };
     for (const client of this.clients) {
       const s = g.soldier(client.sessionId);

@@ -419,3 +419,81 @@ img[data-g]:not([src]), img[data-i]:not([src]), img[data-m]:not([src]) { visibil
 .zh-card { position: relative; }
 .zh-card em { color: var(--accent); font-style: normal; }
 .zh-sec small { font-family: var(--ui); font-size: 12px; color: var(--muted); letter-spacing: 0.15em; margin-left: 8px; }
+
+/* ---------------------------------------------------------------- zombies */
+.zh-hud.zm .zh-score, .zh-hud.zm .zh-mini, .zh-hud.zm .zh-compass, .zh-hud.zm .zh-feed, .zh-hud.zm .zh-streaks, .zh-hud.zm .zh-flags, .zh-hud.zm .zh-dead, .zh-hud.zm .zh-shield, .zh-hud.zm .zh-enemy, .zh-hud.zm .zh-pops, .zh-hud.zm .zh-nums { display: none !important; }
+.zz-hud { position: absolute; inset: 0; pointer-events: none; z-index: 11; zoom: var(--hud-scale, 1); font-family: 'Special Elite', var(--ui); color: #f2eee6; text-shadow: 0 2px 4px rgba(0,0,0,0.9); }
+.zz-round { position: absolute; left: 34px; bottom: 26px; font-family: 'Creepster', serif; color: #b3120c; font-size: 96px; line-height: 1; filter: drop-shadow(0 0 6px rgba(120,0,0,0.6)); transition: color 0.2s; }
+.zz-round.flash { color: #f4f0e8; }
+.zz-round.dogs { color: #ff4a10; }
+.zz-round .tally { display: inline-flex; gap: 12px; align-items: flex-end; position: relative; height: 84px; padding: 0 6px; }
+.zz-round .tally i { display: block; width: 9px; height: 80px; background: currentColor; border-radius: 4px; transform: rotate(4deg); box-shadow: 0 0 2px rgba(0,0,0,0.6); }
+.zz-round .tally i:nth-child(2) { transform: rotate(-3deg); height: 76px; }
+.zz-round .tally i:nth-child(3) { transform: rotate(5deg); height: 82px; }
+.zz-round .tally b { position: absolute; left: -10px; right: -10px; top: 36px; height: 9px; background: currentColor; transform: rotate(-24deg); border-radius: 4px; }
+.zz-perks { position: absolute; left: 34px; bottom: 132px; display: flex; gap: 8px; }
+.zz-perks i { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 22px; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 80%, white), var(--c) 55%, #120808); border: 2px solid rgba(255,255,255,0.35); box-shadow: 0 0 10px var(--c); }
+.zz-points { position: absolute; right: 30px; bottom: 132px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.zz-pt { position: relative; display: flex; align-items: baseline; gap: 8px; min-width: 120px; justify-content: flex-end; padding: 2px 12px; background: linear-gradient(90deg, transparent, rgba(0,0,0,0.55)); border-right: 4px solid var(--c); font-size: 26px; color: var(--c); }
+.zz-pt small { font-size: 13px; opacity: 0.7; font-family: var(--ui); }
+.zz-pt.me span { font-size: 32px; }
+.zz-pt.down { color: #ff5040; border-right-color: #ff5040; }
+.zz-pt.dead { opacity: 0.45; }
+.zz-pop { position: absolute; right: 100%; top: 4px; font-size: 22px; color: #ffd84a; white-space: nowrap; animation: zzpop 0.9s ease-out forwards; }
+.zz-pop.neg { color: #ff5a40; }
+@keyframes zzpop { from { transform: translate(0, 0); opacity: 1; } to { transform: translate(var(--dx), var(--dy)); opacity: 0; } }
+.zz-powers { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); display: flex; gap: 12px; }
+.zz-powers i { width: 54px; height: 54px; display: grid; place-items: center; font-style: normal; font-size: 30px; font-family: var(--ui); font-weight: 700; color: #d8ffd0; background: radial-gradient(circle, rgba(40,180,40,0.55), rgba(0,40,0,0.2) 70%, transparent); border-radius: 50%; text-shadow: 0 0 10px #4f4; }
+.zz-powers i.blink { opacity: 0.25; }
+.zz-prompt { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); font-family: var(--ui); font-weight: 700; font-size: 21px; letter-spacing: 0.02em; opacity: 0; transition: opacity 0.12s; white-space: nowrap; }
+.zz-prompt.on { opacity: 1; }
+.zz-prompt b { color: #ffd84a; font-weight: 700; }
+.zz-prompt kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 4px; background: rgba(255,255,255,0.9); color: #111; font-family: var(--ui); font-size: 15px; text-shadow: none; }
+.zz-prompt kbd.sq { background: #e48ad8; color: #fff; border-radius: 50%; }
+.zz-bar { position: absolute; left: 50%; top: 68%; width: 260px; height: 8px; transform: translateX(-50%); background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.5); }
+.zz-bar i { display: block; height: 100%; background: #f2eee6; }
+.zz-bar span { position: absolute; left: 0; right: 0; top: 12px; text-align: center; font-family: var(--ui); font-weight: 700; font-size: 15px; }
+.zz-down { position: absolute; inset: 0; }
+.zz-down__vig { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 30%, rgba(150,0,0,0.65)); animation: zzpulse 1.2s ease-in-out infinite; }
+@keyframes zzpulse { 50% { opacity: 0.6; } }
+.zz-down__txt { position: absolute; left: 0; right: 0; top: 30%; text-align: center; display: flex; flex-direction: column; gap: 6px; }
+.zz-down__txt b { font-family: 'Creepster', serif; font-size: 52px; color: #ff4a3a; font-weight: 400; letter-spacing: 0.05em; }
+.zz-down__txt span { font-size: 22px; }
+.zz-markers { position: absolute; inset: 0; }
+.zz-mark { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; margin: -22px 0 0 -16px; color: #ff3a2a; font-family: var(--ui); font-weight: 700; }
+.zz-mark i { font-style: normal; font-size: 30px; text-shadow: 0 0 8px #f00; }
+.zz-center { position: absolute; left: 0; right: 0; top: 24%; text-align: center; opacity: 0; transition: opacity 0.25s; display: flex; flex-direction: column; gap: 4px; }
+.zz-center.on { opacity: 1; }
+.zz-center b { font-family: 'Creepster', serif; font-weight: 400; font-size: 40px; letter-spacing: 0.06em; color: #f2eee6; }
+.zz-center b.pu { color: #9dff8a; text-shadow: 0 0 14px #2f2; }
+.zz-center b.dogs { color: #ff5a1a; font-size: 56px; }
+.zz-center small { font-size: 18px; }
+.zz-over { position: absolute; inset: 0; background: rgba(0,0,0,0.72); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.zz-over h1 { margin: 0; font-family: 'Creepster', serif; font-weight: 400; font-size: 96px; color: #c3140c; letter-spacing: 0.04em; }
+.zz-over h2 { margin: 0 0 18px; font-size: 30px; font-weight: 400; }
+.zz-over table { border-collapse: collapse; font-family: var(--ui); font-weight: 700; font-size: 20px; }
+.zz-over td, .zz-over th { padding: 6px 18px; text-align: right; }
+.zz-over th { font-size: 14px; letter-spacing: 0.15em; color: #a8a49c; }
+.zz-over td:first-child { text-align: left; color: var(--c); }
+.hidden.zz-down, .zz-over.hidden, .zz-bar.hidden { display: none; }
+.zh-btn.zombies { border-color: rgba(200,30,20,0.6); color: #ffd8d0; background: linear-gradient(90deg, rgba(140,10,8,0.55), rgba(40,0,0,0.25)); }
+.zh-btn.zombies:hover { background: linear-gradient(90deg, rgba(190,20,12,0.75), rgba(60,0,0,0.4)); }
+.zm-panel { background: linear-gradient(180deg, rgba(30,6,6,0.94), rgba(10,4,4,0.96)); border-color: rgba(180,30,20,0.45); }
+.zm-title { font-family: 'Creepster', serif !important; color: #c3140c; font-size: 64px !important; letter-spacing: 0.06em; font-weight: 400 !important; }
+.zm-maps { display: flex; gap: 12px; margin: 12px 0; }
+.zm-map { flex: 1; padding: 18px 20px; border: 1px solid rgba(200,40,30,0.6); background: radial-gradient(ellipse at 20% 0%, rgba(160,20,10,0.35), rgba(0,0,0,0.4)), repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 8px); display: flex; flex-direction: column; gap: 4px; }
+.zm-map b { font-family: 'Creepster', serif; font-weight: 400; font-size: 34px; color: #f2eee6; letter-spacing: 0.05em; }
+.zm-map small { color: #c8bcb0; font-size: 15px; }
+.zm-map i { font-style: normal; color: #ff8a70; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; }
+.zm-how { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 10px 0 4px; color: #c8bcb0; font-size: 14px; }
+.zm-how b { color: #ffd84a; letter-spacing: 0.1em; margin-right: 6px; }
+.zm-over { font-family: 'Creepster', serif; color: #c3140c !important; }
+.zm-board { width: 100%; border-collapse: collapse; font-weight: 700; }
+.zm-board th { font-size: 13px; letter-spacing: 0.15em; color: var(--muted); text-align: right; padding: 6px 12px; }
+.zm-board td { text-align: right; padding: 8px 12px; border-top: 1px solid var(--line); }
+.zm-board td:first-child, .zm-board th:first-child { text-align: left; }
+/* Zombies lobby: one squad, no second team. */
+#online.zm-online .zh-team.t1, #online.zm-online #o-j0 { display: none; }
+#online.zm-online .zh-teams { grid-template-columns: 1fr; }
+#online.zm-online .zh-panel { border-color: rgba(180,30,20,0.45); background: linear-gradient(180deg, rgba(30,6,6,0.94), rgba(10,4,4,0.96)); }
+#online.zm-online #o-title { font-family: 'Creepster', serif; color: #c3140c; font-weight: 400; letter-spacing: 0.05em; }

@@ -16,6 +16,9 @@ import { camoTime, progress } from './render/camo';
 import { Hud, MEDAL_NAMES, type PilotInfo, type Projector } from './hud';
 import type { FpsInput, FrameInput } from './input';
 import type { FpsAudio, Surface } from './audio';
+import { ZRender } from './render/zombies';
+import { ZHud } from './zhud';
+import { POWERUPS, ZPERKS, zdef } from './sim/zweapons';
 
 export interface MatchSettings {
   fov: number;
@@ -208,6 +211,8 @@ class View {
   whizzT = 0;
   /** The unit piloted last frame (entering / leaving resets the view). */
   ctrlId = 0;
+  /** Zombies overlay (zombies mode only). */
+  zhud: ZHud | null = null;
 
   constructor(
     readonly id: string,
@@ -227,6 +232,7 @@ class View {
 
   dispose(): void {
     this.vm.dispose();
+    this.zhud?.dispose();
     this.box.remove();
   }
 }
@@ -248,6 +254,8 @@ export class Match {
   private canGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.13, 10);
   private unitViews = new Map<number, THREE.Group>();
   private areas = new Areas();
+  private zr: ZRender | null = null;
+  private groanT = 0;
   private desatCss = '';
   private overTimer = 0;
   private W = 1;
@@ -303,6 +311,14 @@ export class Match {
     prebuildTextures(new Set<Material>([g.map.theme.ground, ...g.map.theme.patches.map((p) => p[4]), ...g.map.boxes.map((b) => b.mat)]));
     await step(0.3);
     this.mapView = buildMap(this.scene, this.renderer, g.map);
+    if (g.horde) {
+      this.zr = new ZRender(this.scene, g.horde);
+      this.audio.zPrepare();
+      for (const v of this.views) {
+        v.hud.el.classList.add('zm');
+        v.zhud = new ZHud(v.box);
+      }
+    }
     this.renderer.shadowMap.enabled = this.settings.quality === 'high';
     if (this.settings.quality !== 'high') this.mapView.sun.castShadow = false;
     await step(0.45);
@@ -419,6 +435,7 @@ export class Match {
     this.canGeo.dispose();
     for (const uv of this.unitViews.values()) disposeTree(uv);
     this.areas.dispose();
+    this.zr?.dispose();
     this.renderer.clear();
     this.session.dispose();
   }
@@ -446,6 +463,7 @@ export class Match {
       inp.ads = f.ads;
       inp.fire = f.fire;
       inp.grenade = f.grenade;
+      inp.use = f.use;
     }
     inp.reload = v.latch.reload;
     inp.melee = v.latch.melee;
@@ -560,6 +578,7 @@ export class Match {
       ping: this.session.ping ? (s) => this.session.ping!(s) : undefined,
       pilot: this.pilotInfo(me),
     });
+    v.zhud?.update(dt, g, me, this.projector(v), v.input.device === 'pad');
   }
 
   private pilotInfo(me: Soldier): PilotInfo | null {
@@ -588,6 +607,20 @@ export class Match {
       if (a < bestA + 0.6 / dist && g.sees(eye[0], eye[1], eye[2], o.m.x, o.m.y + 1.2, o.m.z)) {
         bestA = a;
         best = o;
+      }
+    }
+    // Zombies: the undead count for aim assist too.
+    for (const zb of g.horde?.zombies ?? []) {
+      if (zb.state === 'dead' || zb.state === 'rise') continue;
+      const tx = zb.x - eye[0];
+      const ty = zb.y + (zb.dog ? 0.6 : 1.3) - eye[1];
+      const tz = zb.z - eye[2];
+      const dist = Math.hypot(tx, ty, tz);
+      if (dist > range) continue;
+      const a = Math.acos(Math.max(-1, Math.min(1, (tx * d[0] + ty * d[1] + tz * d[2]) / dist)));
+      if (a < bestA + 0.6 / dist && g.level.visible(eye[0], eye[1], eye[2], zb.x, zb.y + 1.3, zb.z)) {
+        bestA = a;
+        best = { m: { x: zb.x, y: zb.y, z: zb.z }, name: '' } as unknown as Soldier;
       }
     }
     return best;
@@ -647,6 +680,7 @@ export class Match {
   private handle(e: GameEvent): void {
     const g = this.session.game;
     const p1 = this.views[0]!;
+    if (g.horde) this.handleZ(e);
     switch (e.k) {
       case 'shot': {
         const w = WEAPON[e.w];
@@ -917,6 +951,142 @@ export class Match {
     }
   }
 
+  /** Zombies events: sounds, HUD and effects. */
+  private handleZ(e: GameEvent): void {
+    const g = this.session.game;
+    const h = g.horde!;
+    this.zr?.handle(
+      e,
+      g,
+      (p) => this.fx.impact(p, v3.set(0, 0, 0), 'blood'),
+      (p) => this.fx.impact(p, v3.set(0, 1, 0), 'dust'),
+    );
+    const each = (fn: (v: View) => void) => this.views.forEach(fn);
+    switch (e.k) {
+      case 'zpts': {
+        const i = g.soldiers.findIndex((s) => s.id === e.who);
+        each((v) => v.zhud?.pop(i, e.pts));
+        break;
+      }
+      case 'zbuy':
+        if (this.viewOf(e.who)) this.audio.zBuy();
+        break;
+      case 'zdeny':
+        if (this.viewOf(e.who)) this.audio.zDeny();
+        break;
+      case 'zboard': {
+        const w = h.meta.windows[e.win];
+        if (w) {
+          const [d, pan] = this.distTo(w.x, 1.5, w.z);
+          this.audio.zBoard(d, pan, e.add);
+        }
+        break;
+      }
+      case 'zhit': {
+        const v = this.viewOf(e.by);
+        if (v) {
+          v.hud.hitmarker(e.kill, e.head);
+          this.audio.hitmarker(e.kill, e.head);
+        }
+        break;
+      }
+      case 'zswing': {
+        const zb = h.zombieAt(e.id);
+        if (zb) {
+          const [d, pan] = this.distTo(zb.x, 1.5, zb.z);
+          this.audio.zSwing(d, pan, zb.dog);
+        }
+        break;
+      }
+      case 'zdown': {
+        const s = g.soldier(e.who);
+        if (this.viewOf(e.who)) this.audio.zDown();
+        each((v) => {
+          if (v.id !== e.who && s) v.zhud?.say(`<b>${s.name.toUpperCase()}</b> needs to be revived`, 3);
+        });
+        break;
+      }
+      case 'zrevived': {
+        const s = g.soldier(e.who);
+        const by = g.soldier(e.by);
+        each((v) => {
+          if (v.id === e.by && s && by && e.by !== e.who) v.zhud?.say(`You revived <b>${s.name.toUpperCase()}</b>`, 2);
+        });
+        break;
+      }
+      case 'zbleed': {
+        const s = g.soldier(e.who);
+        each((v) => v.zhud?.say(v.id === e.who ? '<b>YOU BLED OUT</b><small>You will respawn next round</small>' : `<b>${(s?.name ?? '').toUpperCase()}</b> bled out`, 3));
+        break;
+      }
+      case 'zperk':
+        if (this.viewOf(e.who)) this.audio.zJingle(ZPERKS[e.perk].jingle);
+        break;
+      case 'zpower':
+        this.audio.zPower();
+        each((v) => v.zhud?.say('<b>THE POWER IS ON</b>', 2.5));
+        break;
+      case 'zdrop': {
+        const [d, pan] = this.distTo(e.x, 1, e.z);
+        if (d < 40) this.audio.zPowerup(true);
+        void pan;
+        break;
+      }
+      case 'zgrab':
+        this.audio.zPowerup(false);
+        this.audio.say(POWERUPS[e.kind].name);
+        each((v) => v.zhud?.say(`<b class="pu">${POWERUPS[e.kind].name.toUpperCase()}</b>`, 2.2));
+        break;
+      case 'zbox': {
+        const b = h.meta.boxSpots[e.spot];
+        if (b && e.what === 'open') {
+          const [d, pan] = this.distTo(b.x, 1, b.z);
+          this.audio.zBox(d, pan);
+        }
+        if (e.what === 'bear' && this.viewOf(e.who)) this.audio.say('Bye bye');
+        if (e.what === 'move') this.audio.zHowl();
+        break;
+      }
+      case 'zpap':
+        if (e.what === 'start') this.audio.zPap();
+        if (e.what === 'ready' && this.viewOf(e.who)) this.audio.zPowerup(true);
+        break;
+      case 'zthunder':
+        this.audio.zThunder();
+        each((v) => (v.shake = Math.max(v.shake, v.id === e.who ? 0.5 : 0.2)));
+        break;
+      case 'zspawn':
+        if (e.dog) {
+          const [d, pan] = this.distTo(e.x, 1, e.z);
+          this.audio.explosion(d * 1.5, pan);
+          this.audio.bark(d, pan);
+        }
+        break;
+      case 'zround':
+        this.audio.zRound(true, e.dog);
+        if (e.dog) each((v) => v.zhud?.say('<b class="dogs">HELLHOUNDS</b>', 3));
+        break;
+      case 'zroundEnd':
+        this.audio.zRound(false, false);
+        break;
+      case 'zdoor':
+        this.audio.explosion(20);
+        break;
+      case 'zover':
+        each((v) => v.zhud?.gameOver(g));
+        this.audio.say('Game over');
+        break;
+      case 'shot': {
+        const zd = zdef(e.w);
+        if (zd?.zm.proj === 'ray' || zd?.zm.proj === 'ray2') {
+          const [d, pan] = this.distTo(e.fx, e.fy, e.fz);
+          this.audio.zRay(d, pan);
+        }
+        break;
+      }
+    }
+  }
+
   private bodyFor(s: Soldier): SoldierView {
     let b = this.bodies.get(s.id);
     if (!b) {
@@ -1023,6 +1193,23 @@ export class Match {
         this.unitViews.delete(id);
       }
     this.areas.update(g, dt);
+    if (this.zr && g.horde) {
+      this.zr.update(g, dt, performance.now() / 1000, this.session.online);
+      // The undead moan (more of them, more often), monkeys clatter.
+      this.groanT -= dt;
+      if (this.groanT <= 0) {
+        this.groanT = 0.35;
+        for (const zb of g.horde.zombies) {
+          if (zb.state === 'dead' || Math.random() > 0.09) continue;
+          const [d, pan] = this.distTo(zb.x, zb.y + 1.5, zb.z);
+          if (d < 30) this.audio.zGroan(d, pan, zb.dog);
+        }
+        for (const mk of g.horde.monkeys) {
+          const [d, pan] = this.distTo(mk.x, mk.y, mk.z);
+          this.audio.zMonkey(d, pan);
+        }
+      }
+    }
     // Soldiers (local players too: the others see them).
     const seen = new Set<string>();
     for (const s of g.soldiers) {

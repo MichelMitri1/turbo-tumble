@@ -3,14 +3,20 @@ import { MAP, type MapDef, type SpawnPoint } from './maps';
 import { NO_INPUT, P, eyeHeight, height, newMove, stepMove, type Input, type MoveState } from './player';
 import { WEAPON, STREAKS, LETHALS, TACTICALS, applyAttachments, damageAt, fixLoadout, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './weapons';
 import { NavGrid } from './nav';
+import { Horde, rayZombieBox, type ZEvent, type ZPlayer } from './horde';
+import { zdef } from './zweapons';
+import { ZMAP } from './maps';
 
-export type Mode = 'tdm' | 'ffa' | 'dom' | 'kc';
+export type Mode = 'tdm' | 'ffa' | 'dom' | 'kc' | 'zombies';
 export const MODES: Record<Mode, { name: string; short: string; desc: string }> = {
   tdm: { name: 'Team Deathmatch', short: 'TDM', desc: 'First team to the kill limit wins.' },
   ffa: { name: 'Free-for-All', short: 'FFA', desc: 'Every soldier for themselves.' },
   dom: { name: 'Domination', short: 'DOM', desc: 'Capture and hold flags A, B and C.' },
   kc: { name: 'Kill Confirmed', short: 'KC', desc: 'Collect enemy dog tags to score.' },
+  zombies: { name: 'Zombies', short: 'ZM', desc: 'Survive endless rounds of the undead.' },
 };
+/** The multiplayer modes (Zombies has its own menu). */
+export const MP_MODES = (Object.keys(MODES) as Mode[]).filter((m) => m !== 'zombies');
 
 export interface SoldierSetup {
   id: string;
@@ -91,6 +97,10 @@ export interface Soldier {
   nextLoadout?: Loadout;
   /** Round-trip time in ms (online humans; from the server's scoreboard). */
   ping?: number;
+  /** Zombies: points, perks, last stand. */
+  zm?: ZPlayer;
+  /** Length of the reload in progress (perks change it). */
+  reloadLen?: number;
 }
 
 export interface Grenade {
@@ -110,8 +120,8 @@ export interface Grenade {
   rest?: boolean;
 }
 
-export type NadeKind = 'frag' | 'semtex' | 'molotov' | 'tknife' | 'flash' | 'stun' | 'smoke';
-export const NADE_KINDS: NadeKind[] = ['frag', 'semtex', 'molotov', 'tknife', 'flash', 'stun', 'smoke'];
+export type NadeKind = 'frag' | 'semtex' | 'molotov' | 'tknife' | 'flash' | 'stun' | 'smoke' | 'monkey';
+export const NADE_KINDS: NadeKind[] = ['frag', 'semtex', 'molotov', 'tknife', 'flash', 'stun', 'smoke', 'monkey'];
 
 /** Killstreak hardware on the ground / in the air. */
 export type UnitKind = 'rcxd' | 'drone' | 'sentry' | 'dog' | 'gunner';
@@ -194,7 +204,7 @@ export type GameEvent =
   | { k: 'empty'; who: string }
   | { k: 'melee'; who: string; hit: boolean }
   | { k: 'grenadeThrow'; who: string; id: number; kind: NadeKind }
-  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd' | 'flash' | 'stun' | 'smoke' | 'molotov' }
+  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd' | 'flash' | 'stun' | 'smoke' | 'molotov' | 'ray' | 'ray2' }
   | { k: 'unitShot'; id: number; x: number; y: number; z: number; tx: number; ty: number; tz: number }
   | { k: 'unitDown'; id: number; kind: UnitKind; by: string }
   | { k: 'bite'; id: number; x: number; z: number }
@@ -209,12 +219,15 @@ export type GameEvent =
   | { k: 'over'; winner: -1 | 0 | 1; top: string }
   /** Online: someone joined mid-match (replacing `removed`, a bot, if any). */
   | { k: 'joined'; who: SoldierSetup; removed: string }
-  | { k: 'timeLeft'; s: number };
+  | { k: 'timeLeft'; s: number }
+  | ZEvent;
 
 export interface GameOptions {
   mode: Mode;
   scoreLimit?: number;
   timeLimit?: number;
+  /** Online client mirror: zombies state comes from snapshots, never simulated. */
+  mirror?: boolean;
 }
 
 export const TICK = 1 / 60;
@@ -268,6 +281,8 @@ export class Game {
   private history: Array<{ t: number; pos: Map<string, [number, number, number, boolean]> }> = [];
   readonly rand: () => number;
   private domTick = 0;
+  /** Zombies mode director (null in multiplayer modes). */
+  horde: Horde | null = null;
 
   constructor(mapId: string, opts: GameOptions, setups: SoldierSetup[], seed = Date.now()) {
     this.map = MAP[mapId] ?? MAP.freight!;
@@ -279,7 +294,7 @@ export class Game {
     this.mode = opts.mode;
     this.rand = rng(seed);
     const n = setups.length;
-    const defaults: Record<Mode, number> = { tdm: n >= 10 ? 75 : n >= 6 ? 50 : 30, ffa: n >= 8 ? 30 : 20, dom: 200, kc: n >= 10 ? 65 : 40 };
+    const defaults: Record<Mode, number> = { tdm: n >= 10 ? 75 : n >= 6 ? 50 : 30, ffa: n >= 8 ? 30 : 20, dom: 200, kc: n >= 10 ? 65 : 40, zombies: Infinity };
     this.scoreLimit = opts.scoreLimit ?? defaults[this.mode];
     this.timeLeft = opts.timeLimit ?? 600;
     if (this.mode === 'dom') this.flags = this.map.flags.map((f, i) => ({ name: 'ABC'[i]!, x: f.x, y: f.y, z: f.z, owner: -1, progress: 0, capturing: 0 }));
@@ -289,6 +304,12 @@ export class Game {
       const bi = this.level.boxes.findIndex((b) => b.hidden && Math.abs((b.x0 + b.x1) / 2 - p.x) < 0.6 && Math.abs((b.z0 + b.z1) / 2 - p.z) < 0.6);
       this.barrels.push({ x: p.x, y: p.y, z: p.z, hp: 60, fuse: -1, alive: true, box: bi });
     });
+    if (this.mode === 'zombies') {
+      this.horde = new Horde(this, ZMAP[this.map.id] ?? ZMAP.nachtkino!);
+      this.horde.mirror = !!opts.mirror;
+      this.timeLeft = Infinity;
+      this.warmup = 0;
+    }
     for (const s of setups) this.add(s);
   }
 
@@ -348,6 +369,10 @@ export class Game {
       remote: false,
     };
     this.soldiers.push(sol);
+    if (this.horde) {
+      sol.team = 0;
+      this.horde.initPlayer(sol);
+    }
     this.spawn(sol);
     return sol;
   }
@@ -447,6 +472,7 @@ export class Game {
       w.ammo = w.def.mag;
       w.reserve = w.def.reserve;
     }
+    this.horde?.onSpawn(s);
     this.events.push({ k: 'spawn', who: s.id });
   }
 
@@ -490,6 +516,7 @@ export class Game {
     this.tickUnits(dt);
     this.tickAreas(dt);
     this.tickMode(dt);
+    this.horde?.tick(dt);
   }
 
   private tickSoldier(s: Soldier, inp: Input, dt: number): void {
@@ -507,10 +534,25 @@ export class Game {
         return;
       }
     }
+    // Zombies: the use button (buy / rebuild / revive) and last-stand limits.
+    let zSpeed = 1;
+    if (this.horde) {
+      const adj = this.horde.adjust(s, inp);
+      inp = adj.inp;
+      zSpeed = adj.speed;
+      if (s.zm?.downed) s.m.crouched = true;
+      if (this.horde.interact(s, inp, dt)) inp = { ...inp, reload: false };
+      // Tactical in zombies: the Clockwork Monkey.
+      if (inp.tactical && !s.lastInput.tactical && s.zm && s.zm.monkeys > 0 && !s.zm.downed) {
+        s.zm.monkeys--;
+        this.throwGrenade(s, 'monkey', 99);
+      }
+      inp = { ...inp, tactical: false };
+    }
     const w = this.weapon(s);
     const frozen = this.phase === 'warmup';
     // Weapon swap.
-    if (inp.slot >= 0 && inp.slot !== s.cur && s.swapT <= 0 && s.meleeT <= 0) {
+    if (inp.slot >= 0 && inp.slot !== s.cur && s.swapT <= 0 && s.meleeT <= 0 && s.weapons[inp.slot as 0 | 1].def.id !== 'zm_empty') {
       s.cur = inp.slot as 0 | 1;
       s.swapT = 0.55;
       s.reloadT = 0;
@@ -528,7 +570,8 @@ export class Game {
         w.reserve -= take;
       }
     } else if ((inp.reload || (inp.fire && w.ammo === 0)) && w.ammo < w.def.mag && w.reserve > 0 && s.swapT <= 0) {
-      s.reloadT = w.ammo === 0 ? w.def.reloadEmpty : w.def.reload;
+      s.reloadT = (w.ammo === 0 ? w.def.reloadEmpty : w.def.reload) * (this.horde?.reloadMul(s) ?? 1);
+      s.reloadLen = s.reloadT;
       s.burstLeft = 0;
       this.events.push({ k: 'reload', who: s.id });
     }
@@ -540,7 +583,7 @@ export class Game {
     const lw = this.has(s, 'lightweight') ? 1.07 : 1;
     const canSprint = !inp.ads && s.adsT < 0.3 && !(inp.fire && w.ammo > 0 && s.reloadT <= 0);
     const stun = this.time < s.stunT ? 0.5 : 1;
-    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * lw * stun, canSprint && stun === 1, s.adsT);
+    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * lw * stun * zSpeed, canSprint && stun === 1, s.adsT);
     else {
       s.m.yaw = inp.yaw;
       s.m.pitch = inp.pitch;
@@ -548,8 +591,10 @@ export class Game {
     if (s.m.sprinting) s.sprintOut = w.def.sprintOut;
     else s.sprintOut = Math.max(0, s.sprintOut - dt);
     // Health regen.
-    const delay = this.has(s, 'quickfix') ? 2.5 : REGEN_DELAY;
-    if (s.hp < 100 && this.time - s.lastDamageT > delay) s.hp = Math.min(100, s.hp + REGEN_RATE * dt);
+    // Zombies: health comes back quickly (and up to 250 with the red perk); never while downed.
+    const maxHp = this.horde?.maxHp(s) ?? 100;
+    const delay = this.horde ? 2.4 : this.has(s, 'quickfix') ? 2.5 : REGEN_DELAY;
+    if (s.hp < maxHp && this.time - s.lastDamageT > delay && !s.zm?.downed) s.hp = Math.min(maxHp, s.hp + (this.horde ? 70 : REGEN_RATE) * dt);
     if (frozen) return;
     // Melee.
     if (inp.melee && !s.lastInput.melee && s.meleeT <= 0) this.melee(s);
@@ -609,6 +654,7 @@ export class Game {
   }
 
   canFire(s: Soldier): boolean {
+    if (s.zm && (s.zm.busyT > 0 || s.zm.holdT > 0 || this.weapon(s).def.id === 'zm_empty')) return false;
     return s.alive && !s.ctrl && this.phase === 'play' && s.reloadT <= 0 && s.swapT <= 0 && s.meleeT <= 0 && s.sprintOut <= 0 && !s.m.sprinting && s.cookStart < 0;
   }
 
@@ -638,7 +684,7 @@ export class Game {
     const w = ws.def;
     if (ws.ammo <= 0 || this.time < s.nextFire - 0.02) return;
     ws.ammo--;
-    s.nextFire = this.time + 60 / w.rpm;
+    s.nextFire = this.time + 60 / (w.rpm * (this.horde?.rofMul(s) ?? 1));
     if (w.mode === 'burst') {
       s.burstLeft--;
       if (s.burstLeft <= 0) s.nextFire = this.time + 0.32;
@@ -647,6 +693,12 @@ export class Game {
     s.shotsInBurst++;
     const eye = this.eye(s);
     const o = origin && Math.hypot(origin[0] - eye[0], origin[1] - eye[1], origin[2] - eye[2]) < 1.5 ? origin : eye;
+    const zd = this.horde ? zdef(w.id) : undefined;
+    if (zd?.zm.thunder) {
+      this.events.push({ k: 'shot', by: s.id, w: w.id, fx: o[0], fy: o[1], fz: o[2], hits: [], sup: false });
+      if (!this.horde!.mirror) this.horde!.thunder(s, zd);
+      return;
+    }
     const pellets = w.pellets ?? 1;
     const base = Game.dir(s.m.yaw, s.m.pitch);
     const spread = this.spread(s);
@@ -662,9 +714,28 @@ export class Game {
     }
     const hits: Array<[number, number, number, number]> = [];
     const hitPlayers = new Map<string, { dmg: number; head: boolean; fx: number; fz: number }>();
+    const hitZombies = new Map<number, { dmg: number; head: boolean }>();
     for (const d of out) {
       const r = this.trace(s, o, d, w, atTime);
-      hits.push([r.x, r.y, r.z, r.target ? 1 : 0]);
+      hits.push([r.x, r.y, r.z, r.target || r.zombie ? 1 : 0]);
+      if (r.zombie) {
+        const h = hitZombies.get(r.zombie) ?? { dmg: 0, head: false };
+        h.dmg += r.dmg;
+        h.head ||= r.head;
+        hitZombies.set(r.zombie, h);
+      }
+      // Explosive rounds (launchers, the Ray Gun, Mustang & Sally): splash where they land.
+      if (zd?.zm.splash && this.horde && !this.horde.mirror) {
+        const sp = zd.zm.splash;
+        const bx = r.x - d[0] * 0.3;
+        const by = r.y - d[1] * 0.3;
+        const bz = r.z - d[2] * 0.3;
+        const ray = zd.zm.proj === 'ray' || zd.zm.proj === 'ray2';
+        this.events.push({ k: 'explosion', x: bx, y: by, z: bz, r: sp.r, kind: ray ? (zd.zm.proj as 'ray' | 'ray2') : 'frag' });
+        this.horde.blast(bx, by, bz, sp.r, sp.dmg, s.id, 'explosive');
+        const self = Math.hypot(s.m.x - bx, s.m.y + 1 - by, s.m.z - bz);
+        if (sp.self && self < sp.r) this.horde.damagePlayer(s, sp.self * (1 - self / sp.r));
+      }
       if (r.target) {
         const h = hitPlayers.get(r.target.id) ?? { dmg: 0, head: false, fx: o[0], fz: o[2] };
         h.dmg += r.dmg;
@@ -680,6 +751,11 @@ export class Game {
       if (this.damage(t, h.dmg, s, w.id, h.head, h.fx, h.fz)) killsThisShot++;
     }
     if (killsThisShot >= 2) this.medal(s, 'collateral', 100);
+    if (this.horde && !this.horde.mirror)
+      for (const [id, h] of hitZombies) {
+        const zb = this.horde.zombieAt(id);
+        if (zb) this.horde.hurt(zb, h.dmg, s, w.id, h.head, !!zd?.zm.burn);
+      }
   }
 
   private cone(d: [number, number, number], ang: number): [number, number, number] {
@@ -730,7 +806,7 @@ export class Game {
   }
 
   /** One bullet: walls (with thin-wall penetration), players' hitboxes, helis, barrels. */
-  private trace(s: Soldier, o: [number, number, number], d: [number, number, number], w: WeaponDef, atTime: number | null): { x: number; y: number; z: number; target: Soldier | null; dmg: number; head: boolean } {
+  private trace(s: Soldier, o: [number, number, number], d: [number, number, number], w: WeaponDef, atTime: number | null): { x: number; y: number; z: number; target: Soldier | null; dmg: number; head: boolean; zombie?: number } {
     const maxT = 200;
     const solid = this.level.raycast(o[0], o[1], o[2], d[0], d[1], d[2], maxT, true);
     const any = this.level.raycast(o[0], o[1], o[2], d[0], d[1], d[2], solid.t);
@@ -749,6 +825,28 @@ export class Game {
         [tl, false, true],
       ] as Array<[number, boolean, boolean]>) {
         if (tt >= 0 && tt < solid.t && (!best || tt < best.t)) best = { t: tt, target: t, head, limb };
+      }
+    }
+    // The undead (head, torso, legs; hellhounds: head + body).
+    if (this.horde) {
+      let zbest: { t: number; id: number; head: boolean } | null = null;
+      for (const zb of this.horde.zombies) {
+        if (zb.state === 'dead' || (zb.state === 'rise' && zb.y < -1)) continue;
+        if (Math.abs(zb.x - o[0]) > 80 || Math.abs(zb.z - o[2]) > 80) continue;
+        // Where the shooter saw it (online), with the head where the animation puts it.
+        const hb = this.horde.hitboxes(zb, atTime);
+        const th = rayZombieBox(o, d, hb.at, hb.head);
+        const tb = rayZombieBox(o, d, hb.at, hb.body);
+        for (const [tt, head] of [
+          [th, true],
+          [tb, false],
+        ] as Array<[number, boolean]>) {
+          if (tt >= 0 && tt < solid.t && (!best || tt < best.t) && (!zbest || tt < zbest.t)) zbest = { t: tt, id: zb.id, head };
+        }
+      }
+      if (zbest) {
+        const dmg = damageAt(w, zbest.t) * (zbest.head ? w.head : 1);
+        return { x: o[0] + d[0] * zbest.t, y: o[1] + d[1] * zbest.t, z: o[2] + d[2] * zbest.t, target: null, dmg, head: zbest.head, zombie: zbest.id };
       }
     }
     // Helicopters.
@@ -794,6 +892,8 @@ export class Game {
 
   /** Apply damage; returns true on a kill. */
   damage(t: Soldier, dmg: number, by: Soldier | null, weapon: string, head: boolean, fx: number, fz: number): boolean {
+    // Zombies: no friendly fire; your own explosives hurt (you go down, not die).
+    if (this.horde) return by && by.id !== t.id ? false : this.horde.damagePlayer(t, dmg);
     if (!t.alive || this.phase !== 'play') return false;
     // Spawn protection: the first moments after spawning take much less damage.
     if (this.time - t.spawnT < 1.5 && by && by.id !== t.id) dmg *= 0.3;
@@ -906,6 +1006,11 @@ export class Game {
     s.reloadT = 0;
     const f = Game.dir(s.m.yaw, 0);
     let hit = false;
+    if (this.horde) {
+      hit = this.horde.mirror ? false : this.horde.melee(s);
+      this.events.push({ k: 'melee', who: s.id, hit });
+      return;
+    }
     for (const t of this.soldiers) {
       if (!t.alive || !this.enemies(s, t)) continue;
       const dx = t.m.x - s.m.x;
@@ -989,6 +1094,12 @@ export class Game {
             g.vz *= 0.6;
           }
         }
+      }
+      // The Clockwork Monkey lands and starts singing (the horde takes it from here).
+      if (hit && g.kind === 'monkey' && Math.abs(g.vy) < 1.5) {
+        this.grenades.splice(i, 1);
+        if (this.horde && !this.horde.mirror) this.horde.throwMonkey(g.id, g.x, g.y, g.z, g.owner);
+        continue;
       }
       // Semtex sticks, a molotov shatters, a knife drops dead.
       if (hit && g.kind === 'semtex') g.rest = true;
@@ -1077,6 +1188,8 @@ export class Game {
     this.events.push({ k: 'explosion', x, y, z, r: radius, kind });
     const by = this.soldier(owner) ?? null;
     let kills = 0;
+    // Grenades are much stronger against the undead (a frag clears a window early on).
+    if (this.horde && !this.horde.mirror && max > 0) this.horde.blast(x, y, z, radius, max * 4, owner, weapon);
     for (const t of this.soldiers) {
       if (!t.alive) continue;
       if (by && t.id !== by.id && !this.enemies(by, t)) continue;

@@ -1,3 +1,4 @@
+import { ZM_SFX } from './sim/zweapons';
 import type { WeaponClass } from './sim/weapons';
 
 export type Surface = 'hard' | 'soft' | 'metal' | 'wood';
@@ -36,6 +37,8 @@ export const GUN_SFX: Record<string, { src: string; rate: number; vol: number }>
   sentry: { src: 'savage', rate: 1.35, vol: 0.85 },
   gunner: { src: 'm45', rate: 0.72, vol: 1.1 },
 };
+
+Object.assign(GUN_SFX, ZM_SFX);
 
 /** Procedural war sounds: gunshots per weapon class (with distance), reloads, hits, explosions, announcer. */
 export class FpsAudio {
@@ -436,4 +439,122 @@ export class FpsAudio {
     }
     this.sayMs = Math.max(this.sayMs, performance.now() - t0);
   }
+  // ---------------------------------------------------------------- zombies
+
+  private zLoaded = false;
+  /** CC0 recordings (tools/zombies-sfx.py): groans, attacks, hellhounds, boards, hammering, the box. */
+  private async loadZombies(): Promise<void> {
+    const c = this.ctx;
+    if (!c || this.zLoaded) return;
+    this.zLoaded = true;
+    const names = ['groan1', 'groan2', 'groan3', 'groan4', 'groan5', 'groan6', 'groan7', 'groan8', 'attack', 'dog1', 'dog2', 'dog3', 'board1', 'board2', 'board3', 'hammer1', 'hammer2', 'hammer3', 'box', 'howl'];
+    await Promise.all(
+      names.map(async (n) => {
+        try {
+          const r = await fetch(`/assets/fps/zsfx/${n}.m4a`);
+          if (r.ok) this.samples.set(`z:${n}`, await c.decodeAudioData(await r.arrayBuffer()));
+        } catch {
+          /* silent */
+        }
+      }),
+    );
+  }
+  zPrepare(): void {
+    void this.loadZombies();
+  }
+
+  private zPlay(name: string, dist: number, pan: number, vol = 1, rate = 1, verb = 0.25): void {
+    const c = this.ctx;
+    const buf = this.samples.get(`z:${name}`);
+    if (!c || !buf || dist > 45) return;
+    const s = c.createBufferSource();
+    s.buffer = buf;
+    s.playbackRate.value = rate;
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = Math.max(900, 16000 / (1 + dist * 0.08));
+    const g = c.createGain();
+    g.gain.value = vol * Math.max(0.04, 1 / (1 + dist * 0.12));
+    const o = this.out(pan, verb);
+    if (!o) return;
+    s.connect(f).connect(g).connect(o);
+    s.start();
+  }
+
+  zGroan(dist: number, pan: number, dog: boolean): void {
+    if (dog) this.zPlay(`dog${1 + Math.floor(Math.random() * 3)}`, dist, pan, 0.8, 0.9 + Math.random() * 0.2);
+    else this.zPlay(`groan${1 + Math.floor(Math.random() * 8)}`, dist, pan, 0.75, 0.82 + Math.random() * 0.3);
+  }
+  zSwing(dist: number, pan: number, dog: boolean): void {
+    if (dog) this.bark(dist, pan, true);
+    else this.zPlay('attack', dist, pan, 0.6, 1.1 + Math.random() * 0.25);
+  }
+  zBoard(dist: number, pan: number, add: boolean): void {
+    if (add) this.zPlay(`hammer${1 + Math.floor(Math.random() * 3)}`, dist, pan, 0.9, 0.95 + Math.random() * 0.1, 0.1);
+    else this.zPlay(`board${1 + Math.floor(Math.random() * 3)}`, dist, pan, 0.9, 0.9 + Math.random() * 0.2);
+  }
+  zBox(dist: number, pan: number): void {
+    this.zPlay('box', dist, pan, 0.8, 1, 0.3);
+  }
+  zHowl(): void {
+    this.zPlay('howl', 2, 0, 1, 0.8, 0.5);
+  }
+  /** Points spent: the register. */
+  zBuy(): void {
+    this.tone(1318, 0.12, 'square', 0.06);
+    this.tone(1760, 0.25, 'square', 0.05, 1, 0.08);
+    this.burst(0.18, 5000, 1, 0.08, 'highpass', 0.05);
+  }
+  zDeny(): void {
+    this.tone(180, 0.18, 'sawtooth', 0.08, 0.8);
+  }
+  /** The perk machine's little tune, then the burp. */
+  zJingle(notes: number[]): void {
+    notes.forEach((n, i) => this.tone(440 * Math.pow(2, (n - 69) / 12), 0.22, 'triangle', 0.09, 1, i * 0.16));
+    this.burst(0.35, 260, 3, 0.25, 'bandpass', notes.length * 0.16 + 0.5, 0.6);
+  }
+  /** Round start (a low, dark chord with a bell) / round end (falling). */
+  zRound(start: boolean, dog: boolean): void {
+    const base = dog ? 98 : start ? 110 : 130.8;
+    const chord = start ? [1, 1.189, 1.498, 2] : [1, 1.26, 1.498, 0.75];
+    chord.forEach((m, i) => this.tone(base * m, 2.8, 'sawtooth', 0.035, start ? 1 : 0.94, i * 0.05));
+    chord.forEach((m, i) => this.tone(base * m * 2, 2.4, 'sine', 0.05, 1, 0.4 + i * 0.12));
+    this.tone(base * 4, 3.5, 'sine', 0.07, 1, 0.1);
+    this.burst(2.5, 120, 1, 0.12, 'lowpass', 0, 0.5);
+    if (dog) this.zHowl();
+  }
+  zPower(): void {
+    this.burst(0.6, 90, 1, 0.5, 'lowpass');
+    [55, 82.4, 110].forEach((f, i) => this.tone(f, 2.5, 'sawtooth', 0.06, 1.5, 0.2 + i * 0.1));
+    this.burst(1.2, 3000, 2, 0.08, 'bandpass', 0.3);
+  }
+  zPap(): void {
+    for (let i = 0; i < 8; i++) this.burst(0.15, 400 + i * 120, 4, 0.12, 'bandpass', i * 0.32);
+    this.tone(220, 2.2, 'square', 0.03, 2, 0.3);
+  }
+  zPowerup(spawn: boolean): void {
+    if (spawn) [880, 1108, 1318].forEach((f, i) => this.tone(f, 0.4, 'sine', 0.06, 1, i * 0.07));
+    else [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.35, 'triangle', 0.08, 1, i * 0.06));
+  }
+  zMonkey(dist: number, pan: number): void {
+    const o = this.out(pan, 0.15);
+    if (!o) return;
+    const v = Math.max(0.05, 1 / (1 + dist * 0.1));
+    this.burst(0.12, 7000, 2, 0.25 * v, 'highpass', 0, 0, o);
+  }
+  zThunder(): void {
+    this.burst(1.4, 80, 0.7, 0.9, 'lowpass', 0, 0.4);
+    this.burst(0.5, 1800, 1, 0.3, 'bandpass', 0, 0.2);
+  }
+  zRay(dist: number, pan: number): void {
+    const o = this.out(pan, 0.2);
+    if (!o) return;
+    this.tone(1800, 0.25, 'sawtooth', 0.08 * Math.max(0.1, 1 / (1 + dist * 0.08)), 0.25, 0, o);
+  }
+  /** Downed: your heart and a low drone. */
+  zDown(): void {
+    this.tone(70, 2.5, 'sine', 0.2, 0.8);
+    this.burst(1.5, 300, 1, 0.15, 'lowpass', 0, 0.3);
+  }
 }
+

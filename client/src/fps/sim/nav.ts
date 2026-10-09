@@ -89,7 +89,7 @@ export class NavGrid {
   }
 
   /** Nearest node to a position (same floor preferred). */
-  nearest(x: number, y: number, z: number): number {
+  nearest(x: number, y: number, z: number, maxDy = Infinity): number {
     const i = Math.floor((x - this.ox) / CELL);
     const j = Math.floor((z - this.oz) / CELL);
     let best = -1;
@@ -99,6 +99,7 @@ export class NavGrid {
         for (let dj = -r; dj <= r; dj++) {
           for (const n of this.cells.get((i + di) * 10000 + (j + dj)) ?? []) {
             const nd = this.nodes[n]!;
+            if (Math.abs(nd.y - y) > maxDy) continue;
             const d = (nd.x - x) ** 2 + (nd.z - z) ** 2 + (nd.y - y) ** 2 * 4;
             if (d < bd) {
               bd = d;

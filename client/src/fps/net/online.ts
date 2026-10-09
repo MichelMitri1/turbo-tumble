@@ -2,9 +2,9 @@ import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
 import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
 import { stepMove, type Input } from '../sim/player';
-import type { Loadout } from '../sim/weapons';
+import { WEAPON, type Loadout } from '../sim/weapons';
 import type { Session } from '../match';
-import { FP_ROOM, FP_VERSION, FpMsg, packInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from './protocol';
+import { FP_ROOM, FP_ZM_ROOM, FP_VERSION, FpMsg, packInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from './protocol';
 
 export class FpsNet {
   readonly url = defaultServerUrl();
@@ -37,14 +37,16 @@ export class FpsNet {
     }
   }
 
+  /** Zombies lobbies (create / quick match) instead of multiplayer ones. */
+  kind: 'mp' | 'zombies' = 'mp';
   private opts(name: string, loadout: Loadout, camos: Record<string, string>, visibility?: 'private' | 'public'): FpJoin {
-    return { version: FP_VERSION, name, loadout, camos, visibility };
+    return { version: FP_VERSION, name, loadout, camos, visibility, kind: this.kind };
   }
   async create(name: string, l: Loadout, c: Record<string, string>): Promise<void> {
-    this.attach(await this.sdk.create(FP_ROOM, this.opts(name, l, c, 'private')));
+    this.attach(await this.sdk.create(this.kind === 'zombies' ? FP_ZM_ROOM : FP_ROOM, this.opts(name, l, c, 'private')));
   }
   async quick(name: string, l: Loadout, c: Record<string, string>): Promise<void> {
-    this.attach(await this.sdk.joinOrCreate(FP_ROOM, this.opts(name, l, c, 'public')));
+    this.attach(await this.sdk.joinOrCreate(this.kind === 'zombies' ? FP_ZM_ROOM : FP_ROOM, this.opts(name, l, c, 'public')));
   }
   async join(code: string, name: string, l: Loadout, c: Record<string, string>): Promise<void> {
     this.attach(await this.sdk.joinById(code.toUpperCase(), this.opts(name, l, c)));
@@ -136,9 +138,16 @@ export class OnlineSession implements Session {
   ) {
     this.meId = net.sessionId;
     this.ids = begin.roster.map((r) => r.id);
-    this.game = new Game(begin.map, { mode: begin.mode }, begin.roster.map((r) => ({ ...r })), begin.seed);
+    this.game = new Game(begin.map, { mode: begin.mode, mirror: true }, begin.roster.map((r) => ({ ...r })), begin.seed);
     const mine = begin.roster.find((r) => r.id === this.meId)!;
-    this.pred = new Game(begin.map, { mode: begin.mode }, [{ ...mine }], begin.seed);
+    this.pred = new Game(begin.map, { mode: begin.mode, mirror: true }, [{ ...mine }], begin.seed);
+    // Zombies: the predictor shares the mirror's horde (doors, prompts, perks), and its level follows door purchases.
+    if (this.game.horde && this.pred.horde) {
+      for (const b of this.pred.horde.doorBoxes) this.pred.level.remove(b);
+      for (const b of this.game.horde.doorBoxes) this.pred.level.add(b);
+      this.game.horde.levels.push(this.pred.level);
+      this.pred.horde = this.game.horde;
+    }
     this.pred.phase = 'play';
     this.me = this.pred.soldiers[0]!;
     const i = this.game.soldiers.findIndex((s) => s.id === this.meId);
@@ -167,6 +176,8 @@ export class OnlineSession implements Session {
         }
     }
     this.game.time = this.renderTime() + this.delay;
+    // Zombies are drawn (and hit-tested locally) where they were at the render time — the time our shots are stamped with.
+    this.game.horde?.interpolate(this.renderTime());
     this.acc = Math.min(this.acc + dt, 0.2);
     while (this.acc >= TICK) {
       this.acc -= TICK;
@@ -266,6 +277,16 @@ export class OnlineSession implements Session {
       const b = g.barrels[i];
       if (b) b.alive = !!alive;
     });
+    // Zombies: the horde, and which guns everyone holds.
+    if (s.zm && g.horde) g.horde.apply(s.zm, this.ids, this.meId, s.t);
+    if (s.w)
+      for (const [idx, a, b] of s.w) {
+        const sol = g.soldier(this.ids[idx] ?? '');
+        if (!sol) continue;
+        [a, b].forEach((id, k) => {
+          if (sol.weapons[k]!.def.id !== id && WEAPON[id]) sol.weapons[k] = g.horde ? g.horde.gun(id, true) : g.makeWeapon(id, sol.weapons[k]!.att);
+        });
+      }
     // Piloting state first: reconciliation below depends on it.
     this.me.ctrl = s.me[17] ?? 0;
     for (const row of s.s) {

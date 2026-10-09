@@ -23,6 +23,8 @@ export interface Input {
   melee: boolean;
   /** Killstreak to call in: −1 none, 0–2 that slot, 3 the next ready one. */
   streak: number;
+  /** Zombies: the use button, held (buy / rebuild / revive). */
+  use?: boolean;
 }
 
 export const NO_INPUT: Input = { seq: 0, mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, sprint: false, crouch: false, ads: false, fire: false, reload: false, slot: -1, grenade: false, tactical: false, melee: false, streak: -1 };
