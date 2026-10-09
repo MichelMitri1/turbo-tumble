@@ -57,13 +57,7 @@ document.getElementById('hub')!.append(
   el('footer', 'hub-footer', [`← → choose · Enter play · ${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘F' : 'Ctrl+F'} fullscreen`]),
 );
 
-// Arrow keys / gamepad-style navigation between playable cards.
+// Put the first game in a sensible starting position. Shared arcade navigation
+// handles arrow keys, controller sticks and D-pads across every game.
 const playable = cards.filter((c): c is HTMLAnchorElement => c instanceof HTMLAnchorElement);
-playable[0]?.focus();
-addEventListener('keydown', (e) => {
-  const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-  if (!dir || !playable.length) return;
-  e.preventDefault();
-  const i = playable.indexOf(document.activeElement as HTMLAnchorElement);
-  playable[(i + dir + playable.length) % playable.length]!.focus();
-});
+playable[0]?.focus({ preventScroll: true });

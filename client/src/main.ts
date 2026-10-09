@@ -1,4 +1,5 @@
 import './ui/styles.css';
+import { touchDevice } from './input/TouchControls';
 import { Game, type GameOptions } from './game/Game';
 import { DEFAULT_GRAPHICS } from './config/graphics';
 import { LoadingScreen } from './ui/LoadingScreen';
@@ -17,6 +18,7 @@ import type { SpeedClass } from '@shared/race/SpeedClass';
 function optionsFromUrl(): GameOptions {
   const q = new URLSearchParams(location.search);
   const graphics = { ...DEFAULT_GRAPHICS };
+  if (touchDevice()) Object.assign(graphics, { shadowMapSize: 1024, maxPixelRatio: 1.25, decorDensity: 0.6, antialias: false });
   if (q.has('lowgfx')) Object.assign(graphics, { shadowMapSize: 1024, maxPixelRatio: 1, decorDensity: 0.5, antialias: false });
   const trackId = q.get('track') ?? 'sunny-circuit';
 

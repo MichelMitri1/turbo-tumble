@@ -153,7 +153,7 @@ export class Game {
     }, (name) => this.audio.ui(name), (kart) => this.audio.previewEngine(kart));
     this.garage = new GarageScreen(this.ui, this.assets, (kart) => this.audio.previewEngine(kart));
     this.controls = new ControlsPanel(this.ui, this.input, this.audio.engine, () => this.menu.setOpen(true));
-    this.gpPanel = new GrandPrixPanel(this.ui);
+    this.gpPanel = new GrandPrixPanel(this.ui, () => this.advance());
     this.podium = new Podium(this.assets);
     this.online = new OnlineFlow(this.ui, {
       startRace: (race, players) => this.startOnlineRace(race, players),
@@ -526,6 +526,8 @@ export class Game {
 
   private frameStart(dt: number): void {
     this.input.update();
+    const touchPlay = (this.flow === 'racing' || this.flow === 'online') && !this.paused && !this.garage.open && !this.gpPanel.open && !this.menu.open;
+    this.input.touch.setActive(touchPlay && this.input.connectedGamepads().length === 0);
     if (this.renderer.resize()) this.layout();
     const nav = this.input.menuNav();
     this.menuSounds(nav);

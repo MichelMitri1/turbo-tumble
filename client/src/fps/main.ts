@@ -228,6 +228,8 @@ addEventListener('keydown', () => audio.unlock(), { capture: true });
 type ScreenId = 'menu' | 'play' | 'zombies' | 'classes' | 'armory' | 'settings' | 'online' | 'pause' | 'end' | 'game';
 let screen: ScreenId = 'menu';
 let back: ScreenId = 'menu';
+/** Mouse players need pointer lock; controller players never need the click gate. */
+const syncClickPrompt = () => $('#click').classList.toggle('hidden', !(screen === 'game' && !input.locked && !input.hasPad));
 function show(id: ScreenId): void {
   if (id !== 'settings') back = screen === 'pause' ? 'pause' : 'menu';
   if (id === 'settings' && screen === 'pause') back = 'pause';
@@ -235,6 +237,8 @@ function show(id: ScreenId): void {
   quietUntil = performance.now() + 500;
   for (const s of ['menu', 'play', 'zombies', 'classes', 'armory', 'settings', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
   $('#click').classList.toggle('hidden', !(id === 'game' && !input.locked && input.device === 'kb'));
+  for (const s of ['menu', 'play', 'classes', 'armory', 'settings', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
+  syncClickPrompt();
   audio.ui();
   renderProfile();
 }
@@ -242,6 +246,7 @@ app.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', (
 app.querySelectorAll<HTMLElement>('[data-go]').forEach((b) =>
   b.addEventListener('click', () => {
     const go = b.dataset.go as ScreenId;
+    if (go === 'play') renderSplit();
     if (go === 'classes') renderClasses();
     if (go === 'armory') renderArmory();
     if (go === 'settings') renderSettings();
@@ -290,6 +295,38 @@ function splitSources(n: number): InputSource[] {
   const p1Pad = pads >= n;
   return Array.from({ length: n }, (_, i) => (i === 0 ? { kb: true, pad: p1Pad ? 0 : null } : { kb: false, pad: p1Pad ? i : i - 1 }));
 }
+
+/**
+ * Resolve each local seat to a class with a different primary weapon. Player 1
+ * keeps their choice; later seats move to the first available class when an old
+ * save (or an edited class) would otherwise duplicate it.
+ */
+function uniqueSplitClassIndexes(n: number): number[] {
+  const used = new Set<string>();
+  const chosen: number[] = [];
+  let changed = false;
+  for (let i = 0; i < n; i++) {
+    const preferred = i === 0 ? profile.cls : (profile.splitClasses[i - 1] ?? i);
+    let pick = profile.classes[preferred] ? preferred : 0;
+    const primary = profile.classes[pick]?.primary;
+    if (primary && used.has(primary)) {
+      const free = profile.classes.findIndex((candidate) => !used.has(candidate.primary));
+      if (free >= 0) pick = free;
+    }
+    chosen.push(pick);
+    used.add(profile.classes[pick]!.primary);
+    if (i === 0 && profile.cls !== pick) {
+      profile.cls = pick;
+      changed = true;
+    } else if (i > 0 && profile.splitClasses[i - 1] !== pick) {
+      profile.splitClasses[i - 1] = pick;
+      changed = true;
+    }
+  }
+  if (changed) save();
+  return chosen;
+}
+
 function renderSplit(): void {
   const n = profile.split;
   $('#q-teams-f').classList.toggle('hidden', n < 2);
@@ -300,18 +337,25 @@ function renderSplit(): void {
   }
   const pads = connectedPads();
   const src = splitSources(n);
+  const chosen = uniqueSplitClassIndexes(n);
   box.innerHTML = Array.from({ length: n }, (_, i) => {
     const s = src[i]!;
     const pad = s.pad !== null ? pads[s.pad] : undefined;
     const dev = s.kb ? (pad ? 'Keyboard &amp; mouse / Controller 1' : 'Keyboard &amp; mouse') : pad ? `Controller ${s.pad! + 1}` : '<em>Connect a controller</em>';
-    const cls = i === 0 ? profile.cls : (profile.splitClasses[i - 1] ?? 0);
-    return `<div class="zh-split-p ${!s.kb && !pad ? 'missing' : ''}"><b>P${i + 1}</b><span>${i === 0 ? esc(profile.name) : `Player ${i + 1}`}</span><small>${dev}</small><div class="zh-seg small" data-p="${i}">${profile.classes.map((c, k) => `<button data-v="${k}" class="${k === cls ? 'on' : ''}">${esc(c.name.toUpperCase())}</button>`).join('')}</div></div>`;
+    const cls = chosen[i]!;
+    const currentWeapon = profile.classes[cls]!.primary;
+    return `<div class="zh-split-p ${!s.kb && !pad ? 'missing' : ''}"><b>P${i + 1}</b><span>${i === 0 ? esc(profile.name) : `Player ${i + 1}`}</span><small>${dev} · <strong>${esc(WEAPON[currentWeapon]?.name ?? currentWeapon)}</strong></small><div class="zh-seg small" data-p="${i}">${profile.classes.map((c, k) => {
+      const owner = chosen.findIndex((other, seat) => seat !== i && profile.classes[other]!.primary === c.primary);
+      const locked = owner >= 0 && k !== cls;
+      const reason = locked ? `Primary weapon already assigned to P${owner + 1}` : `${WEAPON[c.primary]?.name ?? c.primary} primary`;
+      return `<button data-v="${k}" class="${k === cls ? 'on' : ''}" title="${esc(reason)}" ${locked ? 'disabled' : ''}>${esc(c.name.toUpperCase())}</button>`;
+    }).join('')}</div></div>`;
   }).join('');
 }
 $('#q-split-setup').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-v]');
   const row = b?.closest<HTMLElement>('[data-p]');
-  if (!b || !row) return;
+  if (!b || b.disabled || !row) return;
   const i = Number(row.dataset.p);
   if (i === 0) profile.cls = Number(b.dataset.v);
   else profile.splitClasses[i - 1] = Number(b.dataset.v);
@@ -319,8 +363,14 @@ $('#q-split-setup').addEventListener('click', (e) => {
   audio.ui();
   renderSplit();
 });
-addEventListener('gamepadconnected', () => renderSplit());
-addEventListener('gamepaddisconnected', () => renderSplit());
+addEventListener('gamepadconnected', () => {
+  renderSplit();
+  syncClickPrompt();
+});
+addEventListener('gamepaddisconnected', () => {
+  renderSplit();
+  syncClickPrompt();
+});
 renderSplit();
 const mapsEl = $('#q-maps');
 const syncMaps = () => mapsEl.querySelectorAll<HTMLElement>('.zh-map').forEach((b) => b.classList.toggle('on', b.dataset.v === profile.map));
@@ -740,6 +790,7 @@ async function startLocal(): Promise<void> {
   const map = MAPS.find((m) => m.id === profile.map) ?? MAPS[0]!;
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
   const n = Math.max(1, Math.min(4, profile.split));
+  const splitClasses = uniqueSplitClassIndexes(n);
   const ffa = profile.mode === 'ffa';
   // Local players: together on one team, or alternating teams (versus).
   const setups: SoldierSetup[] = Array.from({ length: n }, (_, i) => ({
@@ -747,7 +798,7 @@ async function startLocal(): Promise<void> {
     name: i === 0 ? profile.name : `Player ${i + 1}`,
     team: (profile.splitTeams === 'versus' ? i % 2 : 0) as 0 | 1,
     bot: false,
-    loadout: i === 0 ? loadout() : (profile.classes[profile.splitClasses[i - 1] ?? 0] ?? loadout()),
+    loadout: structuredClone(profile.classes[splitClasses[i]!] ?? loadout()),
     camos: profile.camos,
   }));
   const per = profile.bots;
@@ -891,9 +942,9 @@ $('#e-again').addEventListener('click', () => {
 // Clicking the game view re-locks the mouse.
 $('#click').addEventListener('click', () => input.lock());
 document.addEventListener('pointerlockchange', () => {
-  if (screen === 'game') $('#click').classList.toggle('hidden', input.locked || input.device === 'pad');
+  syncClickPrompt();
   // Esc releases the lock: open the pause menu like the real game.
-  if (!input.locked && screen === 'game' && match && !match.over) pause();
+  if (!input.locked && !input.hasPad && screen === 'game' && match && !match.over) pause();
 });
 
 // ============================================================================ online

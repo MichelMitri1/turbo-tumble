@@ -57,6 +57,7 @@ export class RocketRenderer {
   private readonly key: THREE.DirectionalLight;
   private readonly rim: THREE.DirectionalLight;
   private quality: Quality = 'high';
+  private resizeTimer = 0;
   private orbitT = 0;
   /** Smoothed render pose of the ball (sim units, for the HUD / camera). */
   readonly ballPos = new THREE.Vector3();
@@ -114,7 +115,13 @@ export class RocketRenderer {
     this.scene.fog = this.fog;
     this.scene.add(this.pads.group, this.ball.mesh, this.fx.group);
     this.applyLighting(THEMES.dome);
-    addEventListener('resize', () => this.resize());
+    const settleResize = () => {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = window.setTimeout(() => this.resize(), 140);
+    };
+    addEventListener('resize', settleResize);
+    addEventListener('orientationchange', settleResize);
+    visualViewport?.addEventListener('resize', settleResize);
   }
 
   async init(): Promise<void> {

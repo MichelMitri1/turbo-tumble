@@ -1,0 +1,129 @@
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+button, a, input, select, textarea { touch-action: manipulation; }
+
+/* A real, high-contrast selection cursor for keyboard and controller navigation. */
+.arcade-nav-cursor {
+  --nav-x: 0px;
+  --nav-y: 0px;
+  --nav-w: 0px;
+  --nav-h: 0px;
+  position: fixed;
+  left: var(--nav-x);
+  top: var(--nav-y);
+  z-index: 2147483646;
+  width: var(--nav-w);
+  height: var(--nav-h);
+  border: 4px solid #fff;
+  border-radius: 14px;
+  outline: 3px solid #ffd23f;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(27, 20, 70, 0.9), 0 0 24px 8px rgba(255, 210, 63, 0.72);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.96);
+  transition: left 90ms ease, top 90ms ease, width 90ms ease, height 90ms ease, opacity 80ms ease, transform 80ms ease;
+}
+
+.arcade-nav-cursor.is-visible { opacity: 1; transform: scale(1); }
+.arcade-nav-cursor span {
+  position: absolute;
+  right: 4px;
+  bottom: calc(100% + 8px);
+  padding: 3px 7px;
+  border: 2px solid #fff;
+  border-radius: 8px;
+  background: #1b1446;
+  color: #ffd23f;
+  font: 900 11px/1.1 system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.45);
+}
+
+.arcade-nav-focus { position: relative; }
+
+@supports (height: 100dvh) {
+  html, body { min-height: 100dvh; }
+  #app, #game, .jk-shell, .lc-shell, .kk-shell, .pl-shell, .cf-shell { height: 100dvh; }
+}
+
+@media (any-pointer: coarse) {
+  input, select, textarea { font-size: max(16px, 1em); }
+
+  html .hub-fullscreen { top: max(16px, var(--safe-top)); right: max(16px, var(--safe-right)); }
+  html .jk-topbar,
+  html .lc-topbar,
+  html .kk-topbar,
+  html .pl-topbar { top: max(10px, var(--safe-top)); left: max(10px, var(--safe-left)); right: max(10px, var(--safe-right)); }
+  html .cf-topbar { top: max(12px, var(--safe-top)); left: max(12px, var(--safe-left)); right: max(12px, var(--safe-right)); }
+  html .fh-fs,
+  html .zh-fs { top: max(14px, var(--safe-top)); right: max(14px, var(--safe-right)); }
+
+  html .jk-menu,
+  html .jk-online,
+  html .lc-menu,
+  html .lc-online,
+  html .kk-menu,
+  html .kk-online,
+  html .pl-menu,
+  html .pl-online {
+    padding-top: calc(60px + var(--safe-top));
+    padding-right: max(14px, var(--safe-right));
+    padding-bottom: max(14px, var(--safe-bottom));
+    padding-left: max(14px, var(--safe-left));
+  }
+
+  html .fh-screen,
+  html .zh-screen {
+    padding-top: max(16px, var(--safe-top));
+    padding-right: max(16px, var(--safe-right));
+    padding-bottom: max(16px, var(--safe-bottom));
+    padding-left: max(16px, var(--safe-left));
+  }
+}
+
+.arcade-install-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: grid;
+  place-items: center;
+  padding: max(18px, var(--safe-top)) max(18px, var(--safe-right)) max(18px, var(--safe-bottom)) max(18px, var(--safe-left));
+  background: rgba(5, 7, 18, 0.78);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  font-family: system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+.arcade-install-guide__panel {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 26px 24px 22px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 24px;
+  background: linear-gradient(160deg, #30267a, #17123d);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  text-align: left;
+}
+
+.arcade-install-guide__icon { font-size: 42px; text-align: center; }
+.arcade-install-guide h2 { margin: 6px 0 16px; font-size: 25px; text-align: center; }
+.arcade-install-guide ol { margin: 0; padding-left: 24px; font-size: 16px; line-height: 1.55; }
+.arcade-install-guide li + li { margin-top: 7px; }
+.arcade-install-guide p { margin: 16px 0; color: #d9d5ef; font-size: 13px; line-height: 1.45; }
+.arcade-install-guide button { min-height: 44px; border: 0; cursor: pointer; }
+.arcade-install-guide__close { width: 100%; border-radius: 13px; background: #ffd23f; color: #1b1446; font: 800 16px system-ui, sans-serif; }
+.arcade-install-guide__x { position: absolute; top: 8px; right: 10px; width: 44px; background: transparent; color: #fff; font-size: 30px; }

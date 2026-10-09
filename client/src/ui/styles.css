@@ -471,3 +471,70 @@ html, body {
 .tt-intro__skip { font: 900 max(11px, 2.4cqh) var(--tt-font-body); opacity: 0.85; text-shadow: 0 2px 0 var(--tt-ink); animation: tt-blink 1.2s steps(2) infinite; }
 @keyframes tt-intro-in { 0% { transform: translateX(-6cqw); opacity: 0; } 100% { transform: none; opacity: 1; } }
 .tt-podium-on .tt-hud { display: none; }
+
+/* Touch layouts keep the racing view clear above the thumb controls. */
+@media (any-pointer: coarse) {
+  #game-canvas { touch-action: none; }
+  .tt-menu__panel { max-height: 96dvh; margin: auto; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .tt-menu__arrow { min-height: 44px; }
+  .tt-panel, .tt-gp__panel { max-width: 96vw; min-width: 0; max-height: 92dvh; overflow: auto; padding: 16px; }
+  .tt-panel__title { font-size: 32px; }
+  .tt-garage { overflow-y: auto; justify-content: flex-start; padding: 20px 0 max(20px, env(safe-area-inset-bottom)); }
+  .tt-garage__body { flex-shrink: 0; }
+  .touch-playing .tt-position { bottom: 160px; }
+  .touch-playing .tt-stats { bottom: 155px; }
+  .touch-playing .tt-item { width: 64px; height: 64px; }
+  .touch-playing .tt-item--reserve { left: 80px; top: 48px; width: 38px; height: 38px; }
+  .touch-playing .tt-timer__main { font-size: 24px; }
+  .touch-playing .tt-chip { font-size: 18px; padding: 4px 8px; gap: 5px; }
+  .touch-playing .tt-chip img { width: 24px; height: 24px; }
+  .touch-playing .tt-chip__label { font-size: 12px; }
+  .touch-playing .tt-hint { display: none; }
+  .touch-playing .tt-results { max-height: 65dvh; overflow: auto; }
+  .touch-playing .tt-results__row { font-size: 13px; gap: 8px; }
+  .touch-playing .tt-position__num { font-size: 48px; }
+  .touch-playing .tt-position__suffix { font-size: 22px; }
+  .touch-playing .tt-minimap { bottom: 218px; width: 85px; }
+  .touch-playing .tt-driving-hint, .touch-playing .tt-sound-hint { display: none; }
+}
+@media (max-width: 540px) {
+  .tt-menu__modes { grid-template-columns: repeat(2, 1fr); }
+  .tt-menu__row { grid-template-columns: 65px 36px minmax(0, 1fr) 36px; gap: 4px; font-size: 14px; }
+  .tt-menu__label { font-size: 10px; }
+  .tt-garage__stage, .tt-garage__canvas { min-height: 180px; }
+  .tt-online__setting.is-wide { grid-column: auto; }
+}
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  .touch-playing .tt-position { bottom: 145px; }
+  .touch-playing .tt-minimap { display: none; }
+  .touch-playing .tt-timer { top: 62px; }
+}
+
+/* Phone/tablet menus: preserve every setup row inside one predictable scroller. */
+@media (any-pointer: coarse) {
+  .tt-menu.is-open { align-items: flex-start; overflow: hidden; }
+  .tt-menu__panel {
+    width: min(620px, calc(100vw - 24px));
+    max-height: calc(100dvh - max(74px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+    margin: max(68px, calc(env(safe-area-inset-top) + 56px)) auto 0;
+    padding: 8px 8px max(14px, env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tt-menu__arrow { min-width: 42px; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  .tt-menu__panel { gap: 8px; }
+  .tt-menu__logo { margin: 0; }
+  .tt-menu__logo .tt-logo__top { font-size: 38px; }
+  .tt-menu__logo .tt-logo__bottom { font-size: 46px; }
+  .tt-menu__modes { gap: 6px; padding: 3px; }
+  .tt-menu__mode { min-height: 54px; padding: 5px 4px; border-width: 3px; }
+  .tt-menu__mode-icon { font-size: 19px; }
+  .tt-menu__mode-title { font-size: 16px; margin: 0; }
+  .tt-menu__mode-blurb { font-size: 9px; }
+  .tt-menu__options { gap: 3px; }
+  .tt-menu__row { min-height: 44px; padding: 3px 8px; }
+  .tt-menu__start, .tt-menu__controls { min-height: 46px; padding-block: 7px; }
+}

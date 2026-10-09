@@ -16,7 +16,7 @@ export class GrandPrixPanel {
   private readonly panel: HTMLElement;
   open = false;
 
-  constructor(parent: HTMLElement) {
+  constructor(parent: HTMLElement, private readonly onContinue: () => void) {
     this.panel = el('div', 'tt-gp__panel');
     this.root = el('div', 'tt-gp', [this.panel]);
     parent.appendChild(this.root);
@@ -34,6 +34,9 @@ export class GrandPrixPanel {
       children.push(row);
     });
     children.push(el('div', 'tt-gp__hint', hint));
+    const next = el('button', 'tt-button', 'Continue');
+    next.addEventListener('click', this.onContinue);
+    children.push(next);
     this.panel.replaceChildren(...children);
     this.open = true;
     this.root.classList.add('is-open');

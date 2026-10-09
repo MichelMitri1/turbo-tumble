@@ -36,6 +36,48 @@ body {
   display: none !important;
 }
 
+@media (any-pointer: coarse) {
+  #view { touch-action: none; }
+  #game .rk-screen { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  #game #menu { overflow-y: auto; justify-content: flex-start; gap: 16px; padding-top: max(20px, env(safe-area-inset-top)); padding-bottom: 20px; }
+  #menu > * { flex-shrink: 0; }
+  .rk-screen .rk-panel { max-height: 92dvh; overflow-y: auto; }
+  .touch-playing .rk-boost { bottom: 160px; right: 14px; width: 80px; height: 80px; }
+  .touch-playing .rk-boost b { font-size: 28px; }
+  .touch-playing .rk-camicon { bottom: 155px; left: 16px; font-size: 12px; }
+  .touch-playing .rk-sb { top: max(10px, env(safe-area-inset-top)); }
+  .touch-playing .rk-hint { display: none; }
+}
+@media (max-width: 540px) {
+  .rk-screen .rk-panel { padding: 16px; width: 100%; min-width: 0; }
+  .rk-screen .rk-slider { grid-template-columns: 100px minmax(0, 1fr) 32px; gap: 6px; }
+  .rk-sb .rk-sb-team { width: 52px; font-size: 24px; }
+  .rk-sb .rk-sb-clock { min-width: 100px; font-size: 18px; white-space: nowrap; }
+}
+
+@media (any-pointer: coarse) {
+  .rk-chip { min-width: 42px; min-height: 42px; }
+  .rk-panel { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+}
+
+@media (any-pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
+  #game #menu {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1fr);
+    align-content: center;
+    align-items: center;
+    justify-content: start;
+    column-gap: clamp(20px, 5vw, 64px);
+    padding: max(52px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  .rk-brand { align-self: center; }
+  .rk-logo { font-size: clamp(42px, 7vw, 66px); }
+  .rk-brand p { font-size: 11px; letter-spacing: 0.25em; }
+  .rk-menu-col { gap: 5px; width: 100%; max-height: calc(100dvh - 64px); overflow-y: auto; overscroll-behavior: contain; }
+  .rk-btn { min-height: 43px; padding: 8px 14px; font-size: 17px; }
+  .rk-name input { padding-block: 7px; }
+}
+
 /* ---------------------------------------------------------------- screens */
 .rk-screen {
   position: fixed;
