@@ -24,6 +24,13 @@ Gun sounds (`fps/sfx/`): The Free Firearm Sound Library by Ben Jaszczak, Brian N
 Kevin Heras and Matthew Nanney — CC0
 (https://opengameart.org/content/the-free-firearm-sound-library). Trimmed with `tools/fps-sfx.mjs`.
 
+Zombies (`fps/zombie-*.glb`, `fps/hellhound.glb`, extra guns): Quaternius Ultimate Animated Character Pack
+(Zombie Male / Female), Ultimate Animated Animals (Wolf → hellhound), Ultimate Gun Pack, Toon Shooter Game Kit
+(launchers) — CC0. Sounds (`fps/zsfx/`), CC0 from Freesound, cut with `tools/zombies-sfx.py`: #125405 "Monster Groans,
+Grunts, Slobbers", #463721 zombie groan, #426637 "Zombie Choking", #133974 "Horrific Zombie Growl", #249495 "3 Headed
+Dog", #404920 "Dog Growl - Beast / Creature", #873248 plywood cracking, #394891 hammer on wood, #274379 "creepy music
+box", #556701 "Ghost Monster Scream".
+
 400 playing cards (`400/cards/`): Vector Playing Cards by Byron Knoll (via
 github.com/notpeter/Vector-Playing-Cards) — public domain. Rendered to WebP.
 

@@ -1,5 +1,7 @@
 import './styles.css';
-import { Game, MODES, type Mode, type SoldierSetup } from './sim/game';
+import { Game, MODES, MP_MODES, type Mode, type SoldierSetup } from './sim/game';
+import { ZM_MODELS } from './sim/zweapons';
+import { MAP, ZMAPS } from './sim/maps';
 import { MAPS } from './sim/maps';
 import { DEFAULT_CLASSES, LETHALS, NO_ATTACHMENTS as NO_ATT, PERKS, PRIMARIES, SECONDARIES, STREAKS, STREAK_LIST, TACTICALS, WEAPON, WEAPONS, applyAttachments, damageAt, fixLoadout, type Attachments, type Lethal, type Loadout, type Perk, type Streak, type Tactical, type WeaponDef } from './sim/weapons';
 import type { BotSkill } from './sim/bots';
@@ -74,6 +76,7 @@ app.innerHTML = `
   <div class="zh-brand"><div class="zh-logo">ZERO<span>HOUR</span></div><small>MULTIPLAYER</small></div>
   <nav class="zh-nav">
     <button class="zh-btn primary" data-go="play">PLAY <small>vs bots</small></button>
+    <button class="zh-btn zombies" data-go="zombies">ZOMBIES <small>survive</small></button>
     <button class="zh-btn" data-go="online">ONLINE · LAN <small>friends</small></button>
     <button class="zh-btn" data-go="classes">WEAPONS <small>create-a-class</small></button>
     <button class="zh-btn" data-go="armory">ARMORY <small>camos</small></button>
@@ -88,7 +91,7 @@ app.innerHTML = `
 <div class="zh-screen hidden" id="play">
   <div class="zh-panel wide">
     <h2>QUICK PLAY</h2>
-    <div class="zh-field"><span>MODE</span><div class="zh-seg modes" id="q-mode">${(Object.keys(MODES) as Mode[]).map((m) => `<button data-v="${m}">${icon(m, 'zh-ico')}${MODES[m].name.toUpperCase()}</button>`).join('')}</div><p class="zh-sub" id="q-mode-desc"></p></div>
+    <div class="zh-field"><span>MODE</span><div class="zh-seg modes" id="q-mode">${MP_MODES.map((m) => `<button data-v="${m}">${icon(m, 'zh-ico')}${MODES[m].name.toUpperCase()}</button>`).join('')}</div><p class="zh-sub" id="q-mode-desc"></p></div>
     <div class="zh-maps" id="q-maps">${MAPS.map((m) => `<button class="zh-map" data-v="${m.id}">${mimg(m.id)}<b>${m.name.toUpperCase()}</b><small>${esc(m.desc)}</small><i>${m.size.toUpperCase()}</i></button>`).join('')}</div>
     <div class="zh-row">
       <div class="zh-field"><span>PLAYERS (SPLITSCREEN)</span><div class="zh-seg" id="q-split">${[1, 2, 3, 4].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
@@ -100,6 +103,20 @@ app.innerHTML = `
       <div class="zh-field"><span>DIFFICULTY</span><div class="zh-seg" id="q-skill"><button data-v="recruit">RECRUIT</button><button data-v="regular">REGULAR</button><button data-v="hardened">HARDENED</button><button data-v="veteran">VETERAN</button></div></div>
     </div>
     <div class="zh-actions"><button class="zh-btn ghost" data-back>BACK</button><button class="zh-btn primary" id="q-start">START MATCH</button></div>
+  </div>
+</div>
+
+<div class="zh-screen hidden" id="zombies">
+  <div class="zh-panel wide zm-panel">
+    <h2 class="zm-title">ZOMBIES</h2>
+    <p class="zh-sub">Endless rounds of the undead. Board up the windows, buy weapons off the walls, open the doors, turn on the power, find the box and the Pack-a-Punch. How many rounds can you survive?</p>
+    <div class="zm-maps">${ZMAPS.map((m) => `<div class="zm-map on"><b>${m.map.name.toUpperCase()}</b><small>${esc(m.map.desc)}</small><i>${m.z.zones.join(' · ')}</i></div>`).join('')}</div>
+    <div class="zh-row">
+      <div class="zh-field"><span>PLAYERS (SPLITSCREEN)</span><div class="zh-seg" id="z-split">${[1, 2, 3, 4].map((n) => `<button data-v="${n}">${n}</button>`).join('')}</div></div>
+    </div>
+    <p class="zh-sub" id="z-devices"></p>
+    <div class="zm-how"><span><b>USE</b> F / R · □ — buy, rebuild windows, revive</span><span><b>KNIFE</b> V / E · R3</span><span><b>MONKEY</b> Q · L1</span><span><b>GRENADE</b> G · R1</span></div>
+    <div class="zh-actions"><button class="zh-btn ghost" data-back>BACK</button><button class="zh-btn" id="z-online">ONLINE · LAN</button><button class="zh-btn primary" id="z-start">START</button></div>
   </div>
 </div>
 
@@ -208,7 +225,7 @@ audio.announcer = profile.announcer;
 addEventListener('pointerdown', () => audio.unlock(), { capture: true });
 addEventListener('keydown', () => audio.unlock(), { capture: true });
 
-type ScreenId = 'menu' | 'play' | 'classes' | 'armory' | 'settings' | 'online' | 'pause' | 'end' | 'game';
+type ScreenId = 'menu' | 'play' | 'zombies' | 'classes' | 'armory' | 'settings' | 'online' | 'pause' | 'end' | 'game';
 let screen: ScreenId = 'menu';
 let back: ScreenId = 'menu';
 function show(id: ScreenId): void {
@@ -216,7 +233,7 @@ function show(id: ScreenId): void {
   if (id === 'settings' && screen === 'pause') back = 'pause';
   screen = id;
   quietUntil = performance.now() + 500;
-  for (const s of ['menu', 'play', 'classes', 'armory', 'settings', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
+  for (const s of ['menu', 'play', 'zombies', 'classes', 'armory', 'settings', 'online', 'pause', 'end'] as const) $(`#${s}`).classList.toggle('hidden', s !== id);
   $('#click').classList.toggle('hidden', !(id === 'game' && !input.locked && input.device === 'kb'));
   audio.ui();
   renderProfile();
@@ -229,6 +246,7 @@ app.querySelectorAll<HTMLElement>('[data-go]').forEach((b) =>
     if (go === 'armory') renderArmory();
     if (go === 'settings') renderSettings();
     if (go === 'online') return void openOnline();
+    if (go === 'zombies') renderZDevices();
     show(go);
   }),
 );
@@ -751,6 +769,38 @@ async function startLocal(): Promise<void> {
   );
 }
 
+// ============================================================================ zombies
+
+seg('#z-split', String(profile.split), (v) => ((profile.split = Number(v)), save(), renderZDevices()));
+function renderZDevices(): void {
+  const n = Math.max(1, Math.min(4, profile.split));
+  const pads = connectedPads();
+  const src = splitSources(n);
+  $('#z-devices').innerHTML = n === 1 ? '' : src.map((s, i) => `<b>P${i + 1}</b> ${s.kb ? (s.pad !== null && pads[s.pad] ? 'Keyboard / Controller 1' : 'Keyboard &amp; mouse') : s.pad !== null && pads[s.pad] ? `Controller ${s.pad + 1}` : '<em>connect a controller</em>'}`).join(' &nbsp;·&nbsp; ');
+}
+$('#z-start').addEventListener('click', () => void startZombies());
+$('#z-online').addEventListener('click', () => void openOnline('', 'zombies'));
+
+async function startZombies(): Promise<void> {
+  lastLocal = startZombies;
+  const zm = ZMAPS[0]!;
+  const n = Math.max(1, Math.min(4, profile.split));
+  const setups: SoldierSetup[] = Array.from({ length: n }, (_, i) => ({
+    id: i === 0 ? 'me' : `p${i + 1}`,
+    name: i === 0 ? profile.name : `Player ${i + 1}`,
+    team: 0 as const,
+    bot: false,
+    loadout: { ...DEFAULT_CLASSES[0]!, lethal: 'frag' as const },
+    camos: profile.camos,
+  }));
+  await runMatch(
+    [...zm.map.props.map((p) => p.model), ...ZM_MODELS],
+    () => new LocalSession(new Game(zm.map.id, { mode: 'zombies' }, setups), profile.skill, setups.map((s) => s.id)),
+    `${zm.map.name}.`,
+    setups.map((s) => s.id),
+  );
+}
+
 /** The pause menu's class list: rebuilt only when the classes change (its thumbnails are rendered at match start). */
 let pauseKey = '';
 function renderPauseClasses(): void {
@@ -765,6 +815,8 @@ function renderPauseClasses(): void {
 function pause(): void {
   if (!match || match.over) return;
   input.unlock();
+  // No classes in zombies: you start with a pistol and buy the rest.
+  $('#p-classes').closest<HTMLElement>('.zh-field')!.classList.toggle('hidden', !!match.session.game.horde);
   renderPauseClasses();
   show('pause');
   thumbs($('#p-classes'));
@@ -803,6 +855,17 @@ function showEnd(g: Game): void {
   const me = g.soldier(match.session.meId);
   if (!me) return;
   input.unlock();
+  if (g.horde) {
+    const z = me.zm!;
+    profile.xp += Math.round(z.earned / 4);
+    save();
+    $('#e-result').innerHTML = `<div class="zh-result__big lose zm-over">GAME OVER</div><div class="zh-result__sub">${g.map.name} · Survived ${g.horde.round} round${g.horde.round === 1 ? '' : 's'}</div>
+      <div class="zh-result__me"><span>POINTS <b>${z.earned}</b></span><span>KILLS <b>${z.kills}</b></span><span>HEADSHOTS <b>${z.headshots}</b></span><span>DOWNS <b>${z.downs}</b></span><span>REVIVES <b>${z.revives}</b></span></div>`;
+    $('#e-board').innerHTML = `<table class="zm-board"><tr><th></th><th>POINTS</th><th>KILLS</th><th>HEADSHOTS</th><th>DOWNS</th><th>REVIVES</th></tr>${g.soldiers.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.zm?.earned ?? 0}</td><td>${s.zm?.kills ?? 0}</td><td>${s.zm?.headshots ?? 0}</td><td>${s.zm?.downs ?? 0}</td><td>${s.zm?.revives ?? 0}</td></tr>`).join('')}</table>`;
+    $('#e-again').textContent = match?.session.online ? 'BACK TO LOBBY' : 'PLAY AGAIN';
+    show('end');
+    return;
+  }
   const won = g.mode === 'ffa' ? [...g.soldiers].sort((a, b) => b.kills - a.kills)[0] === me : g.winner === me.team;
   const draw = g.mode !== 'ffa' && g.winner === -1;
   profile.xp += me.score + (won ? 500 : 100);
@@ -845,8 +908,15 @@ const oStatus = (t: string, err = false) => {
   $('#o-status').classList.toggle('error', err);
 };
 
-async function openOnline(code = ''): Promise<void> {
+/** Which kind of lobby Create / Quick Match make (the Zombies screen opens zombies lobbies). */
+let onlineKind: 'mp' | 'zombies' = 'mp';
+async function openOnline(code = '', kind: 'mp' | 'zombies' = 'mp'): Promise<void> {
+  onlineKind = kind;
   show('online');
+  $('#online').classList.toggle('zm-online', kind === 'zombies');
+  $('#o-title').textContent = kind === 'zombies' ? 'ZOMBIES ONLINE' : 'ONLINE';
+  $('#o-sub').textContent = kind === 'zombies' ? 'Up to 4 survivors — friends anywhere, or the same Wi-Fi with npm run lan.' : 'Play with friends anywhere — or on the same Wi-Fi with npm run lan.';
+  $('#o-lan').classList.add('hidden');
   $('#o-connect').classList.remove('hidden');
   $('#o-lobby').classList.add('hidden');
   if (code) oCode.value = code.toUpperCase().slice(0, 4);
@@ -858,7 +928,7 @@ async function openOnline(code = ''): Promise<void> {
   if (info.lan?.length) {
     const ip = /^(localhost|127\.)/.test(location.hostname) ? info.lan[0] : location.hostname;
     lanUrl = `${location.protocol}//${ip}${location.port ? `:${location.port}` : ''}${location.pathname}`;
-    $('#o-title').textContent = 'LAN PARTY';
+    $('#o-title').textContent = kind === 'zombies' ? 'ZOMBIES · LAN PARTY' : 'LAN PARTY';
     $('#o-sub').textContent = 'Same Wi-Fi · 60 Hz server · zero lag';
     $('#o-lan-url').textContent = lanUrl;
     $('#o-lan').classList.remove('hidden');
@@ -870,6 +940,7 @@ async function connect(how: (n: FpsNet) => Promise<void>): Promise<void> {
   if (net?.room) return;
   oStatus('Connecting…');
   const n = new FpsNet();
+  n.kind = onlineKind;
   try {
     await how(n);
   } catch (err) {
@@ -884,10 +955,10 @@ async function connect(how: (n: FpsNet) => Promise<void>): Promise<void> {
     renderLobby();
   };
   n.onBegin = (b) => {
-    const map = MAPS.find((m) => m.id === b.map) ?? MAPS[0]!;
+    const map = MAP[b.map] ?? MAPS[0]!;
     // The session starts listening straight away (snapshots queue while the map loads).
     const session = new OnlineSession(n, b);
-    void runMatch(map.props.map((p) => p.model), () => session, `${MODES[b.mode].name}. ${map.name}. Good luck.`);
+    void runMatch([...map.props.map((p) => p.model), ...(b.mode === 'zombies' ? ZM_MODELS : [])], () => session, b.mode === 'zombies' ? `${map.name}.` : `${MODES[b.mode].name}. ${map.name}. Good luck.`);
   };
   n.onError = (m) => oStatus(m, true);
   n.onClosed = (reason) => {
@@ -910,15 +981,20 @@ function renderLobby(): void {
   const host = l.hostId === net.sessionId;
   for (const t of [0, 1] as const)
     $(`#o-t${t}`).innerHTML = l.players
-      .filter((p) => p.team === t)
+      .filter((p) => (l.config.mode === 'zombies' ? t === 0 : p.team === t))
       .map((p) => `<div class="zh-lp ${p.id === net!.sessionId ? 'me' : ''}"><b>${esc(p.name)}</b><small>${p.id === l.hostId ? 'HOST' : ''}${p.connected ? '' : ' · reconnecting'}</small></div>`)
-      .join('') + (l.config.bots ? `<div class="zh-lp bot"><small>+ bots to ${l.config.bots}</small></div>` : '');
+      .join('') + (l.config.bots && l.config.mode !== 'zombies' ? `<div class="zh-lp bot"><small>+ bots to ${l.config.bots}</small></div>` : '');
   $('#o-host').classList.toggle('hidden', !host || l.phase !== 'lobby');
+  // Zombies: one squad of survivors — no teams, bots or maps to pick.
+  const zm = l.config.mode === 'zombies';
+  $('#online').classList.toggle('zm-online', zm);
+  $('#o-t0').closest<HTMLElement>('.zh-team')!.querySelector('h3')!.textContent = zm ? `SURVIVORS · ${l.players.length}/4` : 'COALITION';
+  for (const sel of ['#o-map', '#o-bots', '#o-skill']) $(sel).closest<HTMLElement>('.zh-field')!.classList.toggle('hidden', zm);
   setSeg('#o-mode', l.config.mode);
   setSeg('#o-map', l.config.map);
   setSeg('#o-bots', String(l.config.bots));
   setSeg('#o-skill', l.config.skill);
-  $('#o-wait').textContent = l.phase === 'playing' ? 'Match in progress…' : host ? 'Pick teams and settings, then start.' : 'Waiting for the host…';
+  $('#o-wait').textContent = l.phase === 'playing' ? 'Match in progress…' : host ? (zm ? 'Start when your squad is in. Nachtkino.' : 'Pick teams and settings, then start.') : 'Waiting for the host…';
   $('#o-start').classList.toggle('hidden', !host || l.phase !== 'lobby');
 }
 
@@ -998,6 +1074,7 @@ renderProfile();
 const q = new URLSearchParams(location.search);
 if (q.get('room')) void openOnline(q.get('room')!);
 else if (q.has('play')) void startLocal();
+else if (q.has('zombies')) void startZombies();
 (window as unknown as Record<string, unknown>).__zh = {
   get match() {
     return match;

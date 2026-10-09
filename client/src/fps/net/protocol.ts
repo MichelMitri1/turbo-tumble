@@ -2,12 +2,16 @@ import type { GameEvent, Mode } from '../sim/game';
 import type { BotSkill } from '../sim/bots';
 import type { Loadout } from '../sim/weapons';
 import type { Input } from '../sim/player';
+import type { ZSnap } from '../sim/horde';
 
 /** Zero Hour online protocol. */
 export const FP_ROOM = 'zerohour';
-export const FP_VERSION = 3;
+export const FP_ZM_ROOM = 'zerohour_zm';
+export const FP_VERSION = 4;
 /** Up to 9 a side. */
 export const FP_MAX = 18;
+/** Zombies: four survivors, like the original. */
+export const FP_ZM_MAX = 4;
 
 export const FpMsg = {
   Input: 'fp:in', // client → server: FpInput[]
@@ -53,7 +57,7 @@ export interface FpBegin {
 
 /** Compact per-tick input: [seq, mx, mz, yaw, pitch, bits, slot, streak]. */
 export type FpInput = [number, number, number, number, number, number, number, number];
-export const INPUT_BITS = { jump: 1, sprint: 2, crouch: 4, ads: 8, fire: 16, reload: 32, grenade: 64, melee: 128, tactical: 256 } as const;
+export const INPUT_BITS = { jump: 1, sprint: 2, crouch: 4, ads: 8, fire: 16, reload: 32, grenade: 64, melee: 128, tactical: 256, use: 512 } as const;
 
 export interface FpFire {
   /** Pellet directions. */
@@ -97,6 +101,9 @@ export interface FpSnap {
   barrels: number[];
   /** Scoreboard (sent every second): [idx, kills, deaths, assists, score, ping ms]. */
   board?: number[][];
+  /** Zombies: the horde's state, and everyone's two weapon ids (guns change hands constantly). */
+  zm?: ZSnap;
+  w?: Array<[number, string, string]>;
 }
 
 export interface FpJoin {
@@ -105,13 +112,15 @@ export interface FpJoin {
   loadout: Loadout;
   camos: Record<string, string>;
   visibility?: 'private' | 'public';
+  /** Lobby kind: Quick Match only pairs zombies players with zombies lobbies. */
+  kind?: 'mp' | 'zombies';
 }
 
 export type { GameEvent };
 
 export function packInput(i: Input): FpInput {
   const b = INPUT_BITS;
-  const bits = (i.jump ? b.jump : 0) | (i.sprint ? b.sprint : 0) | (i.crouch ? b.crouch : 0) | (i.ads ? b.ads : 0) | (i.fire ? b.fire : 0) | (i.reload ? b.reload : 0) | (i.grenade ? b.grenade : 0) | (i.melee ? b.melee : 0) | (i.tactical ? b.tactical : 0);
+  const bits = (i.jump ? b.jump : 0) | (i.sprint ? b.sprint : 0) | (i.crouch ? b.crouch : 0) | (i.ads ? b.ads : 0) | (i.fire ? b.fire : 0) | (i.reload ? b.reload : 0) | (i.grenade ? b.grenade : 0) | (i.melee ? b.melee : 0) | (i.tactical ? b.tactical : 0) | (i.use ? b.use : 0);
   return [i.seq, +i.mx.toFixed(3), +i.mz.toFixed(3), +i.yaw.toFixed(4), +i.pitch.toFixed(4), bits, i.slot, i.streak];
 }
 export function unpackInput(a: FpInput): Input {
@@ -133,6 +142,7 @@ export function unpackInput(a: FpInput): Input {
     grenade: !!(bits & b.grenade),
     melee: !!(bits & b.melee),
     tactical: !!(bits & b.tactical),
+    use: !!(bits & b.use),
     streak: [0, 1, 2, 3].includes(n(a[7])) ? n(a[7]) : -1,
     slot: n(a[6]) === 0 || n(a[6]) === 1 ? n(a[6]) : -1,
   };

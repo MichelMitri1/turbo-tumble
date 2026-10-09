@@ -21,6 +21,8 @@ export interface FrameInput {
   ads: boolean;
   fire: boolean;
   reload: boolean;
+  /** Use (held): F / R on keyboard, □ on a pad. */
+  use: boolean;
   swap: boolean;
   slot: number;
   grenade: boolean;
@@ -159,6 +161,7 @@ export class FpsInput {
       ads: S.toggleAds ? this.adsLatch : this.mouse[2]!,
       fire: this.mouse[0]!,
       reload: pr('KeyR'),
+      use: k('KeyF') || k('KeyR'),
       swap: this.wheel !== 0,
       slot: pr('Digit1') ? 0 : pr('Digit2') ? 1 : -1,
       grenade: k('KeyG'),
@@ -205,6 +208,7 @@ export class FpsInput {
       out.ads ||= val(PAD.l2) > 0.3;
       out.fire ||= val(PAD.r2) > 0.3;
       out.reload ||= edge(PAD.square);
+      out.use ||= btn(PAD.square);
       out.swap ||= edge(PAD.triangle);
       out.grenade ||= btn(PAD.r1);
       out.tactical ||= edge(PAD.l1);

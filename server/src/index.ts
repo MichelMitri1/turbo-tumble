@@ -23,7 +23,7 @@ import { RB_ROOM } from '../../client/src/rocket/net/protocol';
 import { LC_ROOM } from '../../client/src/lastcard/net/protocol';
 import { FH_ROOM } from '../../client/src/arba3meyeh/net/protocol';
 import { PL_ROOM } from '../../client/src/pool/net/protocol';
-import { FP_ROOM } from '../../client/src/fps/net/protocol';
+import { FP_ROOM, FP_ZM_ROOM } from '../../client/src/fps/net/protocol';
 import { JK_ROOM } from '../../client/src/jackaroo/net/protocol';
 import { FB_ROOM } from '../../client/src/football/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
@@ -116,6 +116,8 @@ server.define(LC_ROOM, LastCardRoom);
 server.define(FH_ROOM, FourHundredRoom);
 server.define(PL_ROOM, PoolRoom);
 server.define(FP_ROOM, FpsRoom);
+// Zombies lobbies: their own room name, so Quick Match only pairs zombies players together.
+server.define(FP_ZM_ROOM, FpsRoom, { kind: 'zombies' });
 server.define(JK_ROOM, JackarooRoom);
 server.define(FB_ROOM, FootballRoom);
 

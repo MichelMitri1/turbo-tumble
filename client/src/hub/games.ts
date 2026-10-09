@@ -75,9 +75,9 @@ export const GAMES: GameEntry[] = [
   {
     id: 'zero-hour',
     title: 'Zero Hour',
-    tagline: 'Fast multiplayer FPS: 18 guns, classes, 9 killstreaks, TDM / Domination / FFA / Kill Confirmed on 10 maps, 4-player splitscreen.',
+    tagline: 'Fast multiplayer FPS: 18 guns, classes, 9 killstreaks, 10 maps, 4-player splitscreen — plus round-based Zombies with the box, perks and Pack-a-Punch.',
     href: '/zero-hour/',
-    tags: ['FPS', 'vs Bots', 'Online · LAN', '9 v 9'],
+    tags: ['FPS', 'vs Bots', 'Zombies', 'Online · LAN', '9 v 9'],
     art: { image: '/assets/hub/zero-hour.webp', emoji: '🎯', from: '#3a4a2a', to: '#c4f24a' },
   },
   {
