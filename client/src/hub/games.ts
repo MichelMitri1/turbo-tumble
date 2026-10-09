@@ -17,6 +17,22 @@ export interface GameEntry {
 
 export const GAMES: GameEntry[] = [
   {
+    id: 'starfall',
+    title: 'Starfall',
+    tagline: 'First-person 3D social deduction aboard a spaceship. Complete tasks, find bodies, vote out the impostor — or be one.',
+    href: '/starfall/',
+    tags: ['First-person 3D', '7 bots', 'Crew / Impostor', 'Controller'],
+    art: { emoji: '🧑‍🚀', from: '#132f4d', to: '#127f88' },
+  },
+  {
+    id: 'cage-kings',
+    title: 'Cage Kings',
+    tagline: 'Full-contact MMA: strike, wrestle and submit with authentic damage, stamina and controller combat.',
+    href: '/cage-kings/',
+    tags: ['MMA', 'vs CPU', 'Local 1v1', 'Controller'],
+    art: { emoji: '🥊', from: '#ef263c', to: '#12151c' },
+  },
+  {
     id: 'turbo-tumble',
     title: 'Turbo Tumble',
     tagline: 'Kart racing with items, 24 tracks, Grand Prix cups and online races.',
