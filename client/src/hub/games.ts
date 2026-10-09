@@ -120,4 +120,12 @@ export const GAMES: GameEntry[] = [
     tags: ['MMA', 'vs CPU', 'Local 1v1', 'Controller'],
     art: { emoji: '🥊', from: '#ef263c', to: '#12151c' },
   },
+  {
+    id: 'velora',
+    title: 'Velora: After Hours',
+    tagline: 'An original open city: four rides, street races, courier jobs and police pursuits through a procedural coastal metropolis.',
+    href: '/velora/index.html',
+    tags: ['Open world', '3D driving', '3 activities', 'Keyboard + mouse'],
+    art: { emoji: '🌆', from: '#143e49', to: '#d9a45c' },
+  },
 ];
