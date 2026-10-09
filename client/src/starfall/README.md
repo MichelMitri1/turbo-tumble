@@ -1,40 +1,82 @@
 # Starfall
 
-Original first-person 3D social-deduction game at `/starfall/`. It supports private invite-code rooms, public matchmaking, same-Wi-Fi/LAN play, and configurable solo matches filled by bots.
+A top-down social-deduction game at `/starfall/`, built after the classic crewmates-vs-impostors formula. Play it against bots, online with friends (private codes or Quick Match), or on a LAN. Empty seats are filled by bots.
 
-## Gameplay
+## The game
 
-Matches support 4–12 players and one or two impostors. The host controls crew/impostor vision, kill cooldown, role confirmation, player count, and impostor count; open seats launch as bots. Crew win by completing the group task quota or ejecting every impostor. Impostors win at parity or by allowing reactor containment to fail. Eliminated crew can finish tasks as ghosts.
+- **4–15 players**, 1–3 impostors. The settings mirror the original lobby: kill cooldown, crewmate and impostor vision, emergency meetings, discussion and voting time, confirm ejects, anonymous votes, the number of common, long and short tasks, and visual tasks.
+- **Crewmates** do tasks to fill the shared task bar, report bodies, call emergency meetings and vote. Dead crewmates come back as ghosts: they pass through walls and keep doing tasks.
+- **Impostors** fake tasks and kill (with a cooldown, and the killer lands on the body). They travel through linked vents and sabotage:
+  - lights cut crew vision to a quarter;
+  - comms hides tasks, admin and cameras;
+  - doors close a room for 10 s;
+  - critical sabotages: reactor (two hand scanners held at once), O2 (a keypad code at two panels) or seismic stabilizers. If the crew doesn't fix one in time, the impostors win.
+- **Meetings:** "Dead body reported" or "Emergency meeting", then discussion and voting on the tablet with chat. Skips and ties eject no one. The ejection screen depends on the map: drifting into space, falling through the clouds, or into lava.
+- **Vision:** walls block sight and furniture doesn't. Outside your vision the map is dark and players disappear.
 
-Every room has an original interactive task: ordered data transmission, biometric scanning, circuit stabilization, cargo-card authorization, color wire routing, and frequency tuning. The ship also includes body reports, emergency meetings, evidence-aware bot testimony, voting, role reveal, impostor partner reveal, vents, lights and reactor sabotage, role-limited view distance, and animated ejection results.
+## Starfall 3D (`/starfall-3d/`)
 
-Meeting chat works in bot, invite-code, and LAN matches. Human messages are relayed through the authoritative server. Bots answer direct questions about their location, current task, the reporter, recent sightings, and evidence; they also defend themselves or respond to accusations. Their answers are derived from the simulation state and line of sight rather than unrestricted generative AI. Living players can talk during the 60-second discussion window, while ghosts cannot message the living crew.
+The same game drawn in 3D: the same page code with `data-view="3d"`, which swaps the renderer for `render3d/`.
+- `render3d/models.ts`: crewmates, bodies, ghosts and props built from primitives, with inverted-hull outlines.
+- `render3d/world3d.ts`: walls built from the room outlines (with gaps where the floor carries on), sinking doors and flipping vent lids.
+- **Vision fog:** a shader darkens everything outside your sight, using the same ray-cast polygon as the 2D game.
+- **First person:** eyes at visor height with a little walking bob, and ceilings over every room.
+  - Click to grab the mouse and look around. On a controller the right stick looks; on touch, drag the screen.
+  - WASD / the left stick move relative to where you look.
+  - In a vent you peek out from floor level.
+- **Name tags** shrink with distance. Sabotage arrows point by bearing (up = straight ahead).
+- **Top-down chase camera:** still in the code. `placeCamera()` is used when no `fp` option is passed.
+- **Security cameras** show the 3D scene from each camera.
+- **Everything else is shared** (rules, bots, tasks, meetings, HUD, maps, online). 2D and 3D players can be in the same online room.
 
-The shared knowledge base covers controls, roles, win conditions, reports, emergencies, voting, ties, ghosts, vents, kills, vision, sabotage, every room, every task, matchmaking, custom settings, and crew/impostor strategy. Casual conversation is handled separately so greetings and acknowledgements stay short instead of triggering irrelevant task reports. Follow-up questions such as “why?” reuse the last named player or suit color.
+## Maps (`sim/maps.ts`)
 
-Each bot maintains its own bounded memory, trust scores, suspicion scores, room trail, recent sightings, completed-task context, claims, and contradictions. Player statements can influence those beliefs, but personalities and confidence thresholds prevent the crew from becoming a single voting bloc. Some bots investigate by temporarily following a suspicious player; others continue their tasks. Seeing a task lowers suspicion, proximity to a newly found body raises it, and witnessing an elimination remains decisive evidence. This learning is match-local simulation state, not persistent model training or collection of personal data.
+| Map | After | Highlights |
+| --- | --- | --- |
+| Vanguard | the ship | 14 rooms, 13 doors, 13 vents in 4 networks, cameras, admin table; reactor / O2 / lights / comms |
+| Stratus HQ | the sky HQ | launchpad → decontamination → long hallway, labs, greenhouse, balcony; no doors, all vents in one ring |
+| Frostfall | the ice planet | buildings around snowfields, dropship, specimen room, vitals; seismic / lights / comms |
 
-The opening command deck presents multiplayer, custom bot missions, role drills, controls, and the social-AI feature set without hiding the rendered ship backdrop.
+## Tasks (`ui/panels.ts`)
 
-The server is authoritative for movement, role assignment, kills, tasks, sabotage, vents, meetings, voting, ejections, and win conditions. Crewmates are never sent impostor identities before the result; impostors receive only their partner list. Bots navigate the same collision grid as players, and kill/vent evidence requires unobstructed sight. Discussion is simulation-driven rather than generated by a language model.
+There are 39 task minigames, plus the sabotage panels:
+
+- **Vanguard (the ship):** swipe card, wires, download/upload, fuel, garbage chute, asteroids, prime shields, O2 filter, chart course, steering, align engines, calibrate distributor, divert/accept power, inspect sample, medbay scan, Simon-says reactor, manifolds.
+- **Stratus HQ (the sky HQ):** buy beverage, water plants, ID code, weather, assemble artifact, run diagnostics, process data, sort samples.
+- **Frostfall (the ice planet):** fill canisters, insert keys, waterways, temperature, reboot wifi, repair drill, water jug, boarding pass, store artifacts, telescope, weather node, monitor tree.
+
+Long waits (sample 60 s, diagnostics 90 s, wifi 60 s) keep running if you walk away.
+
+## Code
+
+- `sim/`: the rules, shared by the browser and the server.
+  - `geom.ts`: a 0.25 m collision and vision grid, sliding movement, ray casting, and A* with a cached clearance mask.
+  - `maps.ts`: the three maps.
+  - `game.ts`: rules and win conditions.
+  - `bots.ts`: crew and impostor AI, including meeting talk and votes.
+  - `view.ts`: what each player may see. Ghosts are invisible to the living, deaths stay secret until a meeting, roles are secret, and vents hide players.
+- `render/`: Canvas 2D art (beans, bodies, ghosts, props, floors) and the world renderer (wall faces, doors, vents, vision fog).
+- `ui/`: the HUD icons, task panels, map / sabotage / admin overlays, cameras, vitals, meeting tablet, splash, role reveal, ejection and end screens.
+- `link.ts`: the local game (simulation and bots in the page) or the online game (snapshots plus client-predicted movement).
+- `server/src/rooms/StarfallRoom.ts`: the authoritative room.
+  - It runs the rules and the bots at 30 Hz and sends each player their own view at 15 Hz.
+  - Clients send their own position, and the server re-runs it through the walls with a speed limit.
+  - A player who leaves is replaced by a bot.
 
 ## Controls
 
-| Action | Keyboard / mouse | Standard gamepad |
-| --- | --- | --- |
-| Move / look | WASD / mouse | Left / right stick |
-| Use | E | A / Cross |
-| Report | R | Y / Triangle |
-| Eliminate | Q | X / Square |
-| Vent | F | B / Circle |
-| Lights / reactor | Z / X | LB / RB |
-| Map | M | View / Share |
-| Pause | Escape | Start / Options |
-| Menu / terminal | Tab + Enter or mouse | D-pad up/down + A |
-| Settings sliders | Arrow keys | D-pad left/right |
+| Action | Keyboard / mouse | Gamepad | Touch |
+| --- | --- | --- | --- |
+| Move | WASD / arrows, or hold the mouse | Left stick / D-pad | Joystick |
+| Use / vent | E or Space (V vents) | A (RB vents) | USE |
+| Report | R | Y | REPORT |
+| Kill | Q | X | KILL |
+| Map / sabotage | Tab | View | Map button |
+| Close / pause | Esc | B / Start | ✕ |
 
-Mouse capture starts from Begin/Resume. If unavailable, drag the view to look. Gamepad disconnect pauses the match. Physical controller behavior requires testing on the target browser/controller combination. Touch gameplay is not implemented.
+In task panels a controller moves a cursor with the stick and clicks with A. In a vent, the direction keys hop to a linked vent.
 
-## Verification
+## Checks
 
-`node --import tsx tools/starfall-check.ts` validates task variety, per-client ownership, map reachability, walls, kill cooldown, eyewitness evidence, reports, voting, wins, and twelve seeded six-minute simulations. `node tools/starfall-smoke.mjs http://localhost:5173/starfall/` covers the browser start flow. With a server running on port 2568, `node tools/starfall-online-smoke.mjs ws://127.0.0.1:2568 1` and the same command ending in `2` verify two-client invite rooms, bot fill, role privacy/partners, snapshots, and independent movement.
+- `npx tsx tools/starfall-maps.ts`: every spot on every map is reachable.
+- `npx tsx tools/starfall-sim.ts 8`: bots-only games on each map (outcomes, meetings, sabotages, stuck bots, ms per tick).
