@@ -81,8 +81,8 @@ let shared: { body: THREE.MeshPhysicalMaterial; wheel: THREE.MeshStandardMateria
 function carMaterials(): NonNullable<typeof shared> {
   // Body: satin car paint with a light clear coat (no mirror shine). Wheels: rubber.
   shared ??= {
-    body: new THREE.MeshPhysicalMaterial({ map: palette, roughness: 0.52, metalness: 0.08, clearcoat: 0.3, clearcoatRoughness: 0.4, envMapIntensity: 0.65 }),
-    wheel: new THREE.MeshStandardMaterial({ map: palette, roughness: 0.62, metalness: 0.15, envMapIntensity: 0.9 }),
+    body: new THREE.MeshPhysicalMaterial({ map: palette, roughness: 0.62, metalness: 0.05, clearcoat: 0.08, clearcoatRoughness: 0.6, envMapIntensity: 0.4 }),
+    wheel: new THREE.MeshStandardMaterial({ map: palette, roughness: 0.75, metalness: 0.1, envMapIntensity: 0.5 }),
   };
   return shared;
 }
@@ -291,7 +291,7 @@ export class BallView {
   private glowT = 0;
 
   constructor() {
-    const mat = new THREE.MeshStandardMaterial({ color: 0xd8dbe4, roughness: 0.32, metalness: 0.55, envMapIntensity: 1.2 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xd8dbe4, roughness: 0.55, metalness: 0.2, envMapIntensity: 0.6 });
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.uniforms);
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vObjN;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjN = normalize(position);');
@@ -350,7 +350,7 @@ export class PadsView {
   private t = 0;
 
   constructor() {
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a2d38, metalness: 0.7, roughness: 0.35 });
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a2d38, metalness: 0.35, roughness: 0.55 });
     const orbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.62, 0.15).multiplyScalar(3.2), toneMapped: false });
     const orbCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.7).multiplyScalar(4), toneMapped: false });
     for (const p of BOOST_PADS) {

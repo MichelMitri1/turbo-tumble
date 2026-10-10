@@ -48,6 +48,11 @@ export class RocketRoom extends Room {
   /** The running match's seed and arena (sent to late joiners / reconnects too). */
   private seed = 0;
   private arena: ArenaId = 'dome';
+  /** Opening countdown held at 3 until every player's arena is built (or this deadline, ms). */
+  private ready = new Set<string>();
+  private holdUntil = 0;
+  /** Players who skipped the current goal replay. */
+  private skipped = new Set<string>();
 
   override onCreate(options: RbJoin): void {
     this.roomId = claimRoomCode();
@@ -78,6 +83,10 @@ export class RocketRoom extends Room {
       const body = m?.body;
       if (me && typeof body === 'string' && BODIES.has(body)) me.body = body as Member['body'];
       this.sendLobby();
+    });
+    this.onMessage(RbMsg.Ready, (client) => this.ready.add(client.sessionId));
+    this.onMessage(RbMsg.Skip, (client) => {
+      if (this.world?.phase === 'goal') this.skipped.add(client.sessionId);
     });
     this.onMessage(RbMsg.Start, (client) => {
       if (client.sessionId !== this.hostId || this.phase !== 'lobby') return;
@@ -193,6 +202,9 @@ export class RocketRoom extends Room {
     this.lastInput.clear();
     this.latestTick.clear();
     this.acc = 0;
+    this.ready.clear();
+    this.skipped.clear();
+    this.holdUntil = Date.now() + 15000;
     this.phase = 'playing';
     void this.lock();
     this.sendLobby();
@@ -231,9 +243,22 @@ export class RocketRoom extends Room {
         this.lastInput.set(p.id, c);
         inputs.set(p.id, c);
       }
+      // Opening countdown: hold at 3 while someone is still loading the arena.
+      const humans = [...this.members.values()].filter((m) => m.connected);
+      const opening = this.holdUntil > 0 && w.phase === 'countdown';
+      const holding = opening && Date.now() < this.holdUntil && humans.some((m) => !this.ready.has(m.id));
+      if (opening) {
+        // Pinned at 3 while holding; on release the countdown starts from 3 for everyone.
+        w.phaseTimer = 3 + TICK;
+        w.lastCountdownN = 4;
+        if (!holding) this.holdUntil = 0;
+      }
+      // Goal replay: everyone skipped → kickoff now.
+      if (w.phase === 'goal' && this.skipped.size && humans.length && humans.every((m) => this.skipped.has(m.id)) && w.phaseTimer > 0.4) w.phaseTimer = 0.4;
       w.step(inputs);
       stepped = true;
-      for (const e of w.events.splice(0)) if (SERVER_EVENTS.has(e.k)) events.push(e);
+      for (const e of w.events.splice(0)) if (SERVER_EVENTS.has(e.k) && !(holding && e.k === 'countdown')) events.push(e);
+      if (w.phase !== 'goal') this.skipped.clear();
       // Drop stale buffered inputs.
       for (const buf of this.inputBuf.values()) for (const k of buf.keys()) if (k <= t) buf.delete(k);
     }

@@ -66,6 +66,9 @@ interface Mem {
   planC: Cand | null;
   planAt: number;
   planUntil: number;
+  /** Simulated value of the planned touch, and when the next aerial may be considered. */
+  planScore: number;
+  airCheck: number;
 }
 
 /** A way to play a touch: shot direction, contact offset sideways (uu), dodge into it or not. */
@@ -96,10 +99,14 @@ const PREDICT_TIME = 3;
 const ROLE_HYSTERESIS = 0.3;
 const V = () => new Vector3();
 /** Tuning switches (tools only): SSL features to leave out, e.g. SSL_OFF=carry,half. */
+const ENV = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+/** Half-flip timing: how long the back flip turns before it's cancelled, then how long to roll over (s). */
+const HF_CANCEL = Number(ENV.SSL_HFC ?? 0.25);
+const HF_ROLL = Number(ENV.SSL_HFR ?? 0.35);
 /** How long before a touch SSL starts simulating the ways to play it (s). */
 const PLAN_T = Number((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_PLAN ?? 1.1);
 // Off by default (they measured worse): demo hunting and the flip kickoff.
-const OFF = new Set(((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_OFF ?? 'hunt,kick').split(',').filter(Boolean));
+const OFF = new Set(((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_OFF ?? 'hunt,possess,half').split(',').filter(Boolean));
 
 /**
  * Rocket League bots: roles with rotation (attacker → support → back), shots
@@ -121,7 +128,7 @@ export class Bots {
   /** Memory of the bot being driven this tick. */
   private cur: Mem | null = null;
   /** Rollout in progress: the touch being tested. */
-  private forced: { sample: BallSample; cand: Cand; opp: number } | null = null;
+  private forced: { sample: BallSample; cand: Cand; opp: number } | { air: true } | null = null;
   private readonly minis = new Map<number, World>();
   private readonly judgePath: BallSample[] = [];
   /** Counters for tools (aerials started, flicks…); null in games. */
@@ -167,7 +174,7 @@ export class Bots {
       if (!car) continue;
       let m = this.mem.get(p.id);
       if (!m) {
-        m = { think: 0, role: 'attack', plan: 'ball', err: 0, errAt: 0, aim: 0, dodgeIn: -1, dodgePitch: 0, dodgeYaw: 0, jumpHold: 0, aerialAt: 0, aerialEnd: 0, kickoffWait: 0, kickoffRolled: false, demoTarget: -1, demoEnd: 0, pad: -1, lastJump: false, man: null, boostHold: false, kickFlip: false, carrySince: -1, planC: null, planAt: 0, planUntil: 0 };
+        m = { think: 0, role: 'attack', plan: 'ball', err: 0, errAt: 0, aim: 0, dodgeIn: -1, dodgePitch: 0, dodgeYaw: 0, jumpHold: 0, aerialAt: 0, aerialEnd: 0, kickoffWait: 0, kickoffRolled: false, demoTarget: -1, demoEnd: 0, pad: -1, lastJump: false, man: null, boostHold: false, kickFlip: false, carrySince: -1, planC: null, planAt: 0, planUntil: 0, planScore: -Infinity, airCheck: 0 };
         this.mem.set(p.id, m);
       }
       const c = car.demolished || w.phase === 'countdown' ? { ...NO_CONTROLS } : this.drive(car, m, L, dt);
@@ -990,7 +997,8 @@ export class Bots {
   /** SSL attack / save: dribble, aerial, catch, or an on-time ground / jump touch through the shot line. */
   private sslPlay(car: Car, m: Mem, L: Level, out: Controls): void {
     if (this.forced) {
-      // Inside a rollout: play the candidate being tested.
+      // Inside a rollout: play the candidate being tested (an aerial rollout does nothing once it lands).
+      if ('air' in this.forced) return;
       this.sslTouch(car, m, L, out, this.forced.sample, this.forced.cand, false, this.forced.opp);
       return;
     }
@@ -1002,9 +1010,16 @@ export class Bots {
     m.carrySince = -1;
     const hit = this.sslIntercept(car, L.blockZ);
     const hitT = hit ? hit.t + this.pathTime - this.now : 9;
-    // Aerial when it gets there clearly before anything on the ground can.
-    if (car.onGround && car.boost > 12 && car.up.z > 0.7 && !OFF.has('aerial')) {
-      const a = this.findAerial(car, L, hitT - 0.25);
+    // Aerial when it gets there clearly before anything on the ground can — and, simulated, it
+    // actually reaches the ball and leaves it better than the ground option (or than leaving it).
+    if (car.onGround && car.boost > 12 && car.up.z > 0.7 && !OFF.has('aerial') && this.now >= m.airCheck) {
+      m.airCheck = this.now + 0.1;
+      let a = this.findAerial(car, L, hitT - 0.25);
+      if (a && !OFF.has('airsim')) {
+        const sc = this.rolloutAerial(car, m, L, a);
+        const ground = hit && hitT < PLAN_T && m.planC && Math.abs(m.planAt - (hit.t + this.pathTime)) < 0.15 ? m.planScore : this.judgeBall(ball, car.team);
+        if (sc < ground + 150) a = null;
+      }
       if (a) {
         this.count('aerial');
         m.aerialAt = this.pathTime + a.t;
@@ -1015,6 +1030,9 @@ export class Bots {
         return;
       }
     }
+    // Goalkeeping: a shot is going in and no touch gets there first → get on the line where it
+    // crosses, facing out, and block it (jumping for a high one).
+    if (threat && !OFF.has('keeper') && (!hit || hitT > this.goalIn.t - 0.05) && this.keeper(car, m, out)) return;
     const opp = this.oppEta(car);
     // Catch it for a dribble: dropping, nobody near, away from our net.
     let sample = hit ?? this.landing();
@@ -1134,11 +1152,33 @@ export class Bots {
     m.planC = best;
     m.planAt = at;
     m.planUntil = this.now + 0.12;
+    m.planScore = bestScore;
     return best;
   }
 
   /** Play `cand` forward with only this car and the ball (opponents ignored): how good is the ball after our touch? */
   private rollout(car: Car, m: Mem, L: Level, hit: BallSample, cand: Cand, opp: number): number {
+    const r = this.simulate(car, m, L, { sample: hit, cand, opp }, hit.t + this.pathTime + 0.35, () => undefined);
+    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+    if (r.touchAt < 0) return -20000 + (cand.off === 0 ? 1 : 0);
+    return this.judgeBall(r.ball, car.team) - (r.touchAt - this.now) * 400;
+  }
+
+  /** Simulate an aerial at predicted sample `a` (jump, fly, dodge into it): the ball's value after, or very low if it misses. */
+  private rolloutAerial(car: Car, m: Mem, L: Level, a: BallSample): number {
+    const at = this.pathTime + a.t;
+    const r = this.simulate(car, m, L, { air: true }, at + 0.4, (mm) => {
+      mm.aerialAt = at;
+      mm.aerialEnd = at + 0.5;
+      mm.jumpHold = 0.2;
+    });
+    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+    if (r.touchAt < 0) return -20000;
+    return this.judgeBall(r.ball, car.team) - (r.touchAt - this.now) * 400;
+  }
+
+  /** Run this car alone with the ball in a one-car world until it touches the ball, a goal, or `end` (world time). */
+  private simulate(car: Car, m: Mem, L: Level, forced: NonNullable<Bots['forced']>, end: number, prep: (mm: Mem) => void): { touchAt: number; goal: number; ball: Ball } {
     const real = this.world;
     const mini = this.miniWorld(car);
     const mc = mini.cars[0]!;
@@ -1153,12 +1193,12 @@ export class Bots {
     mini.events.length = 0;
     (mini as unknown as { extraHitTick: Map<number, number> }).extraHitTick.clear();
     const mm: Mem = { ...m, plan: 'ball', role: 'attack', think: 99, aerialEnd: 0, man: null, boostHold: false, carrySince: -1, planC: null };
+    prep(mm);
     const cur = this.cur;
     const rng = this.rng;
     this.world = mini;
-    this.forced = { sample: hit, cand, opp };
+    this.forced = forced;
     const inputs = new Map<number, Controls>();
-    const end = hit.t + this.pathTime + 0.35;
     let touchAt = -1;
     let goal = -1;
     try {
@@ -1179,9 +1219,7 @@ export class Bots {
       this.cur = cur;
       this.rng = rng;
     }
-    if (goal >= 0) return goal === car.team ? 9000 : -9000;
-    if (touchAt < 0) return -20000 + (cand.off === 0 ? 1 : 0);
-    return this.judgeBall(b, car.team) - (touchAt - this.now) * 400;
+    return { touchAt, goal, ball: b };
   }
 
   /** Value of a free ball for `team`: a goal for / against, a shot on target, how far up the field it goes. */
@@ -1208,6 +1246,27 @@ export class Bots {
         v += 1200;
         break;
       }
+    // Possession: whoever gets to the ball first next. Handing it to an opponent (especially in
+    // our half) is bad; to a teammate is good.
+    if (!OFF.has('possess')) {
+      for (const p of path) {
+        if (p.t < 0.25 || p.pos.z > 320) continue;
+        if (p.t > 2.5) break;
+        let them = 9;
+        let us = 9;
+        for (const c of this.world.cars) {
+          if (c.demolished) continue;
+          const t = this.reachTime(c, p.pos, ball.radius + 40);
+          if (c.team === team) us = Math.min(us, t);
+          else them = Math.min(them, t);
+        }
+        if (Math.min(us, them) > p.t + 0.15) continue;
+        const ours = Math.sign(p.pos.y) === -toward;
+        if (them < us - 0.15) v -= ours ? 1400 + 1400 * Math.min(1, (Math.abs(p.pos.y) - 1000) / 3500) : 500;
+        else if (us < them - 0.15) v += ours ? 200 : 450;
+        break;
+      }
+    }
     // Sitting in front of our own net is bad.
     for (const p of path)
       if (Math.sign(p.pos.y) === -toward && Math.abs(p.pos.y) > ARENA.halfY - 1500 && Math.abs(p.pos.x) < 1600) {
@@ -1226,6 +1285,44 @@ export class Bots {
       this.minis.set(car.id, w);
     }
     return w;
+  }
+
+  /** Block a shot on the goal line (see sslPlay). False when we can't get there in time either. */
+  private keeper(car: Car, m: Mem, out: Controls): boolean {
+    const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
+    let cross: BallSample | null = null;
+    for (const p of this.path) if (Math.abs(p.pos.y) >= ARENA.halfY - 120 && Math.sign(p.pos.y) === Math.sign(ownY)) {
+      cross = p;
+      break;
+    }
+    if (!cross) return false;
+    const tLeft = cross.t + this.pathTime - this.now;
+    const spot = V().set(Math.max(-ARENA.goalHalfX + 60, Math.min(ARENA.goalHalfX - 60, cross.pos.x)), ownY * 0.985, 0);
+    if (this.reachTime(car, spot, 60) > tLeft + 0.25) return false;
+    this.count('keeper');
+    const d = Math.hypot(spot.x - car.pos.x, spot.y - car.pos.y);
+    if (d > 180) {
+      this.steerTo(car, spot, out, 1, true);
+      out.boost = d > 900 && this.facing(car, spot) > 0.9 && car.boost > 0 && !car.supersonic && car.onGround;
+      // Arrive and stop on the line rather than overrunning into the net.
+      const v = car.forwardSpeed;
+      if (d < 700 && v > d * 2.2) out.throttle = -1;
+    } else {
+      // On the spot: square up to the ball and hold.
+      this.steerTo(car, V().copy(cross.pos).setZ(0), out, 0.3, true);
+      if (Math.abs(car.forwardSpeed) > 200) out.throttle = -Math.sign(car.forwardSpeed);
+    }
+    // High shot: jump (double for the top corner) to meet it.
+    const j = cross.pos.z > 190 && car.onGround ? jumpFor(cross.pos.z) : null;
+    if (j && tLeft <= j.t + 1 / 60 && d < 300) {
+      m.jumpHold = 0.2;
+      if (j.double) {
+        m.dodgeIn = 0.01;
+        m.dodgePitch = m.dodgeYaw = 0;
+      }
+      out.jump = true;
+    }
+    return true;
   }
 
   /** Dribble: ball on the roof → keep it there heading for their net; flick when someone comes or we're in range. */
@@ -1295,7 +1392,12 @@ export class Bots {
     else if (t < 0.11 + dt * 1.5) {
       out.jump = true;
       out.pitch = 1;
-    } else if (t < 0.45) {
+    } else if (t < 0.11 + HF_CANCEL) {
+      // Let the back flip turn the car over (nose up)…
+      out.pitch = 1;
+      out.throttle = -1;
+    } else if (t < 0.11 + HF_CANCEL + HF_ROLL) {
+      // …then cancel it and roll the wheels back under: now facing the way we were going.
       out.pitch = -1;
       out.roll = man.side;
       out.throttle = 1;

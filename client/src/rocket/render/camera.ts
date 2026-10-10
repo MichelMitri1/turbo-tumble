@@ -61,6 +61,9 @@ export class ChaseCamera {
   private punchT = 0;
   private punchAmp = 0;
   private baseFov = 70;
+  /** 0..1: how fast the followed car is going (widens the FOV); `rush` is the supersonic part (speed lines). */
+  speedK = 0;
+  rush = 0;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 1200);
@@ -97,9 +100,11 @@ export class ChaseCamera {
   }
 
   private applyPunch(dt: number): void {
+    // Speed: the view widens as you pick up speed and kicks out further at supersonic.
+    const fov = this.baseFov * (1 + (this.motion ? 0.16 * this.speedK : 0));
     if (this.punchT <= 0) {
-      if (this.camera.fov !== this.baseFov) {
-        this.camera.fov = this.baseFov;
+      if (Math.abs(this.camera.fov - fov) > 1e-3) {
+        this.camera.fov = fov;
         this.camera.updateProjectionMatrix();
       }
       return;
@@ -107,9 +112,17 @@ export class ChaseCamera {
     this.punchT = Math.max(0, this.punchT - dt * 4);
     // Snap in, ease back out.
     const k = this.punchT * this.punchT;
-    this.camera.fov = this.baseFov * (1 - this.punchAmp * k);
+    this.camera.fov = fov * (1 - this.punchAmp * k);
     this.camera.updateProjectionMatrix();
     if (this.punchT === 0) this.punchAmp = 0;
+  }
+
+  /** Ease the speed effects towards the followed car's speed (uu/s); 0 when not following a car. */
+  private trackSpeed(speed: number, dt: number): void {
+    const want = speed > 1300 ? Math.min(1, (speed - 1300) / 900) : 0;
+    const rush = speed >= 2150 ? 1 : 0;
+    this.speedK += (want - this.speedK) * Math.min(1, dt * (want > this.speedK ? 2.5 : 1.5));
+    this.rush += (rush - this.rush) * Math.min(1, dt * (rush > this.rush ? 4 : 2.5));
   }
 
   private bcInit = false;
@@ -128,6 +141,7 @@ export class ChaseCamera {
     this.camera.position.copy(this.bcPos);
     this.camera.up.set(0, 1, 0);
     this.camera.lookAt(this.bcTarget);
+    this.trackSpeed(0, dt);
     this.applyShake(dt);
     this.applyPunch(dt);
   }
@@ -242,6 +256,7 @@ export class ChaseCamera {
     this.camera.up.copy(this.camUp);
     this.lookOffset.copy(camPos).add(look);
     this.camera.lookAt(this.lookOffset);
+    this.trackSpeed(car.vel.length(), dt);
     this.applyShake(dt);
     this.applyPunch(dt);
   }

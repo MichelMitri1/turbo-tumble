@@ -80,7 +80,7 @@ const save = () => {
 // ============================================================================ DOM
 
 /** Arena picker buttons (setup + online lobby). */
-const ARENA_SHORT: Record<ArenaId, string> = { dome: 'DOME', mannfield: 'MANNFIELD', urban: 'URBAN', badlands: 'BADLANDS', frosty: 'FROSTY', starbase: 'STARBASE' };
+const ARENA_SHORT: Record<ArenaId, string> = { dome: 'DOME', mannfield: 'MANNFIELD', urban: 'URBAN', badlands: 'BADLANDS', frosty: 'FROSTY', starbase: 'STARBASE', shores: 'SHORES', neon: 'NEON', temple: 'TEMPLE', crater: 'CRATER', harvest: 'HARVEST', aqua: 'AQUA' };
 const ARENA_SEG = [...ARENA_IDS.map((id) => `<button data-v="${id}" title="${ARENAS[id].name}">${ARENA_SHORT[id]}</button>`), '<button data-v="random">🎲 RANDOM</button>'].join('');
 
 const app = document.getElementById('game')!;
@@ -948,6 +948,11 @@ function replayFrame(s: Session, dt: number, jump: boolean): void {
   if (skip || r.done || s.world.phase !== 'goal') {
     // Offline the kickoff follows right away; online the server decides.
     if (!s.online && s.world.phase === 'goal') s.world.phaseTimer = Math.min(s.world.phaseTimer, skip ? 0.4 : 0.6);
+    // Online: the kickoff comes as soon as everyone has skipped.
+    if (s.online && skip) {
+      net?.skip();
+      hud.hint('Skipped — waiting for the others…');
+    }
     endReplay();
     return;
   }
@@ -1068,6 +1073,9 @@ async function startOnline(n: RocketNet, b: RbBegin): Promise<void> {
   setSession(s);
   hud.hint('');
   show('game');
+  // The opening countdown waits until everyone's arena is built.
+  n.ready();
+  if (s.world.phase === 'countdown' && s.world.phaseTimer >= 2.9) hud.big('<span class="cd small">GET READY</span>', 2.5);
 }
 
 function backToLobby(): void {

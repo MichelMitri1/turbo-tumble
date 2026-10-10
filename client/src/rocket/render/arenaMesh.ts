@@ -1084,7 +1084,7 @@ async function buildField(theme: ArenaTheme, group: THREE.Group, pause: Yield): 
   const turfMap = await turfTexture(theme, pause);
   await pause();
   const detailScale = T.kind === 'grass' ? 1 : T.kind === 'metal' ? 0.25 : 0.6;
-  const turfMat = std({ map: turfMap, normalMap: grass.normal, normalScale: new THREE.Vector2(T.normalScale, T.normalScale), roughness: T.roughness, metalness: T.kind === 'metal' ? 0.6 : 0 });
+  const turfMat = std({ map: turfMap, normalMap: grass.normal, normalScale: new THREE.Vector2(T.normalScale, T.normalScale), roughness: T.roughness, metalness: T.kind === 'metal' ? 0.3 : 0 });
   turfMat.normalMap!.repeat.set((2 * ARENA.halfX) / 130, (2 * HY) / 130);
   turfMat.onBeforeCompile = (sh) => {
     sh.uniforms.detailMap = { value: grass.detail };
@@ -1139,7 +1139,7 @@ async function buildField(theme: ArenaTheme, group: THREE.Group, pause: Yield): 
   const glassMap = glassTexture();
   for (const team of [0, 1] as const) {
     const col = glowOf(team);
-    const m = std({ color: new THREE.Color(Wl.tint).lerp(col, 0.1), map: glassMap, emissive: col, emissiveMap: hex, emissiveIntensity: Wl.emissive, alphaMap: fade, transparent: true, opacity: 1, roughness: 0.08, metalness: 0.3, envMapIntensity: 1.6, side: THREE.DoubleSide, depthWrite: false });
+    const m = std({ color: new THREE.Color(Wl.tint).lerp(col, 0.1), map: glassMap, emissive: col, emissiveMap: hex, emissiveIntensity: Wl.emissive, alphaMap: fade, transparent: true, opacity: 1, roughness: 0.38, metalness: 0.1, envMapIntensity: 0.55, side: THREE.DoubleSide, depthWrite: false });
     const mesh = new THREE.Mesh(glass[team]!.build(), m);
     mesh.renderOrder = 2;
     group.add(mesh);
@@ -1180,7 +1180,7 @@ async function buildField(theme: ArenaTheme, group: THREE.Group, pause: Yield): 
   const shells: THREE.MeshStandardMaterial[] = [];
   const netTex = netTexture();
   const shellMat = std({ color: 0x07080f, roughness: 0.92, metalness: 0, side: THREE.FrontSide });
-  const postMat = std({ color: 0xeef2fa, roughness: 0.22, metalness: 0.75, envMapIntensity: 1.3 });
+  const postMat = std({ color: 0xeef2fa, roughness: 0.45, metalness: 0.3, envMapIntensity: 0.6 });
   for (const team of [0, 1] as const) {
     const col = new THREE.Color(TEAM_COLORS[team].glow);
     const goal = new THREE.Group();

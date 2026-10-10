@@ -100,6 +100,12 @@ export class RocketNet {
   chat(g: number, i: number): void {
     this.room?.send(RbMsg.Chat, { g, i });
   }
+  ready(): void {
+    this.room?.send(RbMsg.Ready);
+  }
+  skip(): void {
+    this.room?.send(RbMsg.Skip);
+  }
   start(): void {
     this.room?.send(RbMsg.Start);
   }

@@ -22,6 +22,8 @@ export const RbMsg = {
   Events: 'rb:ev', // server → client: WorldEvent[]
   Stats: 'rb:stats', // server → client: Array<[id, Stats]>
   Error: 'rb:err',
+  Ready: 'rb:ready', // client → server: my arena is built (the opening countdown waits for everyone)
+  Skip: 'rb:skip', // client → server: I skipped the goal replay (everyone skipped → kickoff now)
 } as const;
 
 export interface RbConfig {

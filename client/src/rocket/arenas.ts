@@ -3,7 +3,7 @@
  * only the look, sky, lighting, surroundings and weather differ. Shared by the
  * browser and the server (no three.js here).
  */
-export const ARENA_IDS = ['dome', 'mannfield', 'urban', 'badlands', 'frosty', 'starbase'] as const;
+export const ARENA_IDS = ['dome', 'mannfield', 'urban', 'badlands', 'frosty', 'starbase', 'shores', 'neon', 'temple', 'crater', 'harvest', 'aqua'] as const;
 export type ArenaId = (typeof ARENA_IDS)[number];
 
 export const ARENAS: Record<ArenaId, { name: string; desc: string }> = {
@@ -13,6 +13,12 @@ export const ARENAS: Record<ArenaId, { name: string; desc: string }> = {
   badlands: { name: 'Badlands', desc: 'Desert · dirt floor, mesas and tyre stacks' },
   frosty: { name: 'Frosty Mannfield', desc: 'Snow · falling snow, blue lines, cold floodlights' },
   starbase: { name: 'Starbase ARC', desc: 'Space · metal deck, neon walls, a planet overhead' },
+  shores: { name: 'Sunset Shores', desc: 'Beach · sand pitch, palm-lined stands, golden hour' },
+  neon: { name: 'Neon Grid', desc: 'Synthwave · dark grid floor, magenta sun, neon skyline' },
+  temple: { name: 'Jungle Temple', desc: 'Ruins · mossy grass, stone cliffs, drifting pollen' },
+  crater: { name: 'Ember Crater', desc: 'Volcano · scorched ground, lava glow, falling ash' },
+  harvest: { name: 'Harvest Night', desc: 'Farm · floodlit country pitch under the stars' },
+  aqua: { name: 'Aqua Dome', desc: 'Underwater · glass dome on the sea floor, drifting bubbles' },
 };
 
 export const isArenaId = (v: unknown): v is ArenaId => typeof v === 'string' && (ARENA_IDS as readonly string[]).includes(v);

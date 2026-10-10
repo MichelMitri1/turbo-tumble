@@ -872,6 +872,9 @@ kbd {
 .rk-big.go .cd {
   color: #ffd04a;
 }
+.rk-big .cd.small {
+  font-size: 64px;
+}
 /* Countdown numbers slam in and shrink away; GO! bursts outward. */
 .rk-big.count .cd {
   display: block;

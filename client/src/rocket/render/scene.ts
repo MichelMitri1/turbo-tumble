@@ -4,6 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { SpeedLines } from './speedlines';
 import type { World, WorldEvent } from '../sim/world';
 import { ARENA } from '../sim/arena';
 import { buildArena, disposeGroup, idle, toThree, CACHED_TEXTURES, S, type ArenaView } from './arenaMesh';
@@ -40,6 +41,9 @@ interface CarTrack {
   sliding: boolean;
 }
 
+/** How much of each theme's reflections / bloom is used (1 = the old glossy look). */
+const MATTE = 0.55;
+
 export class RocketRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -69,6 +73,7 @@ export class RocketRenderer {
   /** The theme whose lighting is applied (also while its arena is still building). */
   private theme: ArenaTheme = THEMES.dome;
   onFx: ((e: FxEvent) => void) | null = null;
+  private readonly speedLines = new SpeedLines();
 
   constructor(private readonly host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -78,6 +83,7 @@ export class RocketRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     host.appendChild(this.renderer.domElement);
+    this.scene.add(this.speedLines.group);
     this.cam = new ChaseCamera(innerWidth / innerHeight);
 
     // Lighting: an overhead "sun" casting straight-down shadows (the classic ball shadow),
@@ -216,10 +222,11 @@ export class RocketRenderer {
       this.fog.far = 6000;
     }
     this.renderer.toneMappingExposure = L.exposure;
-    this.scene.environmentIntensity = L.env;
+    // Matte over glossy: reflections and bloom are kept low so the arena doesn't look wet.
+    this.scene.environmentIntensity = L.env * MATTE;
     if (this.bloom) {
-      this.bloom.strength = L.bloom;
-      this.bloom.threshold = L.bloomThreshold ?? 1.05;
+      this.bloom.strength = L.bloom * MATTE;
+      this.bloom.threshold = Math.max(1.25, L.bloomThreshold ?? 1.25);
     }
   }
 
@@ -242,7 +249,7 @@ export class RocketRenderer {
       const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: q === 'high' ? 4 : 0 });
       this.composer = new EffectComposer(this.renderer, rt);
       this.composer.addPass(new RenderPass(this.scene, this.cam.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), this.theme.light.bloom, 0.5, this.theme.light.bloomThreshold ?? 1.05);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), this.theme.light.bloom * MATTE, 0.4, Math.max(1.25, this.theme.light.bloomThreshold ?? 1.25));
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
     }
@@ -416,6 +423,7 @@ export class RocketRenderer {
       const c = car ? toThree(car.pos.x, car.pos.y, car.pos.z) : toThree(this.ballPos.x, this.ballPos.y, this.ballPos.z);
       this.cam.orbit(c, this.orbitT, car ? 12 : 30, car ? 6 : 10);
     }
+    this.speedLines.update(dt, this.cam.camera, this.cam.motion && !fixedCam && car && !car.demolished ? this.cam.rush : 0);
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam.camera);
   }
