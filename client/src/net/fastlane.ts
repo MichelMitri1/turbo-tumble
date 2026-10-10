@@ -25,6 +25,8 @@ function frame(kind: 0 | 1, seq: number, type: string, body: Uint8Array): Uint8A
 }
 
 /** Off with ?tcp (for comparing). */
+const MAX_LANE_BYTES = 8 * 1024;
+const PROBE = '~p';
 const DISABLED = typeof location !== 'undefined' && new URLSearchParams(location.search).has('tcp');
 
 export class FastLane {
@@ -35,16 +37,32 @@ export class FastLane {
   private latestOnly = new Set<string>();
   private seqOut = new Map<string, number>();
   private closed = false;
+  /** Lane messages received since the last report; the server confirmed ours until (ms). */
+  private rx = 0;
+  private healthyUntil = 0;
 
   constructor(private room: Room) {
+    // Health (see the server): report what we got; use the lane only while the server confirms it gets ours.
+    room.onMessage('rtc:rx', (m: { n: number }) => {
+      if (m?.n > 0) this.healthyUntil = performance.now() + 2500;
+      if (this.dc?.readyState === 'open') {
+        this.room.send('rtc:rx', { n: this.rx });
+        this.rx = 0;
+        try {
+          this.dc.send(frame(1, 0, PROBE, new Uint8Array(0)) as Uint8Array<ArrayBuffer>);
+        } catch {
+          /* closing */
+        }
+      }
+    });
     room.onMessage('rtc:answer', (m: { sdp: string; type: RTCSdpType }) => void this.pc?.setRemoteDescription({ sdp: m.sdp, type: m.type }).catch(() => undefined));
     room.onMessage('rtc:ice', (m: { c: string; mid: string }) => void this.pc?.addIceCandidate({ candidate: m.c, sdpMid: m.mid }).catch(() => undefined));
     if (!DISABLED && typeof RTCPeerConnection !== 'undefined') void this.connect();
   }
 
-  /** Is the fast path up? */
+  /** Is the fast path up (open, and the server confirms it receives our messages)? */
   get open(): boolean {
-    return this.dc?.readyState === 'open';
+    return this.dc?.readyState === 'open' && performance.now() < this.healthyUntil;
   }
 
   private async connect(): Promise<void> {
@@ -83,6 +101,7 @@ export class FastLane {
     const seq = new DataView(data).getUint32(1);
     const tl = buf[5]!;
     const type = dec.decode(buf.subarray(6, 6 + tl));
+    this.rx++;
     const h = this.handlers.get(type);
     if (!h) return;
     if (this.latestOnly.has(type)) {
@@ -93,26 +112,25 @@ export class FastLane {
     h(buf[0] === 0 ? JSON.parse(dec.decode(body)) : body);
   }
 
-  send(type: MsgType, payload: unknown): void {
-    if (this.open && this.dc!.bufferedAmount < 64 * 1024) {
-      const k = key(type);
-      const seq = (this.seqOut.get(k) ?? 0) + 1;
-      this.seqOut.set(k, seq);
-      this.dc!.send(frame(0, seq, k, enc.encode(JSON.stringify(payload))) as Uint8Array<ArrayBuffer>);
-      return;
+  private lane(kind: 0 | 1, type: MsgType, body: Uint8Array): boolean {
+    if (!this.open || this.dc!.bufferedAmount >= 64 * 1024 || body.length > MAX_LANE_BYTES) return false;
+    const k = key(type);
+    const seq = (this.seqOut.get(k) ?? 0) + 1;
+    this.seqOut.set(k, seq);
+    try {
+      this.dc!.send(frame(kind, seq, k, body) as Uint8Array<ArrayBuffer>);
+      return true;
+    } catch {
+      return false;
     }
-    this.room.send(type, payload);
+  }
+
+  send(type: MsgType, payload: unknown): void {
+    if (!this.lane(0, type, enc.encode(JSON.stringify(payload)))) this.room.send(type, payload);
   }
 
   sendBytes(type: MsgType, bytes: Uint8Array): void {
-    if (this.open && this.dc!.bufferedAmount < 64 * 1024) {
-      const k = key(type);
-      const seq = (this.seqOut.get(k) ?? 0) + 1;
-      this.seqOut.set(k, seq);
-      this.dc!.send(frame(1, seq, k, bytes) as Uint8Array<ArrayBuffer>);
-      return;
-    }
-    this.room.sendBytes(type, bytes);
+    if (!this.lane(1, type, bytes)) this.room.sendBytes(type, bytes);
   }
 
   close(): void {

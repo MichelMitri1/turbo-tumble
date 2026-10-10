@@ -37,7 +37,7 @@ const GAMES: Game[] = [
 ];
 
 for (const g of GAMES) {
-  const sdk = new Client(`ws://${host}`);
+  const sdk = new Client(host.includes("://") ? host : `ws://${host}`);
   let room: Room;
   try {
     room = await sdk.create(g.room, g.join);

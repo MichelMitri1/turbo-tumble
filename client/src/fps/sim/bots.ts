@@ -23,6 +23,8 @@ interface Brain {
   path: number[];
   pathGoal: number;
   repath: number;
+  /** Earliest re-plan for a moved goal (A* every tick for a chased target is the server's biggest cost). */
+  pathCd: number;
   goal: { x: number; y: number; z: number } | null;
   goalWhy: string;
   strafe: number;
@@ -53,7 +55,7 @@ export class BotBrain {
       if (!s.bot) continue;
       let b = this.brains.get(s.id);
       if (!b) {
-        b = { yaw: s.m.yaw, pitch: 0, ex: 0, ey: 0, target: '', seenFor: 0, lastSeen: null, path: [], pathGoal: -1, repath: 0, goal: null, goalWhy: '', strafe: 1, strafeT: 0, crouchT: 0, stuckT: 0, lastPos: [s.m.x, s.m.z], think: Math.random() * 0.2, nadeCd: 5 + Math.random() * 10, fireHold: 0, jump: false };
+        b = { yaw: s.m.yaw, pitch: 0, ex: 0, ey: 0, target: '', seenFor: 0, lastSeen: null, path: [], pathGoal: -1, repath: 0, pathCd: 0, goal: null, goalWhy: '', strafe: 1, strafeT: 0, crouchT: 0, stuckT: 0, lastPos: [s.m.x, s.m.z], think: Math.random() * 0.2, nadeCd: 5 + Math.random() * 10, fireHold: 0, jump: false };
         this.brains.set(s.id, b);
       }
       if (!s.alive) {
@@ -203,9 +205,11 @@ export class BotBrain {
     if (!moveGoal) moveGoal = this.objective(s, b);
     if (moveGoal) {
       b.repath -= dt;
-      const goalNode = this.nav.nearest(moveGoal.x, moveGoal.y, moveGoal.z);
-      if (b.repath <= 0 || goalNode !== b.pathGoal || !b.path.length) {
+      b.pathCd -= dt;
+      const goalNode = b.pathCd <= 0 || b.repath <= 0 ? this.nav.nearest(moveGoal.x, moveGoal.y, moveGoal.z) : b.pathGoal;
+      if (b.repath <= 0 || (b.pathCd <= 0 && (goalNode !== b.pathGoal || !b.path.length))) {
         b.repath = 1.2 + Math.random();
+        b.pathCd = 0.3;
         b.pathGoal = goalNode;
         b.path = this.nav.path(this.nav.nearest(s.m.x, s.m.y, s.m.z), goalNode);
       }

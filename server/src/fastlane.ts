@@ -17,6 +17,8 @@ import ndc, { type DataChannel, type PeerConnection } from 'node-datachannel';
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 export const FASTLANE_DISABLED = /^(1|true|yes)$/i.test(process.env.NO_FASTLANE ?? '');
+/** Every player's lane shares this one UDP port (forward it on your router to host for friends outside). */
+export const FASTLANE_PORT = Number(process.env.FASTLANE_PORT ?? 2568);
 
 type Handler = (client: Client, payload: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
 type MsgType = string | number;
@@ -28,7 +30,15 @@ interface Peer {
   dc: DataChannel | null;
   seqOut: Map<string, number>;
   seqIn: Map<string, number>;
+  /** Lane messages received since the last report to the client. */
+  rx: number;
+  /** The client confirmed it is receiving our lane messages, until (ms). */
+  healthyUntil: number;
 }
+
+/** Bigger messages go over the WebSocket (a lost fragment would lose the whole message). */
+const MAX_LANE_BYTES = 8 * 1024;
+const PROBE = '~p';
 
 export function frame(kind: 0 | 1, seq: number, type: string, body: Uint8Array): Uint8Array {
   const t = enc.encode(type);
@@ -53,7 +63,25 @@ export class FastLane {
   /** Incoming types where only the newest matters (out-of-date ones are dropped). */
   private latestOnly = new Set<string>();
 
+  private timer: ReturnType<typeof setInterval>;
+
   constructor(private room: Room) {
+    // Health: each side reports (over the WebSocket) how many lane messages it got; the lane is
+    // only used while the other side keeps confirming. A path that opens but drops everything
+    // (some hosts / NATs) falls back to the WebSocket within a couple of seconds.
+    room.onMessage('rtc:rx', (c, m: { n?: unknown }) => {
+      const p = this.peers.get(c.sessionId);
+      if (p && typeof m?.n === 'number' && m.n > 0) p.healthyUntil = Date.now() + 2500;
+    });
+    this.timer = setInterval(() => {
+      for (const c of this.room.clients) {
+        const p = this.peers.get(c.sessionId);
+        if (!p?.dc?.isOpen()) continue;
+        c.send('rtc:rx', { n: p.rx });
+        p.rx = 0;
+        this.raw(p, frame(1, 0, PROBE, new Uint8Array(0)));
+      }
+    }, 500);
     room.onMessage('rtc:offer', (c, m: { sdp?: unknown; type?: unknown }) => this.offer(c, m));
     room.onMessage('rtc:ice', (c, m: { c?: unknown; mid?: unknown }) => {
       const p = this.peers.get(c.sessionId);
@@ -75,30 +103,38 @@ export class FastLane {
   }
 
   isOpen(client: Client): boolean {
-    return !!this.peers.get(client.sessionId)?.dc?.isOpen();
+    const p = this.peers.get(client.sessionId);
+    return !!p && this.usable(p);
   }
 
-  /** JSON payload: the lane if it's open, else the WebSocket. */
-  send(client: Client, type: MsgType, payload: unknown): void {
-    const p = this.peers.get(client.sessionId);
-    if (p?.dc?.isOpen() && p.dc.bufferedAmount() < 64 * 1024) {
-      const k = key(type);
-      const seq = (p.seqOut.get(k) ?? 0) + 1;
-      p.seqOut.set(k, seq);
-      if (p.dc.sendMessageBinary(frame(0, seq, k, enc.encode(JSON.stringify(payload))))) return;
+  private usable(p: Peer): boolean {
+    return !!p.dc?.isOpen() && Date.now() < p.healthyUntil && p.dc.bufferedAmount() < 64 * 1024;
+  }
+
+  private raw(p: Peer, buf: Uint8Array): boolean {
+    try {
+      return !!p.dc?.sendMessageBinary(buf);
+    } catch {
+      return false;
     }
-    client.send(type, payload);
+  }
+
+  private lane(client: Client, kind: 0 | 1, type: MsgType, body: Uint8Array): boolean {
+    const p = this.peers.get(client.sessionId);
+    if (!p || !this.usable(p) || body.length > MAX_LANE_BYTES) return false;
+    const k = key(type);
+    const seq = (p.seqOut.get(k) ?? 0) + 1;
+    p.seqOut.set(k, seq);
+    return this.raw(p, frame(kind, seq, k, body));
+  }
+
+  /** JSON payload: the lane if it's healthy (and the message small), else the WebSocket. */
+  send(client: Client, type: MsgType, payload: unknown): void {
+    if (!this.lane(client, 0, type, enc.encode(JSON.stringify(payload)))) client.send(type, payload);
   }
 
   sendBytes(client: Client, type: MsgType, bytes: Uint8Array): void {
-    const p = this.peers.get(client.sessionId);
-    if (p?.dc?.isOpen() && p.dc.bufferedAmount() < 64 * 1024) {
-      const k = key(type);
-      const seq = (p.seqOut.get(k) ?? 0) + 1;
-      p.seqOut.set(k, seq);
-      if (p.dc.sendMessageBinary(frame(1, seq, k, bytes))) return;
-    }
-    client.sendBytes(type, bytes);
+    if (!this.lane(client, 1, type, bytes)) client.sendBytes(type, bytes);
   }
 
   broadcast(type: MsgType, payload: unknown, except?: Client): void {
@@ -110,12 +146,12 @@ export class FastLane {
     this.drop(c.sessionId);
     let pc: PeerConnection;
     try {
-      pc = new ndc.PeerConnection(`lane-${c.sessionId}`, { iceServers: ['stun:stun.l.google.com:19302'] });
+      pc = new ndc.PeerConnection(`lane-${c.sessionId}`, { iceServers: ['stun:stun.l.google.com:19302'], enableIceUdpMux: true, portRangeBegin: FASTLANE_PORT, portRangeEnd: FASTLANE_PORT });
     } catch (e) {
       console.warn('[fastlane] unavailable:', e);
       return;
     }
-    const peer: Peer = { pc, dc: null, seqOut: new Map(), seqIn: new Map() };
+    const peer: Peer = { pc, dc: null, seqOut: new Map(), seqIn: new Map(), rx: 0, healthyUntil: 0 };
     this.peers.set(c.sessionId, peer);
     pc.onLocalDescription((sdp, type) => c.send('rtc:answer', { sdp, type }));
     pc.onLocalCandidate((cand, mid) => c.send('rtc:ice', { c: cand, mid }));
@@ -141,6 +177,7 @@ export class FastLane {
     const buf = msg instanceof ArrayBuffer ? new Uint8Array(msg) : new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
     const f = unframe(buf);
     if (!f) return;
+    peer.rx++;
     const h = this.handlers.get(f.type);
     if (!h) return;
     if (this.latestOnly.has(f.type)) {
@@ -170,6 +207,7 @@ export class FastLane {
   }
 
   dispose(): void {
+    clearInterval(this.timer);
     for (const id of [...this.peers.keys()]) this.drop(id);
   }
 }

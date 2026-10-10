@@ -357,8 +357,10 @@ export class OnlineSession implements Session {
     void swapT;
     me.grenades = nades!;
     me.tacticals = s.me[14] ?? me.tacticals;
-    me.blindT = Math.max(me.blindT, g.time + (s.me[15] ?? 0));
-    me.stunT = Math.max(me.stunT, g.time + (s.me[16] ?? 0));
+    // On the snapshot's clock (the mirror's time runs on from it): `g.time` here may still be the
+    // previous frame's extrapolation, and a late snapshot would leave a phantom white-out.
+    me.blindT = s.t + (s.me[15] ?? 0);
+    me.stunT = s.t + (s.me[16] ?? 0);
     me.streak = streak!;
     me.kills = kills!;
     me.deaths = deaths!;

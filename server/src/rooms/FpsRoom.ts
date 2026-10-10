@@ -49,6 +49,7 @@ export class FpsRoom extends Room {
   private brains: BotBrain | null = null;
   private ids: string[] = [];
   private acc = 0;
+  private botTick = 0;
   private snapAcc = 0;
   private probe = new NetProbe('zerohour');
   private lane!: FastLane;
@@ -263,8 +264,12 @@ export class FpsRoom extends Room {
     const events: GameEvent[] = [];
     while (this.acc >= TICK) {
       this.acc -= TICK;
-      this.botInputs.clear();
-      this.brains?.update(TICK, this.botInputs);
+      // Bots think at 30 Hz on internet servers (they're most of a match's CPU, and small
+      // hosts like Render's free tier fall behind at 60); their inputs hold for the odd ticks.
+      if (LAN_MODE || (this.botTick++ & 1) === 0) {
+        this.botInputs.clear();
+        this.brains?.update(LAN_MODE ? TICK : TICK * 2, this.botInputs);
+      }
       g.step(this.botInputs);
       for (const e of g.events.splice(0)) if (SERVER_EVENTS.has(e.k)) events.push(e);
     }
