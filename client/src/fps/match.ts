@@ -263,6 +263,8 @@ export class Match {
   over = false;
   onOver: ((g: Game) => void) | null = null;
   onPause: (() => void) | null = null;
+  /** A local player asked for the class picker: their seat, HUD box, soldier and input device. */
+  onClassMenu: ((seat: number, box: HTMLElement, me: Soldier, input: FpsInput) => void) | null = null;
 
   constructor(
     private readonly host: HTMLElement,
@@ -492,6 +494,7 @@ export class Match {
       if (f.slot >= 0) v.latch.slot = f.slot;
       if (f.swap) v.latch.slot = -2;
       if (f.menu && !this.over) this.onPause?.();
+      if (f.classMenu && !this.over) this.onClassMenu?.(this.views.indexOf(v), v.box, me, v.input);
       // Stunned: the aim drags.
       if (g.time < me.stunT) {
         f.dyaw *= 0.35;

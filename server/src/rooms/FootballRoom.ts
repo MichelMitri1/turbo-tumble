@@ -3,6 +3,7 @@ import { MatchSim, NO_INPUT, type Input, type MatchEvent } from '../../../client
 import { CLUB } from '../../../client/src/football/sim/data';
 import { writeFrame } from '../../../client/src/football/sim/snapshot';
 import { FB_MAX_PER_TEAM, FB_VERSION, FbMsg, INPUT_BITS, type FbBegin, type FbConfig, type FbInput, type FbJoin, type FbLobby } from '../../../client/src/football/net/protocol';
+import { FastLane } from '../fastlane';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
 
@@ -33,6 +34,8 @@ export class FootballRoom extends Room {
   private queues = new Map<string, Input[]>();
   private last = new Map<string, Input>();
   private acc = 0;
+  private lane!: FastLane;
+  private lastSeq = new Map<string, number>();
   private snapT = 0;
   private statsT = 0;
   private overT = 0;
@@ -63,21 +66,31 @@ export class FootballRoom extends Room {
       if (client.sessionId !== this.hostId || this.phase !== 'lobby') return;
       this.startMatch();
     });
-    this.onMessage(FbMsg.Input, (client, m: FbInput | undefined) => {
-      if (!this.sim || !m || typeof m.x !== 'number' || typeof m.z !== 'number' || typeof m.b !== 'number') return;
+    this.lane = new FastLane(this);
+    this.lane.on(FbMsg.Input, (client, m: (FbInput & { r?: unknown }) | undefined) => {
+      if (!this.sim || !m) return;
       const f = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
-      const b = m.b | 0;
-      const inp: Input = { mx: f(m.x), mz: f(m.z), sprint: !!(b & INPUT_BITS.sprint), pass: !!(b & INPUT_BITS.pass), shoot: !!(b & INPUT_BITS.shoot), through: !!(b & INPUT_BITS.through), lob: !!(b & INPUT_BITS.lob), finesse: !!(b & INPUT_BITS.finesse), chip: !!(b & INPUT_BITS.chip), switch: !!(b & INPUT_BITS.switch), skill: !!(b & INPUT_BITS.skill) };
+      const toInput = (x: number, z: number, b: number): Input => ({ mx: f(x), mz: f(z), sprint: !!(b & INPUT_BITS.sprint), pass: !!(b & INPUT_BITS.pass), shoot: !!(b & INPUT_BITS.shoot), through: !!(b & INPUT_BITS.through), lob: !!(b & INPUT_BITS.lob), finesse: !!(b & INPUT_BITS.finesse), chip: !!(b & INPUT_BITS.chip), switch: !!(b & INPUT_BITS.switch), skill: !!(b & INPUT_BITS.skill) });
       let q = this.queues.get(client.sessionId);
       if (!q) this.queues.set(client.sessionId, (q = []));
-      q.push(inp);
-      if (q.length > 6) q.splice(0, q.length - 3);
+      if (Array.isArray(m.r)) {
+        // [seq, x, z, bits] × the last few: take each seq once.
+        let last = this.lastSeq.get(client.sessionId) ?? 0;
+        for (const e of m.r.slice(-8)) {
+          if (!Array.isArray(e) || e.length < 4 || !(Number(e[0]) > last)) continue;
+          last = Number(e[0]);
+          q.push(toInput(Number(e[1]), Number(e[2]), Number(e[3]) | 0));
+        }
+        this.lastSeq.set(client.sessionId, last);
+      } else if (typeof m.x === 'number' && typeof m.z === 'number' && typeof m.b === 'number') q.push(toInput(m.x, m.z, m.b | 0));
+      // Every queued input is a tick of latency: keep it short.
+      if (q.length > 2) q.splice(0, q.length - 1);
     });
     this.onMessage(FbMsg.Hello, (client) => {
       client.send(FbMsg.Lobby, this.lobby());
       if (this.begin && this.phase === 'playing') client.send(FbMsg.Begin, this.begin);
     });
-    this.onMessage(FbMsg.Ping, (client, m: { t?: unknown } | undefined) => client.send(FbMsg.Ping, { t: typeof m?.t === 'number' ? m.t : 0 }));
+    this.lane.on(FbMsg.Ping, (client, m: { t?: unknown } | undefined) => this.lane.send(client, FbMsg.Ping, { t: typeof m?.t === 'number' ? m.t : 0 }));
     this.setSimulationInterval((ms) => this.update(ms), 1000 / 60);
   }
 
@@ -106,6 +119,8 @@ export class FootballRoom extends Room {
   }
 
   override onLeave(client: Client): void {
+    this.lane.drop(client.sessionId);
+    this.lastSeq.delete(client.sessionId);
     this.members.delete(client.sessionId);
     this.sim?.removeHuman(client.sessionId);
     if (this.hostId === client.sessionId) this.hostId = this.members.keys().next().value ?? '';
@@ -113,6 +128,7 @@ export class FootballRoom extends Room {
   }
 
   override onDispose(): void {
+    this.lane.dispose();
     releaseRoomCode(this.roomId);
   }
 
@@ -167,10 +183,11 @@ export class FootballRoom extends Room {
     if (events.length) this.broadcast(FbMsg.Events, events);
     this.snapT -= ms / 1000;
     if (this.snapT <= 0) {
-      this.snapT = 1 / 30;
+      this.snapT += LAN_MODE ? 1 / 60 : 1 / 30;
+      if (this.snapT < 0) this.snapT = 0;
       this.frame = writeFrame(sim, this.frame);
       const bytes = new Uint8Array(this.frame.buffer.slice(0));
-      for (const c of this.clients) c.sendBytes(FbMsg.Snap, bytes);
+      for (const c of this.clients) this.lane.sendBytes(c, FbMsg.Snap, bytes);
     }
     this.statsT -= ms / 1000;
     if (this.statsT <= 0 || events.some((e) => e.k === 'goal' || e.k === 'full' || e.k === 'half')) {

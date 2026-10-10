@@ -123,9 +123,9 @@ export const GAMES: GameEntry[] = [
   {
     id: 'velora',
     title: 'Velora: After Hours',
-    tagline: 'An original open city: four rides, street races, courier jobs and police pursuits through a procedural coastal metropolis.',
-    href: '/velora/index.html',
-    tags: ['Open world', '3D driving', '3 activities', 'Keyboard + mouse'],
-    art: { emoji: '🌆', from: '#143e49', to: '#d9a45c' },
+    tagline: 'Open-world crime sandbox: steal any car, shop for guns, rob stores, outrun 5-star police chases across Velora City.',
+    href: '/velora/',
+    tags: ['Open world', 'Cars · Guns · Cops', 'Third-person', 'Controller'],
+    art: { image: '/assets/hub/velora.webp', emoji: '🌆', from: '#143e49', to: '#d9a45c' },
   },
 ];

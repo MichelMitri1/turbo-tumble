@@ -366,7 +366,7 @@ export class Hud {
       if (key !== this.deadKey) {
         this.deadKey = key;
         this.last['#h-dead-t'] = '';
-        dead.innerHTML = `<div class="zh-dead__card"><small>KILLED BY</small><b>${k && k !== me ? esc(k.name) : 'YOURSELF'}</b>${k && k !== me ? `<span>${k.hp > 0 ? Math.ceil(k.hp) : 0} HP left · ${k.weapons[k.cur].def.name}</span>` : ''}</div><div class="zh-dead__spawn">Respawning in <b id="h-dead-t"></b></div><div class="zh-dead__tip">${opts.pad ? 'Press OPTIONS to change class' : 'Press ESC to change class'}</div>`;
+        dead.innerHTML = `<div class="zh-dead__card"><small>KILLED BY</small><b>${k && k !== me ? esc(k.name) : 'YOURSELF'}</b>${k && k !== me ? `<span>${k.hp > 0 ? Math.ceil(k.hp) : 0} HP left · ${k.weapons[k.cur].def.name}</span>` : ''}</div><div class="zh-dead__spawn">Respawning in <b id="h-dead-t"></b></div><div class="zh-dead__tip">${opts.pad ? 'Press SHARE to change class' : 'Press B to change class'}</div>`;
       }
       this.set('#h-dead-t', String(Math.max(0, Math.ceil(me.respawnIn))));
     }

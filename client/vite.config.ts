@@ -2,17 +2,6 @@ import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
-  plugins: [{
-    name: 'velora-standalone-entry',
-    configureServer(server) {
-      // Public HTML stays a standalone file; resolve its directory URL before
-      // Vite's SPA fallback sends visitors back to the arcade hub.
-      server.middlewares.use((req, _res, next) => {
-        if (req.url) req.url = req.url.replace(/^\/velora\/?(?=\?|$)/, '/velora/index.html');
-        next();
-      });
-    },
-  }],
   resolve: {
     alias: { '@shared': fileURLToPath(new URL('../shared/src', import.meta.url)) },
   },
@@ -38,6 +27,7 @@ export default defineConfig({
         'cage-kings': fileURLToPath(new URL('./cage-kings/index.html', import.meta.url)),
         starfall: fileURLToPath(new URL('./starfall/index.html', import.meta.url)),
         'starfall-3d': fileURLToPath(new URL('./starfall-3d/index.html', import.meta.url)),
+        velora: fileURLToPath(new URL('./velora/index.html', import.meta.url)),
       },
     },
   },

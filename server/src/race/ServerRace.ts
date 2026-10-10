@@ -28,8 +28,9 @@ interface ClientInputs {
 }
 
 /** Inputs queued beyond this are stale (client clock ran ahead / burst): trim to TRIM_TO. */
-const MAX_QUEUE = 8;
-const TRIM_TO = 3;
+/** Queued inputs are latency (a tick each): keep the buffer short. */
+const MAX_QUEUE = 3;
+const TRIM_TO = 1;
 /** Hold the last input this many ticks when a client goes quiet, then coast. */
 const HOLD_TICKS = 12;
 const COAST: PlayerInput = createEmptyInput();
@@ -97,6 +98,11 @@ export class ServerRace {
 
   /** Queue an input message: [seq, packed seat 0, packed seat 1, …]. */
   receiveInput(sessionId: string, msg: unknown): void {
+    // Newer clients send the last few frames at once (redundancy on the unreliable lane).
+    if (Array.isArray(msg) && Array.isArray(msg[0])) {
+      for (const f of msg.slice(-8)) this.receiveInput(sessionId, f);
+      return;
+    }
     const c = this.clients.get(sessionId);
     if (!c || !c.connected || !Array.isArray(msg) || msg.length < 1 + c.seats.length) return;
     const seq = Number(msg[0]);

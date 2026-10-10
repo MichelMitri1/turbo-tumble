@@ -44,6 +44,8 @@ export interface NetStats {
   /** How far in the past other karts are drawn. */
   interpMs: number;
   status: string;
+  /** Snapshots / inputs on the fast (UDP-like) lane. */
+  lane?: boolean;
 }
 
 /**
@@ -72,6 +74,8 @@ export class NetRaceSync {
   private snapGap = 2;
   private jitter = 0.5;
   private interpDelay = 6;
+  /** Recent input messages (resent together for redundancy). */
+  private recent: number[][] = [];
   private readonly wasPredicted: boolean[];
   private readonly offs: Array<() => void> = [];
   private readonly entityPool = new Map<number, ItemEntity>();
@@ -96,7 +100,7 @@ export class NetRaceSync {
     this.seatSet = new Set(this.seats);
     this.wasPredicted = race.racers.map(() => false);
     this.offs.push(
-      net.on<Uint8Array>(Msg.Snapshot, (bytes) => this.onSnapshot(bytes)),
+      net.on<Uint8Array>(Msg.Snapshot, (bytes) => this.onSnapshot(bytes), { fast: true, latestOnly: true }),
       net.on<EventsMessage>(Msg.Events, (m) => this.events.push(...m.e)),
       net.on<RaceEndMessage>(Msg.RaceEnd, (m) => {
         if (m.raceId === start.raceId) this.end = m;
@@ -130,7 +134,11 @@ export class NetRaceSync {
       frame.resets.push(unpackInput(packed, q));
       frame.inputs.push(q);
     });
-    this.net.send(Msg.Input, msg);
+    // The last few frames ride along every time (the unreliable lane may drop one; the server
+    // takes each seq once).
+    this.recent.push(msg);
+    if (this.recent.length > 5) this.recent.shift();
+    this.net.send(Msg.Input, this.recent, true);
     this.history.push(frame);
     if (this.history.length > MAX_HISTORY) this.history.shift();
 
@@ -311,6 +319,7 @@ export class NetRaceSync {
     s.interpMs = (this.interpDelay / TICK_RATE) * 1000;
     s.unacked = this.history.length;
     s.status = this.net.status;
+    s.lane = !!this.net.lane?.open;
     if (this.statWindow < 1) return;
     s.snapshotsPerSec = this.statSnaps / this.statWindow;
     s.kibPerSec = this.statBytes / this.statWindow / 1024;

@@ -1,5 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from './serverUrl';
+import { FastLane } from './fastlane';
 import {
   Msg,
   PROTOCOL_VERSION,
@@ -95,8 +96,12 @@ export class NetClient {
     }
   }
 
+  /** Unreliable fast lane (WebRTC) next to the WebSocket, for snapshots / inputs. */
+  lane: FastLane | null = null;
+
   private attach(room: Room): void {
     this.room = room;
+    this.lane = new FastLane(room);
     this.setStatus('connected');
     room.onDrop(() => this.setStatus('reconnecting'));
     room.onReconnect(() => this.setStatus('connected'));
@@ -131,23 +136,26 @@ export class NetClient {
     return Math.max(at, lastAt);
   }
 
-  send(type: string, payload?: unknown): void {
+  /** `fast`: the unreliable lane when it's up (high-rate, redundant messages only). */
+  send(type: string, payload?: unknown, fast = false): void {
     const room = this.room;
     if (!room || this.status !== 'connected') return;
+    const go = () => (fast && this.lane ? this.lane.send(type, payload) : this.room?.send(type, payload));
     if (!this.lag.delay && !this.lag.jitter) {
-      room.send(type, payload);
+      go();
       return;
     }
     const at = (this.lastOutboundAt = this.delay(this.lastOutboundAt));
-    setTimeout(() => this.room?.send(type, payload), at - performance.now());
+    setTimeout(go, at - performance.now());
   }
 
   /** Subscribe to a message type; returns an unsubscribe function. */
-  on<T>(type: string, cb: (payload: T) => void): () => void {
+  on<T>(type: string, cb: (payload: T) => void, opts: { fast?: boolean; latestOnly?: boolean } = {}): () => void {
     const room = this.room;
     if (!room) return () => undefined;
     let live = true;
-    const off = room.onMessage(type, (payload: T) => {
+    const sub = (h: (payload: T) => void) => (opts.fast && this.lane ? this.lane.on(type, h, { latestOnly: opts.latestOnly }) : room.onMessage(type, h));
+    const off = sub((payload: T) => {
       if (!this.lag.delay && !this.lag.jitter) {
         cb(payload);
         return;
@@ -174,6 +182,8 @@ export class NetClient {
 
   async leave(): Promise<void> {
     clearInterval(this.pingTimer);
+    this.lane?.close();
+    this.lane = null;
     const room = this.room;
     this.room = null;
     if (room) await room.leave(true).catch(() => undefined);

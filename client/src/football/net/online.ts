@@ -1,4 +1,5 @@
 import { Client, type Room } from '@colyseus/sdk';
+import { FastLane } from '../../net/fastlane';
 import { defaultServerUrl } from '../../net/serverUrl';
 import { FB_VERSION, FB_ROOM, FbMsg, type FbBegin, type FbConfig, type FbInput, type FbJoin, type FbLobby, type FbStats, type MatchEvent } from './protocol';
 
@@ -45,21 +46,27 @@ export class FootballNet {
     this.attach(await this.sdk.joinById(code.trim().toUpperCase(), o));
   }
 
+  /** Unreliable fast lane (WebRTC) for frames / inputs / pings. */
+  lane: FastLane | null = null;
+  private seq = 0;
+  private recent: Array<[number, number, number, number]> = [];
+
   private attach(room: Room): void {
     this.room = room;
+    const lane = (this.lane = new FastLane(room));
     room.onMessage(FbMsg.Lobby, (l: FbLobby) => {
       this.lobby = l;
       this.onLobby?.(l);
     });
     room.onMessage(FbMsg.Begin, (b: FbBegin) => this.onBegin?.(b));
-    room.onMessage(FbMsg.Snap, (bytes: Uint8Array) => {
+    lane.on(FbMsg.Snap, (bytes: Uint8Array) => {
       const f = new Float32Array(bytes.byteLength / 4);
       new Uint8Array(f.buffer).set(bytes);
       this.onFrame?.(f);
-    });
+    }, { latestOnly: true });
     room.onMessage(FbMsg.Events, (e: MatchEvent[]) => this.onEvents?.(e));
     room.onMessage(FbMsg.Stats, (s: FbStats) => this.onStats?.(s));
-    room.onMessage(FbMsg.Ping, (m: { t: number }) => {
+    lane.on(FbMsg.Ping, (m: { t: number }) => {
       const rtt = performance.now() - m.t;
       this.rtt = this.rtt ? this.rtt * 0.8 + rtt * 0.2 : rtt;
     });
@@ -70,11 +77,15 @@ export class FootballNet {
       this.onClosed?.(reason || (code >= 4000 ? `Disconnected (${code})` : undefined));
     });
     room.send(FbMsg.Hello);
-    this.pingTimer = window.setInterval(() => this.room?.send(FbMsg.Ping, { t: performance.now() }), 2000);
+    this.pingTimer = window.setInterval(() => this.room && this.lane?.send(FbMsg.Ping, { t: performance.now() }), 1000);
   }
 
+  /** Each tick's input, with the last few riding along (the server takes each seq once). */
   input(i: FbInput): void {
-    this.room?.send(FbMsg.Input, i);
+    if (!this.room) return;
+    this.recent.push([++this.seq, i.x, i.z, i.b]);
+    if (this.recent.length > 5) this.recent.shift();
+    this.lane?.send(FbMsg.Input, { r: this.recent });
   }
   config(c: Partial<FbConfig>): void {
     this.room?.send(FbMsg.Config, c);
@@ -89,6 +100,8 @@ export class FootballNet {
     const r = this.room;
     this.room = null;
     clearInterval(this.pingTimer);
+    this.lane?.close();
+    this.lane = null;
     if (r) await r.leave(true).catch(() => undefined);
   }
 }

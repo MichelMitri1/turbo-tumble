@@ -6,6 +6,7 @@ import { eventsFor, viewFor } from '../../../client/src/starfall/sim/view';
 import { SF_MAX, SF_VERSION, SfMsg, type SfConfig, type SfJoin, type SfLobby, type SfMove } from '../../../client/src/starfall/net/protocol';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
+import { FastLane } from '../fastlane';
 
 interface Member {
   id: string;
@@ -92,6 +93,7 @@ export class StarfallRoom extends Room {
   private acc = 0;
   private ticks = 0;
   private overT = 0;
+  private lane!: FastLane;
 
   override onCreate(options: SfJoin): void {
     this.roomId = claimRoomCode();
@@ -134,7 +136,8 @@ export class StarfallRoom extends Room {
       if (this.members.size + this.config.bots < 4) return client.send(SfMsg.Error, { msg: 'You need at least 4 players — add bots.' });
       this.startGame();
     });
-    this.onMessage(SfMsg.Move, (client, raw: unknown) => this.move(client, raw));
+    this.lane = new FastLane(this);
+    this.lane.on(SfMsg.Move, (client, raw: unknown) => this.move(client, raw), { latestOnly: true });
     this.onMessage(SfMsg.Act, (client, raw: unknown) => {
       const m = this.members.get(client.sessionId);
       const g = this.game;
@@ -190,6 +193,7 @@ export class StarfallRoom extends Room {
   }
 
   override onLeave(client: Client): void {
+    this.lane.drop(client.sessionId);
     const m = this.members.get(client.sessionId);
     this.members.delete(client.sessionId);
     // A bot takes over the seat so the game stays fair.
@@ -205,6 +209,7 @@ export class StarfallRoom extends Room {
   }
 
   override onDispose(): void {
+    this.lane.dispose();
     releaseRoomCode(this.roomId);
   }
 
@@ -295,10 +300,13 @@ export class StarfallRoom extends Room {
       }
       this.ticks++;
     }
-    if (this.ticks % 2 === 0) for (const c of this.clients) {
+    if (LAN_MODE || this.ticks % 2 === 0) for (const c of this.clients) {
       const m = this.members.get(c.sessionId);
       if (!m || m.seat < 0) continue;
-      c.send(SfMsg.Snap, { v: viewFor(g, m.seat), e: m.events.splice(0) });
+      // Events ride the reliable socket; the view rides the fast lane.
+      const e = m.events.splice(0);
+      if (e.length) c.send(SfMsg.Snap, { v: viewFor(g, m.seat), e });
+      else this.lane.send(c, SfMsg.Snap, { v: viewFor(g, m.seat), e });
     }
     // Back to the lobby a little after the end (clients keep the results screen up).
     if (g.phase === 'over') {

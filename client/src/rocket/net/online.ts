@@ -1,4 +1,5 @@
 import { Client, type Room } from '@colyseus/sdk';
+import { FastLane } from '../../net/fastlane';
 import { defaultServerUrl } from '../../net/serverUrl';
 import type { CarId } from '../sim/constants';
 import { RB_ROOM, RB_VERSION, RbMsg, type RbBegin, type RbChat, type RbConfig, type RbInput, type RbJoin, type RbLobby, type Stats, type WorldEvent } from './protocol';
@@ -50,23 +51,27 @@ export class RocketNet {
     this.attach(await this.sdk.joinById(code.toUpperCase(), o));
   }
 
+  /** Unreliable fast lane (WebRTC) for snapshots / inputs / pings. */
+  lane: FastLane | null = null;
+
   private attach(room: Room): void {
     this.room = room;
+    const lane = (this.lane = new FastLane(room));
     room.onMessage(RbMsg.Lobby, (l: RbLobby) => {
       this.lobby = l;
       this.onLobby?.(l);
     });
     room.onMessage(RbMsg.Begin, (b: RbBegin) => this.onBegin?.(b));
-    room.onMessage(RbMsg.Snap, (bytes: Uint8Array) => {
+    lane.on(RbMsg.Snap, (bytes: Uint8Array) => {
       // Copy into an aligned buffer.
       const f = new Float32Array(bytes.byteLength / 4);
       new Uint8Array(f.buffer).set(bytes);
       this.onSnap?.(f);
-    });
+    }, { latestOnly: true });
     room.onMessage(RbMsg.Events, (e: WorldEvent[]) => this.onEvents?.(e));
     room.onMessage(RbMsg.Stats, (s: Array<[number, Stats]>) => this.onStats?.(s));
     room.onMessage(RbMsg.Chat, (c: RbChat) => this.onChat?.(c));
-    room.onMessage(RbMsg.Ping, (m: { t: number }) => {
+    lane.on(RbMsg.Ping, (m: { t: number }) => {
       const rtt = performance.now() - m.t;
       this.rtt = this.rtt ? this.rtt * 0.8 + rtt * 0.2 : rtt;
     });
@@ -76,12 +81,12 @@ export class RocketNet {
       clearInterval(this.pingTimer);
       this.onClosed?.(reason || (code >= 4000 ? `Disconnected (${code})` : undefined));
     });
-    room.send(RbMsg.Ping, { t: performance.now() });
-    this.pingTimer = window.setInterval(() => this.room?.send(RbMsg.Ping, { t: performance.now() }), 2000);
+    lane.send(RbMsg.Ping, { t: performance.now() });
+    this.pingTimer = window.setInterval(() => this.room && this.lane?.send(RbMsg.Ping, { t: performance.now() }), 1000);
   }
 
   input(i: RbInput): void {
-    this.room?.send(RbMsg.Input, i);
+    if (this.room) this.lane?.send(RbMsg.Input, i);
   }
   config(c: Partial<RbConfig>): void {
     this.room?.send(RbMsg.Config, c);
@@ -102,6 +107,8 @@ export class RocketNet {
     const r = this.room;
     this.room = null;
     clearInterval(this.pingTimer);
+    this.lane?.close();
+    this.lane = null;
     if (r) await r.leave(true).catch(() => undefined);
   }
 }

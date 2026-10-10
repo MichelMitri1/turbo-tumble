@@ -27,6 +27,7 @@ import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { ServerRace } from '../race/ServerRace';
 import { LobbyState, Member, Seat } from '../state/LobbyState';
 import { LAN_MODE } from '../lan';
+import { FastLane } from '../fastlane';
 
 const MAX_STEPS_PER_UPDATE = 5;
 /** On a LAN bandwidth is free, so every tick goes out — remote karts can then be drawn closer to now. */
@@ -54,6 +55,7 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
   override state = new LobbyState();
   private race: ServerRace | null = null;
   private accumulator = 0;
+  private lane!: FastLane;
   private resultsTimer = 0;
   private raceId = 0;
 
@@ -68,7 +70,8 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
     void this.setPrivate(options?.visibility !== 'public');
     void this.setMetadata({ code: this.roomId, phase: 'lobby' });
 
-    this.onMessage(Msg.Input, (client, msg) => this.race?.receiveInput(client.sessionId, msg));
+    this.lane = new FastLane(this);
+    this.lane.on(Msg.Input, (client, msg) => this.race?.receiveInput(client.sessionId, msg));
     this.onMessage(Msg.Ready, (client, msg: { ready?: boolean }) => {
       const m = s.members.get(client.sessionId);
       if (m && s.phase === 'lobby') m.ready = Boolean(msg?.ready);
@@ -138,6 +141,7 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
   }
 
   override onLeave(client: Client): void {
+    this.lane.drop(client.sessionId);
     const s = this.state;
     const m = s.members.get(client.sessionId);
     s.members.delete(client.sessionId);
@@ -154,6 +158,7 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
   }
 
   override onDispose(): void {
+    this.lane.dispose();
     this.race?.dispose();
     releaseRoomCode(this.roomId);
     console.log(`[room ${this.roomId}] disposed`);
@@ -285,6 +290,6 @@ export class RaceRoom extends Room<{ state: LobbyState }> {
       this.broadcast(Msg.Events, { t: race.tick, e: race.events.splice(0) });
     }
     race.encodeCommon();
-    for (const client of this.clients) client.sendBytes(Msg.Snapshot, race.packetFor(client.sessionId));
+    for (const client of this.clients) this.lane.sendBytes(client, Msg.Snapshot, race.packetFor(client.sessionId));
   }
 }

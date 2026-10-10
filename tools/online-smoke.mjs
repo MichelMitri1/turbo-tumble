@@ -8,6 +8,7 @@
  *
  * --lag/--jitter apply simulated round-trip latency to browser B (client-side).
  * --drop       B's connection is cut mid-race; it must reconnect and keep racing.
+ * --server=host:port  use that game server (e.g. localhost:2600).
  */
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -22,6 +23,8 @@ const jitter = Number(flag('jitter', '0'));
 const bots = Number(flag('bots', '0'));
 const seconds = Number(flag('seconds', '20'));
 const drop = args.includes('--drop');
+/** --server=host:port: a game server other than the dev default. */
+const server = flag('server', '');
 fs.mkdirSync(outDir, { recursive: true });
 const chrome = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -114,11 +117,21 @@ const smoothness = (page) =>
       }),
   );
 
-const A = await open('A', url);
+/** The garage (pick a racer) now sits in front of the online screen. */
+async function pastGarage(page) {
+  for (let k = 0; k < 40; k++) {
+    if (await page.$('.tt-online__input')) return;
+    await clickText(page, 'button', "LET'S GO");
+    await sleep(500);
+  }
+  throw new Error('online screen never showed');
+}
+
+const A = await open('A', server ? `${url}?server=${server}` : url);
 log('A loaded; choosing Online in the menu');
 await clickText(A.page, '.tt-menu__mode', 'Online');
 await clickText(A.page, 'button', 'START!');
-await sleep(400);
+await pastGarage(A.page);
 await A.page.evaluate(() => {
   const i = document.querySelector('.tt-online__input');
   i.value = 'Alpha';
@@ -131,10 +144,12 @@ log(`A created room ${code}`);
 await A.page.screenshot({ path: `${outDir}/a-lobby-empty.png` });
 
 const q = new URLSearchParams({ room: code });
+if (server) q.set('server', server);
 if (lag) q.set('lag', String(lag));
 if (jitter) q.set('jitter', String(jitter));
 const B = await open('B', `${url}?${q}`);
 log(`B loaded via invite link${lag ? ` (simulated ${lag} ms RTT ± ${jitter})` : ''}`);
+await pastGarage(B.page);
 await B.page.evaluate(() => {
   const i = document.querySelector('.tt-online__input');
   i.value = 'Bravo';

@@ -108,7 +108,7 @@ app.innerHTML = `
   <div class="rk-panel">
     <h2>EXHIBITION</h2>
     <div class="rk-field"><span>MODE</span><div class="rk-seg" id="s-mode"><button data-v="1">1v1 DUEL</button><button data-v="2">2v2 DOUBLES</button><button data-v="3">3v3 STANDARD</button></div></div>
-    <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="s-level"><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button></div></div>
+    <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="s-level"><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button><button data-v="ssl">SSL</button></div></div>
     <div class="rk-field"><span>TEAM</span><div class="rk-seg" id="s-team"><button data-v="0" class="blue">BLUE</button><button data-v="1" class="orange">ORANGE</button></div></div>
     <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="s-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
     <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="s-arena">${ARENA_SEG}</div><small class="rk-arena-desc" id="s-arena-desc"></small></div>
@@ -193,7 +193,7 @@ app.innerHTML = `
       <div class="rk-team t1"><h3>ORANGE</h3><div id="o-t1"></div><button class="rk-btn small" id="o-join1">JOIN ORANGE</button></div></div>
       <div id="o-host">
         <div class="rk-field"><span>SIZE</span><div class="rk-seg" id="o-size"><button data-v="1">1v1</button><button data-v="2">2v2</button><button data-v="3">3v3</button></div></div>
-        <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="o-bots"><button data-v="off">NONE</button><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button></div></div>
+        <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="o-bots"><button data-v="off">NONE</button><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button><button data-v="ssl">SSL</button></div></div>
         <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="o-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
         <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="o-arena">${ARENA_SEG}</div></div>
       </div>

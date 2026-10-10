@@ -6,11 +6,11 @@
   "dependencies": {
     "@colyseus/core": "^0.18.18",
     "@colyseus/schema": "^5.0.36",
-    "@colyseus/ws-transport": "^0.18.4"
+    "@colyseus/ws-transport": "^0.18.4",
+    "node-datachannel": "^0.33.4"
   },
   "scripts": {
     "dev": "tsx watch --clear-screen=false src/index.ts",
     "start": "tsx src/index.ts"
-  },
-  "devDependencies": {}
+  }
 }

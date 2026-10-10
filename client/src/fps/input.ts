@@ -32,6 +32,8 @@ export interface FrameInput {
   streak: number;
   scoreboard: boolean;
   menu: boolean;
+  /** Open the class picker (B / SHARE) — the match keeps going. */
+  classMenu: boolean;
   pad: boolean;
 }
 
@@ -170,6 +172,7 @@ export class FpsInput {
       streak: pr('Digit4') ? 0 : pr('Digit5') ? 1 : pr('Digit6') ? 2 : -1,
       scoreboard: k('Tab'),
       menu: pr('Escape'),
+      classMenu: pr('KeyB'),
       pad: false,
     };
     this.dx = this.dy = 0;
@@ -217,7 +220,8 @@ export class FpsInput {
       else if (edge(PAD.left)) out.streak = 0;
       else if (edge(PAD.up)) out.streak = 1;
       else if (edge(PAD.down)) out.streak = 2;
-      out.scoreboard ||= btn(PAD.touch) || btn(PAD.share);
+      out.scoreboard ||= btn(PAD.touch);
+      out.classMenu ||= edge(PAD.share);
       out.menu ||= edge(PAD.options);
       out.pad = this.device === 'pad';
       this.prevPad = p.buttons.map((b) => b.pressed);

@@ -763,6 +763,7 @@ async function runMatch(props: string[], make: () => Session, say: string, local
     const srcs = splitSources(ids.length);
     const m = new Match($('#view'), session, ids.map((id, i) => ({ id, input: inputFor(i, srcs[i]!) })), audio, { fov: profile.fov, quality: profile.quality });
     m.onPause = pause;
+    m.onClassMenu = classMenu;
     m.onOver = (g) => showEnd(g);
     await m.load((f) => bar(0.4 + f * 0.55));
     renderPauseClasses();
@@ -872,16 +873,128 @@ function pause(): void {
   show('pause');
   thumbs($('#p-classes'));
 }
+/** Pick class i for local seat `seat`: applies on their next spawn (like the real thing). */
+function applyClass(i: number, seat = 0, me = match?.me): void {
+  if (!match || !me) return;
+  if (seat === 0) profile.cls = i;
+  else profile.splitClasses[seat - 1] = i;
+  save();
+  me.nextLoadout = structuredClone(profile.classes[i] ?? loadout());
+  if (seat === 0) (match.session as Session & { setClass?: (l: Loadout) => void }).setClass?.(loadout());
+}
 $('#p-classes').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('[data-i]');
   if (!b || !match) return;
-  profile.cls = Number(b.dataset.i);
-  save();
-  // Applies on the next spawn (like the real thing).
-  match.me.nextLoadout = structuredClone(loadout());
-  (match.session as Session & { setClass?: (l: Loadout) => void }).setClass?.(loadout());
+  applyClass(Number(b.dataset.i));
   pause();
 });
+
+/**
+ * The in-match class picker (B / SHARE): a player's classes over their part of the screen —
+ * the match keeps going. One per local player (split-screen), driven by that player's device:
+ * 1–5 / ↑↓ + Enter (keyboard), D-pad + ✕ (controller); B / Esc / ○ close. Only while that
+ * player is dead waiting to respawn (alive, the D-pad is their killstreaks).
+ */
+class ClassPicker {
+  readonly el = document.createElement('div');
+  private open = false;
+  private sel = 0;
+  private prev: boolean[] = [];
+  private raf = 0;
+
+  constructor(
+    readonly box: HTMLElement,
+    private seat: number,
+    private me: Match['me'],
+    private inp: FpsInput,
+  ) {
+    this.el.className = 'zh-pick hidden';
+    box.appendChild(this.el);
+    this.el.addEventListener('click', (e) => {
+      const r = (e.target as HTMLElement).closest<HTMLElement>('[data-i]');
+      if (r) this.choose(Number(r.dataset.i));
+    });
+    if (inp.source.kb) addEventListener('keydown', this.onKey, true);
+    this.raf = requestAnimationFrame(this.pad);
+  }
+  private get current(): number {
+    return this.seat === 0 ? profile.cls : (profile.splitClasses[this.seat - 1] ?? 0);
+  }
+  private usable(): boolean {
+    return !!match && !match.over && !match.session.game.horde && screen === 'game' && !this.me.alive && this.box.isConnected;
+  }
+  private render(): void {
+    const pad = this.inp.hasPad && (!this.inp.source.kb || this.inp.device === 'pad');
+    this.el.innerHTML = `<div class="zh-pick__head">${this.seat ? `P${this.seat + 1} · ` : ''}CHOOSE CLASS <small>applies when you respawn</small></div>${profile.classes
+      .map((c, i) => `<div class="zh-pick__row ${i === this.sel ? 'sel' : ''} ${i === this.current ? 'cur' : ''}" data-i="${i}"><i>${i + 1}</i>${gimg(c.primary, undefined, c.primaryAtt)}<span><b>${esc(c.name.toUpperCase())}</b><small>${WEAPON[c.primary]?.name ?? ''} · ${WEAPON[c.secondary]?.name ?? ''}</small></span></div>`)
+      .join('')}<div class="zh-pick__keys">${pad ? 'D-PAD choose · ✕ select · ○ close' : '1–5 or ↑↓ + ENTER · B close'}</div>`;
+    thumbs(this.el);
+  }
+  private close(): void {
+    this.open = false;
+    this.el.classList.add('hidden');
+  }
+  private choose(i: number): void {
+    if (i < 0 || i >= profile.classes.length) return;
+    applyClass(i, this.seat, this.me);
+    audio.ui();
+    this.close();
+  }
+  private onKey = (e: KeyboardEvent): void => {
+    if (!this.open) return;
+    const n = Number(e.key);
+    const len = profile.classes.length;
+    if (n >= 1 && n <= len) this.choose(n - 1);
+    else if (e.code === 'ArrowDown' || e.code === 'KeyS') this.sel = (this.sel + 1) % len;
+    else if (e.code === 'ArrowUp' || e.code === 'KeyW') this.sel = (this.sel - 1 + len) % len;
+    else if (e.code === 'Enter' || e.code === 'Space') this.choose(this.sel);
+    else if (e.code === 'Escape') this.close();
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.open) this.render();
+  };
+  private pad = (): void => {
+    this.raf = requestAnimationFrame(this.pad);
+    if (this.open && !this.usable()) this.close();
+    const g = this.inp.source.pad === null ? null : connectedPads()[this.inp.source.pad];
+    if (!g) return;
+    const btn = g.buttons.map((b) => b.pressed);
+    const edge = (i: number) => btn[i] && !this.prev[i];
+    if (this.open) {
+      const len = profile.classes.length;
+      if (edge(13)) this.sel = (this.sel + 1) % len;
+      if (edge(12)) this.sel = (this.sel - 1 + len) % len;
+      if (edge(12) || edge(13)) this.render();
+      if (edge(0)) this.choose(this.sel);
+      if (edge(1)) this.close();
+    }
+    this.prev = btn;
+  };
+  toggle(): void {
+    if (this.open) return this.close();
+    if (!this.usable()) return;
+    this.open = true;
+    this.sel = this.current;
+    this.render();
+    this.el.classList.remove('hidden');
+  }
+  dispose(): void {
+    cancelAnimationFrame(this.raf);
+    removeEventListener('keydown', this.onKey, true);
+    this.el.remove();
+  }
+}
+const pickers = new Map<number, ClassPicker>();
+function classMenu(seat: number, box: HTMLElement, me: Match['me'], inp: FpsInput): void {
+  let p = pickers.get(seat);
+  if (p && p.box !== box) {
+    p.dispose();
+    p = undefined;
+  }
+  if (!p) pickers.set(seat, (p = new ClassPicker(box, seat, me, inp)));
+  p.toggle();
+}
 $('#p-resume').addEventListener('click', resume);
 function resume(): void {
   show('game');

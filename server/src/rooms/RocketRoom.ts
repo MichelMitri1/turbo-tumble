@@ -8,6 +8,7 @@ import { RB_MAX_PER_TEAM, RB_VERSION, RbMsg, type RbBegin, type RbConfig, type R
 import { isArenaId, pickArena, type ArenaId } from '../../../client/src/rocket/arenas';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
+import { FastLane } from '../fastlane';
 
 interface Member {
   id: string;
@@ -40,6 +41,7 @@ export class RocketRoom extends Room {
   private lastInput = new Map<number, Controls>();
   private latestTick = new Map<number, number>();
   private acc = 0;
+  private lane!: FastLane;
   private overTimer = 0;
   private statsTimer = 0;
   private snapBuf: Float32Array | null = null;
@@ -54,7 +56,7 @@ export class RocketRoom extends Room {
     this.onMessage(RbMsg.Config, (client, c: Partial<RbConfig> | undefined) => {
       if (client.sessionId !== this.hostId || this.phase !== 'lobby' || !c || typeof c !== 'object') return;
       if (c.size === 1 || c.size === 2 || c.size === 3) this.config.size = c.size;
-      if (c.botLevel === 'rookie' || c.botLevel === 'pro' || c.botLevel === 'allstar') this.config.botLevel = c.botLevel;
+      if (c.botLevel === 'rookie' || c.botLevel === 'pro' || c.botLevel === 'allstar' || c.botLevel === 'ssl') this.config.botLevel = c.botLevel;
       if (typeof c.length === 'number' && [120, 180, 300, 600].includes(c.length)) this.config.length = c.length;
       if (typeof c.bots === 'boolean') this.config.bots = c.bots;
       if (c.arena === 'random' || isArenaId(c.arena)) this.config.arena = c.arena;
@@ -84,7 +86,8 @@ export class RocketRoom extends Room {
       if (!this.config.bots && (t0 === 0 || t1 === 0)) return client.send(RbMsg.Error, { msg: 'Both teams need a player (or turn bots on).' });
       this.startMatch();
     });
-    this.onMessage(RbMsg.Input, (client, m: RbInput) => {
+    this.lane = new FastLane(this);
+    this.lane.on(RbMsg.Input, (client, m: RbInput) => {
       const id = this.ids.get(client.sessionId);
       if (id == null || !this.world || !Array.isArray(m?.c) || typeof m.t !== 'number') return;
       let buf = this.inputBuf.get(id);
@@ -102,7 +105,7 @@ export class RocketRoom extends Room {
       if (id == null || typeof m?.g !== 'number' || typeof m.i !== 'number') return;
       this.broadcast(RbMsg.Chat, { id, g: Math.max(0, Math.min(3, m.g | 0)), i: Math.max(0, Math.min(3, m.i | 0)) });
     });
-    this.onMessage(RbMsg.Ping, (client, m: { t?: unknown } | undefined) => client.send(RbMsg.Ping, { t: typeof m?.t === 'number' ? m.t : 0 }));
+    this.lane.on(RbMsg.Ping, (client, m: { t?: unknown } | undefined) => this.lane.send(client, RbMsg.Ping, { t: typeof m?.t === 'number' ? m.t : 0 }));
     this.setSimulationInterval((ms) => this.update(ms), 1000 / 60);
     console.log(`[boostball ${this.roomId}] created`);
   }
@@ -136,6 +139,7 @@ export class RocketRoom extends Room {
   }
 
   override onLeave(client: Client): void {
+    this.lane.drop(client.sessionId);
     this.members.delete(client.sessionId);
     // A bot takes over the car, like the real game.
     this.setBot(client.sessionId, true);
@@ -144,6 +148,7 @@ export class RocketRoom extends Room {
   }
 
   override onDispose(): void {
+    this.lane.dispose();
     releaseRoomCode(this.roomId);
   }
 
@@ -254,7 +259,7 @@ export class RocketRoom extends Room {
     for (const client of this.clients) {
       const id = this.ids.get(client.sessionId);
       out[0] = id != null ? (this.latestTick.get(id) ?? w.tickCount) - w.tickCount : 0;
-      client.sendBytes(RbMsg.Snap, new Uint8Array(out.buffer.slice(0)));
+      this.lane.sendBytes(client, RbMsg.Snap, new Uint8Array(out.buffer.slice(0)));
     }
   }
 

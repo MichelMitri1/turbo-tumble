@@ -4,6 +4,7 @@ import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type Soldi
 import { stepMove, type Input } from '../sim/player';
 import { WEAPON, type Loadout } from '../sim/weapons';
 import type { Session } from '../match';
+import { FastLane } from '../../net/fastlane';
 import { FP_ROOM, FP_ZM_ROOM, FP_VERSION, FpMsg, packInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from './protocol';
 
 export class FpsNet {
@@ -59,21 +60,24 @@ export class FpsNet {
       this.onLobby?.(l);
     });
     room.onMessage(FpMsg.Begin, (b: FpBegin) => this.onBegin?.(b));
-    room.onMessage(FpMsg.Snap, (s: FpSnap) => this.onSnap?.(s));
+    this.lane = new FastLane(room);
+    this.lane.on(FpMsg.Snap, (s: FpSnap) => this.onSnap?.(s), { latestOnly: true });
     room.onMessage(FpMsg.Events, (e: GameEvent[]) => this.onEvents?.(e));
     room.onMessage(FpMsg.Error, (m: { msg: string }) => this.onError?.(m.msg));
-    room.onMessage(FpMsg.Ping, (m: { t: number }) => (this.rtt = this.rtt * 0.8 + (performance.now() - m.t) * 0.2));
+    this.lane.on(FpMsg.Ping, (m: { t: number }) => (this.rtt = this.rtt * 0.8 + (performance.now() - m.t) * 0.2));
     room.onLeave((code: number, reason?: string) => {
       this.room = null;
       clearInterval(this.pingTimer);
       this.onClosed?.(reason || (code >= 4000 ? `Disconnected (${code})` : undefined));
     });
     // Our measured RTT rides along so the server can show everyone's ping on the scoreboard.
-    this.pingTimer = window.setInterval(() => this.room?.send(FpMsg.Ping, { t: performance.now(), rtt: Math.round(this.rtt) }), 1500);
+    this.pingTimer = window.setInterval(() => this.lane?.send(FpMsg.Ping, { t: performance.now(), rtt: Math.round(this.rtt) }), 1000);
   }
 
+  /** The fast (unreliable) lane next to the WebSocket. */
+  lane: FastLane | null = null;
   input(batch: FpInput[]): void {
-    this.room?.send(FpMsg.Input, batch);
+    if (this.room) this.lane?.send(FpMsg.Input, batch);
   }
   fire(f: FpFire): void {
     this.room?.send(FpMsg.Fire, f);
@@ -94,6 +98,8 @@ export class FpsNet {
     const r = this.room;
     this.room = null;
     clearInterval(this.pingTimer);
+    this.lane?.close();
+    this.lane = null;
     if (r) await r.leave(true).catch(() => undefined);
   }
 }
@@ -209,7 +215,9 @@ export class OnlineSession implements Session {
       } else this.pred.events.length = 0;
     }
     if (this.batch.length) {
-      this.net.input(this.batch);
+      // Resend the last few unacknowledged inputs too: on the unreliable lane a lost packet
+      // is covered by the next one (the server takes each seq once).
+      this.net.input(this.pending.slice(-8).map((p) => packInput(p.inp)));
       this.batch = [];
     }
     this.alpha = this.acc / TICK;

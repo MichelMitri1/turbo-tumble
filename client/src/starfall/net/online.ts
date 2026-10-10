@@ -1,5 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
+import { FastLane } from '../../net/fastlane';
 import type { Action } from '../sim/game';
 import { SF_ROOM, SF_VERSION, SfMsg, type SfBegin, type SfConfig, type SfJoin, type SfLobby, type SfMove, type SfSnap } from './protocol';
 
@@ -49,7 +50,8 @@ export class StarfallNet {
       this.onLobby?.(l);
     });
     room.onMessage(SfMsg.Begin, (b: SfBegin) => this.onBegin?.(b));
-    room.onMessage(SfMsg.Snap, (s: SfSnap) => this.onSnap?.(s));
+    this.lane = new FastLane(room);
+    this.lane.on(SfMsg.Snap, (s: SfSnap) => this.onSnap?.(s));
     room.onMessage(SfMsg.Error, (m: { msg: string }) => this.onError?.(m.msg));
     room.onLeave((code: number, reason?: string) => {
       this.room = null;
@@ -60,8 +62,9 @@ export class StarfallNet {
   act(a: Action): void {
     this.room?.send(SfMsg.Act, a);
   }
+  lane: FastLane | null = null;
   move(m: SfMove): void {
-    this.room?.send(SfMsg.Move, m);
+    if (this.room) this.lane?.send(SfMsg.Move, m);
   }
   config(c: Partial<SfConfig>): void {
     this.room?.send(SfMsg.Config, c);
@@ -75,6 +78,8 @@ export class StarfallNet {
   async leave(): Promise<void> {
     const r = this.room;
     this.room = null;
+    this.lane?.close();
+    this.lane = null;
     if (r) await r.leave(true).catch(() => undefined);
   }
 }

@@ -7,6 +7,8 @@ import type { Input } from '../../../client/src/fps/sim/player';
 import { FP_MAX, FP_ZM_MAX, FP_VERSION, FpMsg, unpackInput, type FpBegin, type FpConfig, type FpFire, type FpInput, type FpJoin, type FpLobby, type FpSnap } from '../../../client/src/fps/net/protocol';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
+import { NetProbe } from '../netdebug';
+import { FastLane } from '../fastlane';
 
 interface Member {
   id: string;
@@ -48,6 +50,8 @@ export class FpsRoom extends Room {
   private ids: string[] = [];
   private acc = 0;
   private snapAcc = 0;
+  private probe = new NetProbe('zerohour');
+  private lane!: FastLane;
   private boardAcc = 0;
   private overTimer = 0;
   private readonly botInputs = new Map<string, Input>();
@@ -84,10 +88,20 @@ export class FpsRoom extends Room {
       if (c.sessionId !== this.hostId || this.phase !== 'lobby') return;
       this.start();
     });
-    this.onMessage(FpMsg.Input, (c, batch: FpInput[]) => {
+    this.lane = new FastLane(this);
+    // Inputs come several times over (the last few unacknowledged ones each time — a lost
+    // packet costs nothing): take each seq once, in order.
+    this.lane.on(FpMsg.Input, (c, batch: FpInput[]) => {
       const s = this.game?.soldier(c.sessionId);
       if (!s || !Array.isArray(batch)) return;
-      for (const raw of batch.slice(0, 30)) if (Array.isArray(raw)) s.queue.push(unpackInput(raw));
+      let last = s.queue.length ? s.queue[s.queue.length - 1]!.seq : s.ackSeq;
+      for (const raw of batch.slice(0, 30)) {
+        if (!Array.isArray(raw)) continue;
+        const inp = unpackInput(raw);
+        if (!(inp.seq > last)) continue;
+        s.queue.push(inp);
+        last = inp.seq;
+      }
       if (s.queue.length > 30) s.queue.splice(0, s.queue.length - 10);
     });
     this.onMessage(FpMsg.Fire, (c, f: FpFire) => {
@@ -113,10 +127,10 @@ export class FpsRoom extends Room {
       const s = this.game?.soldier(c.sessionId);
       if (s) s.nextLoadout = lo;
     });
-    this.onMessage(FpMsg.Ping, (c, m: { t: number; rtt?: number }) => {
+    this.lane.on(FpMsg.Ping, (c, m: { t: number; rtt?: number }) => {
       const mem = this.members.get(c.sessionId);
       if (mem && Number.isFinite(m?.rtt)) mem.ping = Math.max(0, Math.min(9999, Math.round(m.rtt!)));
-      c.send(FpMsg.Ping, { t: m?.t ?? 0 });
+      this.lane.send(c, FpMsg.Ping, { t: m?.t ?? 0 });
     });
     this.setSimulationInterval((ms) => this.update(ms / 1000), 1000 / 60);
     console.log(`[zerohour ${this.roomId}] created`);
@@ -172,6 +186,7 @@ export class FpsRoom extends Room {
   }
 
   override onLeave(client: Client): void {
+    this.lane.drop(client.sessionId);
     this.members.delete(client.sessionId);
     if (this.game) {
       // A bot takes over the seat.
@@ -192,6 +207,7 @@ export class FpsRoom extends Room {
   }
 
   override onDispose(): void {
+    this.lane.dispose();
     releaseRoomCode(this.roomId);
   }
 
@@ -225,6 +241,13 @@ export class FpsRoom extends Room {
   }
 
   private update(dt: number): void {
+    this.probe.begin();
+    this.tick(dt);
+    for (const s of this.game?.soldiers ?? []) if (s.remote) this.probe.queue(s.queue.length);
+    this.probe.end(this.clients);
+  }
+
+  private tick(dt: number): void {
     const g = this.game;
     if (!g) return;
     if (this.phase === 'over') {
@@ -248,8 +271,11 @@ export class FpsRoom extends Room {
     if (events.length) this.broadcast(FpMsg.Events, events);
     this.snapAcc += dt;
     this.boardAcc += dt;
-    if (this.snapAcc >= (LAN_MODE ? 1 / 60 : 1 / 30)) {
-      this.snapAcc = 0;
+    // Snapshots at a steady 60 (LAN) / 30 Hz: carry the remainder (resetting to 0 made a
+    // 60 Hz target land every other update — 30 Hz in clumps).
+    const every = LAN_MODE ? 1 / 60 : 1 / 30;
+    if (this.snapAcc >= every - 0.002) {
+      this.snapAcc = Math.min(this.snapAcc - every, every);
       this.sendSnaps();
     }
     if (g.phase === 'over') {
@@ -300,7 +326,8 @@ export class FpsRoom extends Room {
         streaks: s.streaks,
         marks: g.soldiers.filter((t) => t.alive && g.enemies(s, t) && g.marked(s, t)).map((t) => [this.ids.indexOf(t.id), 5] as [number, number]),
       };
-      client.send(FpMsg.Snap, snap);
+      this.lane.send(client, FpMsg.Snap, snap);
+      this.probe.sent(snap);
     }
   }
 

@@ -496,7 +496,8 @@ export class Game {
       let inp = inputs.get(s.id);
       if (!inp && s.queue.length) {
         inp = s.queue.shift()!;
-        if (s.queue.length > 6) s.queue.splice(0, s.queue.length - 3);
+        // Keep the buffer short: every input waiting here is latency (a tick each).
+        if (s.queue.length > 2) s.queue.splice(0, s.queue.length - 1);
         s.ackSeq = inp.seq;
       }
       if (!inp) inp = { ...s.lastInput, fire: false, jump: false, melee: false, grenade: false, tactical: false, streak: -1, reload: false, slot: -1, seq: s.lastInput.seq };

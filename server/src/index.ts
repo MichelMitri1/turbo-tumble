@@ -18,6 +18,7 @@ import { FpsRoom } from './rooms/FpsRoom';
 import { JackarooRoom } from './rooms/JackarooRoom';
 import { FootballRoom } from './rooms/FootballRoom';
 import { StarfallRoom } from './rooms/StarfallRoom';
+import { VeloraRoom } from './rooms/VeloraRoom';
 import { KK_ROOM } from '../../client/src/kittens/net/protocol';
 import { CF_ROOM } from '../../client/src/arena/net/protocol';
 import { RB_ROOM } from '../../client/src/rocket/net/protocol';
@@ -28,6 +29,7 @@ import { FP_ROOM, FP_ZM_ROOM } from '../../client/src/fps/net/protocol';
 import { JK_ROOM } from '../../client/src/jackaroo/net/protocol';
 import { FB_ROOM } from '../../client/src/football/net/protocol';
 import { SF_ROOM } from '../../client/src/starfall/net/protocol';
+import { VL_ROOM } from '../../client/src/velora/net/protocol';
 import { LAN_MODE, lanAddresses } from './lan';
 
 /**
@@ -123,6 +125,7 @@ server.define(FP_ZM_ROOM, FpsRoom, { kind: 'zombies' });
 server.define(JK_ROOM, JackarooRoom);
 server.define(FB_ROOM, FootballRoom);
 server.define(SF_ROOM, StarfallRoom);
+server.define(VL_ROOM, VeloraRoom);
 
 const latency = Number(process.env.LATENCY ?? 0);
 if (latency > 0) {

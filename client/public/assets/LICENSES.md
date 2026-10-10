@@ -43,3 +43,14 @@ Sounds (`football/sfx/`), all CC0 from [Freesound](https://freesound.org), trimm
 crowd loop + goal roar — #528799 "Football Crowd - Reaction To Goal"; cheer — #397434 "Crowd Cheer";
 ooh — #619007 "crowd oh disappointed"; whistle — #538422 "Referee whistle sound";
 kicks — #555042 "Soccer Ball Kick", #261267 "Soccer Kick".
+
+## Velora (`velora/`)
+
+CC0 1.0 (public domain):
+- Cars (`velora/cars/`): Quaternius "Cars" pack (Sedan, Hatch, Sports, Super, Muscle, Police, Taxi, SUV, Pickup, Box Truck), KayKit city vehicles by Kay Lousberg (Wagon, Compact) — both via poly.pizza — and the Kenney Car Kit (ambulance, fire engine, garbage truck, vans, race car, tractor). All normalised by `tools/velora-assets.mjs`.
+- City (`velora/downtown.glb`, `suburb.glb`, `street.glb`): Kenney City Kit Commercial 2.1, City Kit Suburban 2.0 and City Kit Roads, with selected models packed one GLB per kit.
+- People (`velora/people/`): Quaternius Ultimate Modular Characters (Casual, Hoodie, Suit, Business Man, Worker ×2, Punk ×2, Farmer, Adventurer, Woman ×2, SWAT), downloaded from poly.pizza. They share one skeleton, so the animations live in `casual.glb` only.
+
+Velora also reuses the guns and gun sounds from `fps/` and the engine recordings from `audio/engines/` (see those sections).
+
+Converted with `tools/velora-assets.mjs`.

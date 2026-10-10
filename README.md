@@ -66,6 +66,16 @@ with Grand Prix points, keeps a running points total and returns to the lobby.
 - **Over the internet:** deploy `npm start` on any Node host (it serves the game and the
   rooms on one port, `PORT` env to change it), or point a client at a server with
   `?server=host:port`.
+- **Fast lane (all real-time games):** snapshots, inputs and pings ride a WebRTC data
+  channel that is unreliable and unordered (like the UDP that real shooters use), so one
+  lost Wi-Fi packet is skipped instead of freezing everything behind it for 100–300 ms the
+  way the WebSocket (TCP) does. Inputs are sent redundantly (the last few each packet), and
+  stale snapshots are dropped. Signalling uses the room's WebSocket. If the lane can't
+  connect (e.g. a host with no UDP, such as Render web services), everything falls back to
+  the WebSocket automatically. `?tcp` turns it off in a browser; `NO_FASTLANE=1` turns it
+  off on the server. `npx tsx tools/net-check.ts [host:port]` reports, per game, whether the
+  lane opened, the snapshot spacing and the RTT. `NETDEBUG=1` on the server logs tick gaps,
+  input queues and bandwidth every 5 s.
 - Dropped connections reconnect automatically (20 s seat hold; your kart is on autopilot
   meanwhile). Esc during an online race opens the menu without pausing (Leave Room there).
 
