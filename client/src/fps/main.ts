@@ -6,6 +6,7 @@ import { MAPS } from './sim/maps';
 import { DEFAULT_CLASSES, LETHALS, NO_ATTACHMENTS as NO_ATT, PERKS, PRIMARIES, SECONDARIES, STREAKS, STREAK_LIST, TACTICALS, WEAPON, WEAPONS, applyAttachments, damageAt, fixLoadout, type Attachments, type Lethal, type Loadout, type Perk, type Streak, type Tactical, type WeaponDef } from './sim/weapons';
 import type { BotSkill } from './sim/bots';
 import { preload } from './render/assets';
+import { loadSky } from './render/skies';
 import { CAMOS, progress } from './render/camo';
 import { GunStage, cachedThumb, mapThumb, renderThumb, setThumbGate, type ItemThumb, type ThumbSpec } from './render/preview';
 import { icon } from './icons';
@@ -523,11 +524,12 @@ function renderClasses(): void {
   }).join('');
   const perkTier = (t: 1 | 2 | 3) => `<div class="zh-field"><span>PERK ${t}</span><div class="zh-cards perks">${(Object.keys(PERKS) as Perk[]).filter((p) => PERKS[p].tier === t).map((p) => card(`data-perk="${t - 1}" data-v="${p}"`, c.perks[t - 1] === p, icon(p, 'zh-ico'), PERKS[p].name.toUpperCase(), PERKS[p].desc)).join('')}</div></div>`;
   const hardline = c.perks.includes('hardline');
+  const overkill = c.perks.includes('overkill');
   $('#c-edit').innerHTML = `
     <div class="zh-field"><span>PRIMARY WEAPON</span><div class="zh-cards guns">${PRIMARIES.map((w) => gun('primary', w, c.primary === w.id)).join('')}</div></div>
     <h4 class="zh-sec">GUNSMITH · ${WEAPON[c.primary]!.name.toUpperCase()}</h4>
     ${attach}
-    <div class="zh-field"><span>SECONDARY WEAPON</span><div class="zh-cards guns">${SECONDARIES.map((w) => gun('secondary', w, c.secondary === w.id)).join('')}</div></div>
+    <div class="zh-field"><span>SECONDARY WEAPON${overkill ? ' · OVERKILL' : ''}</span><div class="zh-cards guns">${(overkill ? [...SECONDARIES, ...PRIMARIES.filter((w) => w.id !== c.primary)] : SECONDARIES).map((w) => gun('secondary', w, c.secondary === w.id)).join('')}</div></div>
     <h4 class="zh-sec">PERKS</h4>
     ${perkTier(1)}${perkTier(2)}${perkTier(3)}
     <h4 class="zh-sec">EQUIPMENT</h4>
@@ -596,6 +598,8 @@ $('#c-edit').addEventListener('click', (e) => {
   if (slot === 'secondary') c.secondary = b.dataset.v!;
   if (att) (c.primaryAtt as unknown as Record<string, string>)[att] = b.dataset.v!;
   if (perk !== undefined) c.perks[Number(perk)] = b.dataset.v as Perk;
+  // A second primary needs Overkill (and can't be the same gun twice).
+  if ((WEAPON[c.secondary]?.slot === 'primary' && !c.perks.includes('overkill')) || c.secondary === c.primary) c.secondary = SECONDARIES[0]!.id;
   // Sniper rifles keep their own scope.
   if (WEAPON[c.primary]?.scoped) c.primaryAtt.optic = 'iron';
   save();
@@ -1248,6 +1252,7 @@ else if (q.has('zombies')) void startZombies();
   /** Dev: render every map's menu shot (data URLs) — saved as assets/fps/thumbs/<id>.jpg. */
   async bakeMapThumbs() {
     await preload(MAPS.flatMap((m) => m.props.map((p) => p.model)));
+    await Promise.all(MAPS.map((m) => loadSky(m.theme.sky)));
     return Object.fromEntries(MAPS.map((m) => [m.id, mapThumb(m.id)]));
   },
 };

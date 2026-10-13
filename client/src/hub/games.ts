@@ -75,7 +75,7 @@ export const GAMES: GameEntry[] = [
   {
     id: 'zero-hour',
     title: 'Zero Hour',
-    tagline: 'Fast multiplayer FPS: 18 guns, classes, 9 killstreaks, 10 maps, 4-player splitscreen — plus round-based Zombies with the box, perks and Pack-a-Punch.',
+    tagline: 'Fast multiplayer FPS: 18 guns, 16 perks, 10 killstreaks up to the Tactical Nuke, 14 maps, Hardpoint, 4-player splitscreen — plus round-based Zombies with the box, perks and Pack-a-Punch.',
     href: '/zero-hour/',
     tags: ['FPS', 'vs Bots', 'Zombies', 'Online · LAN', '9 v 9'],
     art: { image: '/assets/hub/zero-hour.webp', emoji: '🎯', from: '#3a4a2a', to: '#c4f24a' },
@@ -111,14 +111,6 @@ export const GAMES: GameEntry[] = [
     href: '/starfall-3d/',
     tags: ['First-person 3D', 'Social deduction', 'vs Bots', 'Online · LAN'],
     art: { image: '/assets/hub/starfall-3d.webp', emoji: '🧑‍🚀', from: '#1b2a4a', to: '#c51111' },
-  },
-  {
-    id: 'cage-kings',
-    title: 'Cage Kings',
-    tagline: 'Full-contact MMA: strike, wrestle and submit with authentic damage, stamina and controller combat.',
-    href: '/cage-kings/',
-    tags: ['MMA', 'vs CPU', 'Local 1v1', 'Controller'],
-    art: { emoji: '🥊', from: '#ef263c', to: '#12151c' },
   },
   {
     id: 'velora',

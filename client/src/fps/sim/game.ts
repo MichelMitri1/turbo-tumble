@@ -1,17 +1,18 @@
 import { Level, raySphere, rayAabb } from './level';
 import { MAP, type MapDef, type SpawnPoint } from './maps';
 import { NO_INPUT, P, eyeHeight, height, newMove, stepMove, type Input, type MoveState } from './player';
-import { WEAPON, STREAKS, LETHALS, TACTICALS, applyAttachments, damageAt, fixLoadout, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './weapons';
+import { WEAPON, STREAKS, LETHALS, TACTICALS, EXPLOSIVE_WEAPONS, applyAttachments, damageAt, fixLoadout, type Attachments, type Loadout, type Perk, type Streak, type WeaponDef } from './weapons';
 import { NavGrid } from './nav';
 import { Horde, rayZombieBox, type ZEvent, type ZPlayer } from './horde';
 import { zdef } from './zweapons';
 import { ZMAP } from './maps';
 
-export type Mode = 'tdm' | 'ffa' | 'dom' | 'kc' | 'zombies';
+export type Mode = 'tdm' | 'ffa' | 'dom' | 'hp' | 'kc' | 'zombies';
 export const MODES: Record<Mode, { name: string; short: string; desc: string }> = {
   tdm: { name: 'Team Deathmatch', short: 'TDM', desc: 'First team to the kill limit wins.' },
   ffa: { name: 'Free-for-All', short: 'FFA', desc: 'Every soldier for themselves.' },
   dom: { name: 'Domination', short: 'DOM', desc: 'Capture and hold flags A, B and C.' },
+  hp: { name: 'Hardpoint', short: 'HP', desc: 'Hold the zone to score. It moves every minute.' },
   kc: { name: 'Kill Confirmed', short: 'KC', desc: 'Collect enemy dog tags to score.' },
   zombies: { name: 'Zombies', short: 'ZM', desc: 'Survive endless rounds of the undead.' },
 };
@@ -101,6 +102,17 @@ export interface Soldier {
   zm?: ZPlayer;
   /** Length of the reload in progress (perks change it). */
   reloadLen?: number;
+  /** Restock perk: when the next piece of equipment comes back. */
+  restockT?: number;
+}
+
+/**
+ * How a soldier's perks shape movement (the server and the client's prediction must agree):
+ * `mul` all speeds, `sprint` sprint / slide speed, `ads` how much aiming slows you (1 = fully).
+ */
+export function moveTuning(s: Soldier): { mul: number; sprint: number; ads: number } {
+  const p = s.loadout.perks;
+  return { mul: p.includes('lightweight') ? 1.07 : 1, sprint: p.includes('doubletime') ? 1.1 : 1, ads: p.includes('stalker') ? 0.35 : 1 };
 }
 
 export interface Grenade {
@@ -204,7 +216,9 @@ export type GameEvent =
   | { k: 'empty'; who: string }
   | { k: 'melee'; who: string; hit: boolean }
   | { k: 'grenadeThrow'; who: string; id: number; kind: NadeKind }
-  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd' | 'flash' | 'stun' | 'smoke' | 'molotov' | 'ray' | 'ray2' }
+  | { k: 'explosion'; x: number; y: number; z: number; r: number; kind: 'frag' | 'barrel' | 'airstrike' | 'semtex' | 'rcxd' | 'flash' | 'stun' | 'smoke' | 'molotov' | 'ray' | 'ray2' | 'nuke' }
+  /** Hardpoint: the zone moved to flag `zone`. */
+  | { k: 'hpMove'; zone: number }
   | { k: 'unitShot'; id: number; x: number; y: number; z: number; tx: number; ty: number; tz: number }
   | { k: 'unitDown'; id: number; kind: UnitKind; by: string }
   | { k: 'bite'; id: number; x: number; z: number }
@@ -231,6 +245,9 @@ export interface GameOptions {
 }
 
 export const TICK = 1 / 60;
+/** Hardpoint: seconds each zone is live, and its radius. */
+export const HP_ROTATE = 60;
+const HP_R = 3.5;
 const RESPAWN = 3;
 const REGEN_DELAY = 4;
 const REGEN_RATE = 45;
@@ -254,6 +271,7 @@ export class Game {
   readonly soldiers: Soldier[] = [];
   readonly score: [number, number] = [0, 0];
   readonly scoreLimit: number;
+  readonly timeLimit: number;
   timeLeft: number;
   phase: 'warmup' | 'play' | 'over' = 'warmup';
   warmup = 3;
@@ -281,6 +299,11 @@ export class Game {
   private history: Array<{ t: number; pos: Map<string, [number, number, number, boolean]> }> = [];
   readonly rand: () => number;
   private domTick = 0;
+  private hpLast = -1;
+  /** Hardpoint: points owed to each holder, paid every few seconds (one popup, not one a second). */
+  private hpOwed = new Map<string, number>();
+  /** A Tactical Nuke counting down. */
+  nuke: { t: number; owner: string; team: 0 | 1 } | null = null;
   /** Zombies mode director (null in multiplayer modes). */
   horde: Horde | null = null;
 
@@ -294,10 +317,11 @@ export class Game {
     this.mode = opts.mode;
     this.rand = rng(seed);
     const n = setups.length;
-    const defaults: Record<Mode, number> = { tdm: n >= 10 ? 75 : n >= 6 ? 50 : 30, ffa: n >= 8 ? 30 : 20, dom: 200, kc: n >= 10 ? 65 : 40, zombies: Infinity };
+    const defaults: Record<Mode, number> = { tdm: n >= 10 ? 75 : n >= 6 ? 50 : 30, ffa: n >= 8 ? 30 : 20, dom: 200, hp: 150, kc: n >= 10 ? 65 : 40, zombies: Infinity };
     this.scoreLimit = opts.scoreLimit ?? defaults[this.mode];
-    this.timeLeft = opts.timeLimit ?? 600;
-    if (this.mode === 'dom') this.flags = this.map.flags.map((f, i) => ({ name: 'ABC'[i]!, x: f.x, y: f.y, z: f.z, owner: -1, progress: 0, capturing: 0 }));
+    this.timeLimit = opts.timeLimit ?? 600;
+    this.timeLeft = this.timeLimit;
+    if (this.mode === 'dom' || this.mode === 'hp') this.flags = this.map.flags.map((f, i) => ({ name: 'ABC'[i]!, x: f.x, y: f.y, z: f.z, owner: -1, progress: 0, capturing: 0 }));
     // Explosive barrels (their collision box index, so it can be removed when they blow).
     this.map.props.forEach((p) => {
       if (!p.explosive) return;
@@ -464,6 +488,7 @@ export class Game {
     s.cookStart = -1;
     s.blindT = s.stunT = 0;
     s.ctrl = 0;
+    s.restockT = this.time + 25;
     s.streak = 0;
     s.earned.clear();
     s.damagers.clear();
@@ -555,7 +580,7 @@ export class Game {
     // Weapon swap.
     if (inp.slot >= 0 && inp.slot !== s.cur && s.swapT <= 0 && s.meleeT <= 0 && s.weapons[inp.slot as 0 | 1].def.id !== 'zm_empty') {
       s.cur = inp.slot as 0 | 1;
-      s.swapT = 0.55;
+      s.swapT = this.has(s, 'fasthands') ? 0.33 : 0.55;
       s.reloadT = 0;
       s.burstLeft = 0;
     }
@@ -571,7 +596,7 @@ export class Game {
         w.reserve -= take;
       }
     } else if ((inp.reload || (inp.fire && w.ammo === 0)) && w.ammo < w.def.mag && w.reserve > 0 && s.swapT <= 0) {
-      s.reloadT = (w.ammo === 0 ? w.def.reloadEmpty : w.def.reload) * (this.horde?.reloadMul(s) ?? 1);
+      s.reloadT = (w.ammo === 0 ? w.def.reloadEmpty : w.def.reload) * (this.horde?.reloadMul(s) ?? (this.has(s, 'fasthands') ? 0.7 : 1));
       s.reloadLen = s.reloadT;
       s.burstLeft = 0;
       this.events.push({ k: 'reload', who: s.id });
@@ -581,10 +606,10 @@ export class Game {
     const wantAds = inp.ads && s.meleeT <= 0;
     s.adsT = Math.max(0, Math.min(1, s.adsT + (wantAds ? dt / w.def.ads : -dt / (w.def.ads * 0.7))));
     // Movement.
-    const lw = this.has(s, 'lightweight') ? 1.07 : 1;
+    const tune = moveTuning(s);
     const canSprint = !inp.ads && s.adsT < 0.3 && !(inp.fire && w.ammo > 0 && s.reloadT <= 0);
     const stun = this.time < s.stunT ? 0.5 : 1;
-    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * lw * stun * zSpeed, canSprint && stun === 1, s.adsT);
+    if (!frozen) stepMove(this.level, s.m, inp, dt, w.def.move * tune.mul * stun * zSpeed, canSprint && stun === 1, s.adsT * tune.ads, tune.sprint);
     else {
       s.m.yaw = inp.yaw;
       s.m.pitch = inp.pitch;
@@ -597,6 +622,12 @@ export class Game {
     const delay = this.horde ? 2.4 : this.has(s, 'quickfix') ? 2.5 : REGEN_DELAY;
     if (s.hp < maxHp && this.time - s.lastDamageT > delay && !s.zm?.downed) s.hp = Math.min(maxHp, s.hp + (this.horde ? 70 : REGEN_RATE) * dt);
     if (frozen) return;
+    // Restock: a lethal or tactical comes back every 25 s.
+    if (!this.horde && this.has(s, 'restock') && this.time >= (s.restockT ?? 0)) {
+      s.restockT = this.time + 25;
+      if (s.grenades < LETHALS[s.loadout.lethal].count) s.grenades++;
+      else if (s.tacticals < TACTICALS[s.loadout.tactical].count) s.tacticals++;
+    }
     // Melee.
     if (inp.melee && !s.lastInput.melee && s.meleeT <= 0) this.melee(s);
     // Lethal: a frag is held to cook and thrown on release; everything else goes on the press.
@@ -898,6 +929,7 @@ export class Game {
     if (!t.alive || this.phase !== 'play') return false;
     // Spawn protection: the first moments after spawning take much less damage.
     if (this.time - t.spawnT < 1.5 && by && by.id !== t.id) dmg *= 0.3;
+    if (EXPLOSIVE_WEAPONS.has(weapon) && this.has(t, 'flak')) dmg *= 0.5;
     t.hp -= dmg;
     t.lastDamageT = this.time;
     if (by && by.id !== t.id) t.damagers.set(by.id, (t.damagers.get(by.id) ?? 0) + dmg);
@@ -974,6 +1006,8 @@ export class Game {
       }
       // Scavenger.
       if (this.has(by, 'scavenger')) for (const w of by.weapons) w.reserve = Math.min(w.def.reserve * 1.5, w.reserve + w.def.mag);
+      // Quick Fix: a kill starts your health coming back at once.
+      if (this.has(by, 'quickfix')) by.lastDamageT = -99;
     }
     this.events.push({ k: 'kill', killer: by?.id ?? t.id, victim: t.id, weapon, head, assist, streak: by?.streak ?? 0 });
   }
@@ -992,12 +1026,23 @@ export class Game {
     if (s.kills >= this.scoreLimit) this.finish();
   }
 
-  private finish(): void {
+  /** End the match (a Tactical Nuke names the winner outright). */
+  private finish(nuked?: { team: 0 | 1; owner: string }): void {
     if (this.phase === 'over') return;
     this.phase = 'over';
     const ranked = [...this.soldiers].sort((a, b) => (this.mode === 'ffa' ? b.kills - a.kills : b.score - a.score));
-    this.winner = this.mode === 'ffa' ? -1 : this.score[0] === this.score[1] ? -1 : this.score[0] > this.score[1] ? 0 : 1;
-    this.events.push({ k: 'over', winner: this.winner, top: ranked[0]?.id ?? '' });
+    this.winner = nuked ? (this.mode === 'ffa' ? -1 : nuked.team) : this.mode === 'ffa' ? -1 : this.score[0] === this.score[1] ? -1 : this.score[0] > this.score[1] ? 0 : 1;
+    this.events.push({ k: 'over', winner: this.winner, top: nuked?.owner ?? ranked[0]?.id ?? '' });
+  }
+
+  /**
+   * Hardpoint: which of the map's objectives is live (from the match clock, so clients agree).
+   * It opens on the middle one (B), then A, then C: neither team starts next to it.
+   */
+  hpZone(): number {
+    const n = Math.max(1, this.flags.length);
+    const k = Math.floor(Math.max(0, this.timeLimit - this.timeLeft) / HP_ROTATE) % n;
+    return n === 3 ? [1, 0, 2][k]! : k;
   }
 
   // ---------------------------------------------------------------- melee / grenades / explosions
@@ -1143,7 +1188,8 @@ export class Game {
           if (d > range || !this.sees(g.x, g.y + 0.2, g.z, e[0], e[1], e[2])) continue;
           const look = Game.dir(t.m.yaw, t.m.pitch);
           const facing = (look[0] * dx + look[1] * dy + look[2] * dz) / (d || 1);
-          const self = by && t.id === by.id ? 0.5 : 1;
+          // Battle Hardened shrugs most of it off.
+          const self = (by && t.id === by.id ? 0.5 : 1) * (this.has(t, 'battlehard') ? 0.35 : 1);
           if (g.kind === 'flash') {
             const amount = Math.min(1, (1 - d / range) * 1.4 * (0.3 + 0.7 * Math.max(0, facing)) * self);
             if (amount < 0.08) continue;
@@ -1265,6 +1311,13 @@ export class Game {
     } else if (st === 'heli') {
       const r = Math.min(this.map.half[0], this.map.half[1]) * 0.55;
       this.helis.push({ id: nextId++, owner: s.id, team: s.team, until: this.time + 40, angle: this.rand() * 6.28, x: r, y: 20, z: 0, hp: 1400, target: '', burst: 0, nextShot: this.time + 3, cooldown: 0 });
+      this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st });
+    } else if (st === 'nuke') {
+      if (this.nuke) {
+        s.streaks.push(st);
+        return;
+      }
+      this.nuke = { t: this.time + 10, owner: s.id, team: s.team };
       this.events.push({ k: 'streakUsed', who: s.id, team: s.team, streak: st });
     } else if (st === 'cuav') {
       const key = this.mode === 'ffa' ? s.id : `t${s.team}`;
@@ -1456,7 +1509,7 @@ export class Game {
           break;
         }
         case 'sentry': {
-          const t = nearest(enemies, 38, (e) => this.sees(u.x, u.y + 1, u.z, e.m.x, e.m.y + 1.2, e.m.z));
+          const t = nearest(enemies, 38, (e) => !this.has(e, 'coldblood') && this.sees(u.x, u.y + 1, u.z, e.m.x, e.m.y + 1.2, e.m.z));
           if (!t) {
             u.yaw += dt * 0.6;
             break;
@@ -1480,7 +1533,7 @@ export class Game {
           u.repath -= dt;
           let t = this.soldier(u.target);
           if (!t || !t.alive || u.repath <= 0) {
-            t = nearest(enemies, 999, () => true) ?? undefined;
+            t = nearest(enemies, 999, (e) => !this.has(e, 'coldblood')) ?? undefined;
             u.target = t?.id ?? '';
           }
           if (!t) break;
@@ -1540,7 +1593,7 @@ export class Game {
             u.pitch = Math.max(-1.5, Math.min(0.1, inp.pitch));
             fire = inp.fire;
           } else {
-            const t = nearest(enemies, 300, (e) => !this.has(e, 'ghost') && this.sees(u.x, u.y - 2, u.z, e.m.x, e.m.y + 1.2, e.m.z));
+            const t = nearest(enemies, 300, (e) => !this.has(e, 'coldblood') && this.sees(u.x, u.y - 2, u.z, e.m.x, e.m.y + 1.2, e.m.z));
             if (t) {
               u.yaw = Math.atan2(-(t.m.x - u.x), -(t.m.z - u.z));
               u.pitch = Math.atan2(t.m.y + 1 - u.y, Math.hypot(t.m.x - u.x, t.m.z - u.z));
@@ -1579,6 +1632,8 @@ export class Game {
 
   /** Mark an enemy for a team (recon drone). */
   private mark(team: 0 | 1, owner: string, id: string, secs: number): void {
+    const t = this.soldier(id);
+    if (t && this.has(t, 'ghost')) return;
     const key = this.mode === 'ffa' ? owner : `t${team}`;
     let m = this.marks.get(key);
     if (!m) this.marks.set(key, (m = new Map()));
@@ -1626,6 +1681,19 @@ export class Game {
   }
 
   private tickStreaks(dt: number): void {
+    // Tactical Nuke: everyone on the other side dies and the match is over.
+    if (this.nuke && this.time >= this.nuke.t) {
+      const n = this.nuke;
+      this.nuke = null;
+      const by = this.soldier(n.owner) ?? null;
+      this.events.push({ k: 'explosion', x: 0, y: 40, z: 0, r: 999, kind: 'nuke' });
+      for (const t of this.soldiers) {
+        t.blindT = Math.max(t.blindT, this.time + 4);
+        if (t.alive && (this.mode === 'ffa' ? t.id !== n.owner : t.team !== n.team)) this.damage(t, 9999, by, 'nuke', false, 0, 0);
+      }
+      this.finish({ team: n.team, owner: n.owner });
+      return;
+    }
     // Airstrike bombs walk along their line.
     for (let i = this.airstrikes.length - 1; i >= 0; i--) {
       const a = this.airstrikes[i]!;
@@ -1650,7 +1718,7 @@ export class Game {
       h.y = 20 + Math.sin(this.time * 0.7) * 1.5;
       if (this.time < h.nextShot) continue;
       const owner = this.soldier(h.owner);
-      const targets = this.soldiers.filter((t) => t.alive && t.id !== h.owner && (this.mode === 'ffa' || t.team !== h.team) && !this.has(t, 'ghost') && this.sees(h.x, h.y - 2, h.z, t.m.x, t.m.y + 1.2, t.m.z));
+      const targets = this.soldiers.filter((t) => t.alive && t.id !== h.owner && (this.mode === 'ffa' || t.team !== h.team) && !this.has(t, 'coldblood') && this.sees(h.x, h.y - 2, h.z, t.m.x, t.m.y + 1.2, t.m.z));
       if (!targets.length) {
         h.nextShot = this.time + 0.5;
         continue;
@@ -1716,6 +1784,46 @@ export class Game {
       if (this.domTick >= 2.5) {
         this.domTick = 0;
         for (const f of this.flags) if (f.owner !== -1) this.addScore(f.owner, 1);
+      }
+    }
+    if (this.mode === 'hp') {
+      const zone = this.hpZone();
+      if (zone !== this.hpLast) {
+        this.hpLast = zone;
+        this.events.push({ k: 'hpMove', zone });
+      }
+      let holders: Soldier[] = [];
+      this.flags.forEach((f, i) => {
+        f.owner = -1;
+        f.progress = 0;
+        f.capturing = 0;
+        if (i !== zone) return;
+        const inside = this.soldiers.filter((s) => s.alive && Math.hypot(s.m.x - f.x, s.m.z - f.z) < HP_R && Math.abs(s.m.y - f.y) < 2.5);
+        const t0 = inside.some((s) => s.team === 0);
+        const t1 = inside.some((s) => s.team === 1);
+        // Both teams inside: contested, nobody scores.
+        if (t0 && t1) f.capturing = 1;
+        else if (t0 || t1) {
+          f.owner = t0 ? 0 : 1;
+          f.progress = t0 ? -1 : 1;
+          holders = inside;
+        }
+      });
+      this.domTick += dt;
+      if (this.domTick >= 1) {
+        this.domTick = 0;
+        const f = this.flags[zone];
+        if (f && f.owner !== -1) {
+          for (const s of holders) {
+            const owed = (this.hpOwed.get(s.id) ?? 0) + 5;
+            if (owed >= 25) {
+              s.score += owed;
+              this.events.push({ k: 'score', who: s.id, pts: owed, why: 'Holding the Hardpoint' });
+              this.hpOwed.set(s.id, 0);
+            } else this.hpOwed.set(s.id, owed);
+          }
+          this.addScore(f.owner, 1);
+        }
       }
     }
     if (this.mode === 'kc') {

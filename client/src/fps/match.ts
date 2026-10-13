@@ -8,7 +8,9 @@ import type { Material } from './sim/level';
 import { buildMap, disposeTree, makeHeli, makeJet, makeTag, makeUnit, type MapView } from './render/world3d';
 import { Areas } from './render/areas';
 import { cloneModel } from './render/assets';
-import { prebuildTextures } from './render/textures';
+import { loadSurfaces, prebuildTextures } from './render/textures';
+import { loadSky } from './render/skies';
+import { Weather } from './render/weather';
 import { ViewModel } from './render/viewmodel';
 import { SoldierView, type Pose } from './render/soldiers';
 import { Fx } from './render/fx';
@@ -137,6 +139,10 @@ function sharedRenderer(quality: MatchSettings['quality']): { r: THREE.WebGLRend
   return shared;
 }
 
+/** The cinematic grade over the 3D view (a CSS filter on the canvas: free, and the HUD stays crisp). */
+const GRADE = 'contrast(1.08) brightness(0.98)';
+const SPLIT_GRADE = `${GRADE} saturate(1.1)`;
+
 /** Let the browser paint (the loading bar) before the next heavy step. */
 const yieldFrame = () => new Promise<void>((res) => requestAnimationFrame(() => setTimeout(res, 0)));
 
@@ -247,6 +253,11 @@ export class Match {
   private bodies = new Map<string, SoldierView>();
   private heliViews = new Map<number, THREE.Group>();
   private jets: Array<{ g: THREE.Group; t: number; from: THREE.Vector3; dir: THREE.Vector3; heard: boolean }> = [];
+  /** Falling snow (snow maps). */
+  private weather: Weather | null = null;
+  /** A Tactical Nuke's countdown (seconds), and the last whole second shown. */
+  private nukeT = 0;
+  private nukeSec = 0;
   private tagViews = new Map<number, THREE.Group>();
   private grenadeViews = new Map<number, THREE.Object3D>();
   private nadeGeo = new THREE.SphereGeometry(0.06, 8, 6);
@@ -257,6 +268,8 @@ export class Match {
   private zr: ZRender | null = null;
   private groanT = 0;
   private desatCss = '';
+  /** Tracker: where each soldier last left a print, and which foot is next. */
+  private strides = new Map<string, { x: number; z: number; left: boolean }>();
   private overTimer = 0;
   private W = 1;
   private H = 1;
@@ -310,9 +323,12 @@ export class Match {
       await yieldFrame();
     };
     await step(0.05);
+    // The photographed sky and the scanned surfaces (cached after the first match).
+    await Promise.all([loadSky(g.map.theme.sky), loadSurfaces()]);
     prebuildTextures(new Set<Material>([g.map.theme.ground, ...g.map.theme.patches.map((p) => p[4]), ...g.map.boxes.map((b) => b.mat)]));
     await step(0.3);
     this.mapView = buildMap(this.scene, this.renderer, g.map);
+    if (g.map.theme.sky === 'snow') this.weather = new Weather(this.scene);
     if (g.horde) {
       this.zr = new ZRender(this.scene, g.horde);
       this.audio.zPrepare();
@@ -415,6 +431,8 @@ export class Match {
 
   dispose(): void {
     clearTimeout(this.overTimer);
+    this.weather?.dispose();
+    this.weather = null;
     this.renderer.domElement.style.filter = '';
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, this.W, this.H);
@@ -541,9 +559,9 @@ export class Match {
       const v = this.views[0]!;
       const me = this.meOf(v);
       const sat = me.alive ? Math.max(0.35, 1 - v.desat * 0.6 - Math.max(0, (40 - me.hp) / 40) * 0.25) : 1;
-      const css = sat > 0.99 ? '' : `saturate(${sat.toFixed(2)})`;
+      const css = `${GRADE} saturate(${(sat * 1.1).toFixed(2)})`;
       if (css !== this.desatCss) this.renderer.domElement.style.filter = this.desatCss = css;
-    }
+    } else if (this.desatCss !== SPLIT_GRADE) this.renderer.domElement.style.filter = this.desatCss = SPLIT_GRADE;
     if (g.phase === 'over' && !this.over) {
       this.over = true;
       for (const v of this.views) v.input.unlock();
@@ -573,7 +591,8 @@ export class Match {
       scoped: v.vm.scoped,
       scope: v.vm.scope,
       yaw: v.yaw,
-      enemyName: enemy ? enemy.name : '',
+      // Cold-Blooded: no red name.
+      enemyName: enemy && !enemy.loadout.perks.includes('coldblood') ? enemy.name : '',
       scoreboard: !!f?.scoreboard || g.phase === 'over',
       pad: v.input.device === 'pad',
       reloadP: me.reloadT > 0 ? 1 - me.reloadT / (w.ammo === 0 ? w.def.reloadEmpty : w.def.reload) : -1,
@@ -653,7 +672,7 @@ export class Match {
     const g = this.session.game;
     const h = g.level.raycast(x, y + 0.2, z, 0, -1, 0, 0.6);
     const mat = h.box?.mat ?? g.map.theme.ground;
-    return mat === 'metal' ? 'metal' : mat === 'wood' ? 'wood' : mat === 'grass' || mat === 'sand' || mat === 'dirt' ? 'soft' : 'hard';
+    return mat === 'metal' || mat === 'corrugated' ? 'metal' : mat === 'wood' || mat === 'plywood' ? 'wood' : mat === 'grass' || mat === 'sand' || mat === 'dirt' || mat === 'snow' || mat === 'gravel' ? 'soft' : 'hard';
   }
 
   /** A bullet from (o) to (p) that passed close to a player's head without hitting them: whizz. */
@@ -802,10 +821,12 @@ export class Match {
             heli: friendly ? 'Attack helicopter inbound' : 'Enemy attack helicopter',
             dogs: friendly ? 'Attack dogs inbound' : 'Enemy attack dogs',
             gunner: friendly ? 'Chopper gunner inbound' : 'Enemy chopper gunner',
+            nuke: friendly ? 'Tactical nuke incoming' : 'Enemy tactical nuke incoming',
           }[e.streak];
           if (v === p1) this.audio.say(says);
           v.hud.popup(says.replace(/U A V/g, 'UAV').replace('R C X D', 'RC-XD').toUpperCase(), 0);
         }
+        if (e.streak === 'nuke') this.nukeT = 10;
         if (e.streak === 'airstrike' && e.x !== undefined && e.dx !== undefined) {
           const dir = new THREE.Vector3(e.dx, 0, e.dz!);
           for (let k = 0; k < 2; k++) {
@@ -823,6 +844,18 @@ export class Match {
       }
       case 'explosion': {
         v1.set(e.x, e.y, e.z);
+        if (e.kind === 'nuke') {
+          // White-out, the biggest bang there is, and every screen shakes.
+          this.nukeT = 0;
+          this.fx.explosion(v1, 60);
+          this.audio.explosion(0, 0);
+          this.audio.flashbang(0, 0, 1);
+          for (const v of this.views) {
+            v.shake = 1;
+            v.input.rumble(1, 1, 1200);
+          }
+          break;
+        }
         const [d, pan] = this.distTo(e.x, e.y, e.z);
         if (e.kind === 'flash' || e.kind === 'stun' || e.kind === 'smoke' || e.kind === 'molotov') {
           this.fx.impact(v1, v2.set(0, 1, 0), 'dust');
@@ -928,6 +961,14 @@ export class Match {
       case 'tag':
         if (this.viewOf(e.who)) this.audio.tag(e.confirmed);
         break;
+      case 'hpMove': {
+        const f = g.flags[e.zone];
+        if (!f) break;
+        this.audio.capture();
+        for (const v of this.views) v.hud.center(`<small>HARDPOINT</small><b>${g.time < 20 ? 'ONLINE' : 'MOVED'} · ${f.name}</b>`, 2.2);
+        this.audio.say(g.time < 20 ? 'Hardpoint online' : 'Hardpoint moved');
+        break;
+      }
       case 'reload': {
         const v = this.viewOf(e.who);
         if (v) {
@@ -1119,7 +1160,7 @@ export class Match {
     const n = new THREE.Vector3(h.nx, h.ny, h.nz);
     if (n.lengthSq() === 0) n.set(-dx / l, -dy / l, -dz / l);
     const mat = h.box?.mat;
-    this.fx.impact(p, n, mat === 'metal' ? 'metal' : mat === 'wood' ? 'wood' : 'dust');
+    this.fx.impact(p, n, mat === 'metal' || mat === 'corrugated' ? 'metal' : mat === 'wood' || mat === 'plywood' || mat === 'darkwood' ? 'wood' : 'dust');
   }
 
   /** Camera for a piloted killstreak: chase cam behind the RC-XD, the drone's / gunship's own gun camera. */
@@ -1156,6 +1197,16 @@ export class Match {
 
   /** The shared world (bodies, hardware, effects) once, then every player's view. */
   private render(dt: number): void {
+    if (this.weather) this.weather.update(dt, this.views[0]!.camera.position);
+    if (this.nukeT > 0) {
+      this.nukeT -= dt;
+      const sec = Math.max(0, Math.ceil(this.nukeT));
+      if (sec !== this.nukeSec) {
+        this.nukeSec = sec;
+        for (const v of this.views) v.hud.center(`<small>TACTICAL NUKE INCOMING</small><b>${sec}</b>`, 1.1);
+        this.audio.ui();
+      }
+    }
     const g = this.session.game;
     const p1 = this.me;
     // Killstreak hardware.
@@ -1215,13 +1266,27 @@ export class Match {
     }
     // Soldiers (local players too: the others see them).
     const seen = new Set<string>();
+    const trackers = this.views.map((v) => this.meOf(v)).filter((m) => m?.alive && m.loadout.perks.includes('tracker'));
     for (const s of g.soldiers) {
       seen.add(s.id);
       const b = this.bodyFor(s);
       b.root.visible = s.alive || s.respawnIn >= RESPAWN_HIDE;
       b.update(this.poseOf(s), dt);
-      // Footsteps (local players hear their own from their step timer).
-      if (!this.viewOf(s.id) && s.alive && s.m.onGround && Math.hypot(s.m.vx, s.m.vz) > 3 && !s.m.crouched) {
+      // Tracker: enemies of a local player with the perk leave footprints.
+      if (s.alive && s.m.onGround && trackers.some((t) => g.enemies(t, s))) {
+        const st = this.strides.get(s.id) ?? { x: s.m.x, z: s.m.z, left: false };
+        const d = Math.hypot(s.m.x - st.x, s.m.z - st.z);
+        if (d > 0.8) {
+          const side = st.left ? 0.12 : -0.12;
+          this.fx.footprint(s.m.x + Math.cos(s.m.yaw) * side, s.m.y, s.m.z - Math.sin(s.m.yaw) * side, Math.atan2(-(s.m.x - st.x), -(s.m.z - st.z)));
+          st.x = s.m.x;
+          st.z = s.m.z;
+          st.left = !st.left;
+        }
+        this.strides.set(s.id, st);
+      }
+      // Footsteps (local players hear their own from their step timer). Dead Silence: none.
+      if (!this.viewOf(s.id) && s.alive && s.m.onGround && Math.hypot(s.m.vx, s.m.vz) > 3 && !s.m.crouched && !s.loadout.perks.includes('deadsilence')) {
         const [d, pan] = this.distTo(s.m.x, s.m.y, s.m.z);
         if (d < 22 && Math.random() < dt * (s.m.sprinting ? 3.4 : 2.4)) this.audio.footstep(d, pan, this.surfaceAt(s.m.x, s.m.y, s.m.z));
       }
@@ -1234,7 +1299,7 @@ export class Match {
     // Domination flags.
     this.mapView.flags.forEach((fv, i) => {
       const fl = g.flags[i];
-      fv.group.visible = !!fl;
+      fv.group.visible = !!fl && (g.mode !== 'hp' || i === g.hpZone());
       if (!fl) return;
       const col = fl.owner === -1 ? '#e8e8e8' : fl.owner === p1.team ? '#3c8cff' : '#ff4a3a';
       (fv.cloth.material as THREE.MeshStandardMaterial).color.set(col);
@@ -1390,7 +1455,8 @@ export class Match {
     v.stepT -= dt * Math.hypot(me.m.vx, me.m.vz) * (me.m.onGround ? 1 : 0);
     if (v.stepT <= 0 && me.alive && !me.m.crouched && !me.ctrl) {
       v.stepT = 2.3;
-      this.audio.footstep(1.5, 0, this.surfaceAt(me.m.x, me.m.y, me.m.z));
+      // Dead Silence: you barely hear yourself either.
+      this.audio.footstep(me.loadout.perks.includes('deadsilence') ? 7 : 1.5, 0, this.surfaceAt(me.m.x, me.m.y, me.m.z));
     }
     // Viewmodel.
     const f = v.lastFrame;

@@ -1,6 +1,6 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { defaultServerUrl } from '../../net/serverUrl';
-import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
+import { Game, TICK, NADE_KINDS, UNIT_KINDS, UNIT_HP, moveTuning, type GameEvent, type Soldier, type SoldierSetup } from '../sim/game';
 import { stepMove, type Input } from '../sim/player';
 import { WEAPON, type Loadout } from '../sim/weapons';
 import type { Session } from '../match';
@@ -412,8 +412,8 @@ export class OnlineSession implements Session {
     this.pending = this.pending.filter((p) => p.seq > ack);
     const m = { ...me.m, x, y, z, vx, vy, vz, crouched: !!(bits & 2), slide: bits & 8 ? me.m.slide : 0, onGround: !!(bits & 16) };
     const w = me.weapons[me.cur].def;
-    const lw = me.loadout.perks.includes('lightweight') ? 1.07 : 1;
-    for (const p of this.pending) stepMove(this.pred.level, m, p.inp, TICK, w.move * lw, me.adsT < 0.3, me.adsT);
+    const tune = moveTuning(me);
+    for (const p of this.pending) stepMove(this.pred.level, m, p.inp, TICK, w.move * tune.mul, me.adsT < 0.3, me.adsT * tune.ads, tune.sprint);
     const err = Math.hypot(m.x - me.m.x, m.y - me.m.y, m.z - me.m.z);
     if (err > 0.03) {
       // Small errors blend in; big ones snap.

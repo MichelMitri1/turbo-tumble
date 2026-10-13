@@ -10,7 +10,7 @@ const FOCUSABLE = [
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 
-const realtimeRoutes = new Set(['/turbo-tumble/', '/boostball/', '/zero-hour/']);
+const realtimeRoutes = new Set(['/turbo-tumble/', '/boostball/', '/zero-hour/', '/matchday/', '/matchday/index.html']);
 const ownsControllerNavigation = realtimeRoutes.has(location.pathname);
 
 let installed = false;

@@ -23,7 +23,7 @@ interface Member {
 
 const BOT_NAMES = ['Ghost', 'Soap', 'Price', 'Gaz', 'Roach', 'Nikolai', 'Yuri', 'Farah', 'Alex', 'Kyle', 'Hesh', 'Logan', 'Keegan', 'Merrick', 'Kick', 'Ajax', 'Rook', 'Dutch', 'Ripper', 'Sarge', 'Vasquez', 'Mara', 'Tank', 'Hawk', 'Wolf', 'Viper', 'Echo', 'Bishop', 'Reyes', 'Kowalski', 'Novak', 'Ortiz', 'Sasha', 'Dmitri'];
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Soldier';
-const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'tag', 'over', 'reload', 'melee', 'grenadeThrow', 'unitShot', 'unitDown', 'bite', 'flashed', 'stunned',
+const SERVER_EVENTS = new Set<GameEvent['k']>(['shot', 'hit', 'kill', 'medal', 'score', 'explosion', 'streakEarned', 'streakUsed', 'heliShot', 'heliDown', 'flag', 'hpMove', 'tag', 'over', 'reload', 'melee', 'grenadeThrow', 'unitShot', 'unitDown', 'bite', 'flashed', 'stunned',
   // Zombies.
   'zround', 'zroundEnd', 'zpts', 'zbuy', 'zdeny', 'zboard', 'zhit', 'zdown', 'zrevived', 'zbleed', 'zperk', 'zpower', 'zdrop', 'zgrab', 'zbox', 'zpap', 'zswing', 'zthunder', 'zspawn', 'zdoor', 'zover']);
 
@@ -68,7 +68,7 @@ export class FpsRoom extends Room {
     }
     this.onMessage(FpMsg.Config, (c, cfg: Partial<FpConfig>) => {
       if (c.sessionId !== this.hostId || this.phase !== 'lobby') return;
-      if (cfg.mode && ['tdm', 'ffa', 'dom', 'kc', 'zombies'].includes(cfg.mode)) this.config.mode = cfg.mode;
+      if (cfg.mode && ['tdm', 'ffa', 'dom', 'hp', 'kc', 'zombies'].includes(cfg.mode)) this.config.mode = cfg.mode;
       if (cfg.map && MAP[cfg.map] && !ZMAP[cfg.map]) this.config.map = cfg.map;
       // Zombies has its own map; multiplayer never runs on it.
       if (this.config.mode === 'zombies') this.config.map = 'nachtkino';

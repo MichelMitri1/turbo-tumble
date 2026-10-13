@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-/** Bullet tracers, impacts (sparks / dust / blood), decals, explosions. */
+/** Bullet tracers, impacts (sparks / dust / blood), decals, explosions, Tracker footprints. */
+const FOOTPRINTS = 160;
+const PRINT_LIFE = 5;
+const m4 = new THREE.Matrix4();
+const col = new THREE.Color();
 class Particles {
   readonly points: THREE.Points;
   private pos: Float32Array;
@@ -156,6 +160,11 @@ export class Fx {
   private boomTex: THREE.Texture;
   private decalTex: THREE.Texture;
   private flashMat: THREE.SpriteMaterial;
+  /** Tracker perk: enemy footprints (additive, so fading the colour to black fades them out). */
+  private prints: THREE.InstancedMesh;
+  private printAge = new Float32Array(FOOTPRINTS).fill(99);
+  private printNext = 0;
+  private printTex: THREE.Texture;
 
   constructor() {
     this.group.add(this.smoke.points, this.glow.points);
@@ -195,6 +204,41 @@ export class Fx {
     bg.fillRect(0, 0, 128, 128);
     this.boomTex = new THREE.CanvasTexture(b);
     this.flashMat = new THREE.SpriteMaterial({ map: this.boomTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    // A boot print: sole and heel.
+    const f = document.createElement('canvas');
+    f.width = 32;
+    f.height = 64;
+    const fg = f.getContext('2d')!;
+    fg.fillStyle = '#fff';
+    fg.beginPath();
+    fg.ellipse(16, 22, 11, 19, 0, 0, Math.PI * 2);
+    fg.fill();
+    fg.beginPath();
+    fg.ellipse(16, 52, 9, 10, 0, 0, Math.PI * 2);
+    fg.fill();
+    this.printTex = new THREE.CanvasTexture(f);
+    const geo = new THREE.PlaneGeometry(0.13, 0.28);
+    geo.rotateX(-Math.PI / 2);
+    this.prints = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: this.printTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }), FOOTPRINTS);
+    this.prints.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.prints.frustumCulled = false;
+    this.prints.count = FOOTPRINTS;
+    const hide = new THREE.Matrix4().makeTranslation(0, -999, 0);
+    for (let i = 0; i < FOOTPRINTS; i++) {
+      this.prints.setMatrixAt(i, hide);
+      this.prints.setColorAt(i, new THREE.Color(0, 0, 0));
+    }
+    this.group.add(this.prints);
+  }
+
+  /** Drop a footprint (Tracker): `yaw` is the walker's heading. */
+  footprint(x: number, y: number, z: number, yaw: number): void {
+    const i = this.printNext;
+    this.printNext = (i + 1) % FOOTPRINTS;
+    this.printAge[i] = 0;
+    m4.makeRotationY(yaw).setPosition(x, y + 0.03, z);
+    this.prints.setMatrixAt(i, m4);
+    this.prints.instanceMatrix.needsUpdate = true;
   }
 
   resize(heightPx: number, fovY: number): void {
@@ -289,6 +333,17 @@ export class Fx {
   update(dt: number): void {
     this.glow.update(dt);
     this.smoke.update(dt);
+    // Footprints glow red and fade over their life.
+    let live = false;
+    for (let i = 0; i < FOOTPRINTS; i++) {
+      const a = this.printAge[i]!;
+      if (a >= PRINT_LIFE) continue;
+      this.printAge[i] = a + dt;
+      const k = Math.max(0, 1 - (a + dt) / PRINT_LIFE) * 0.9;
+      this.prints.setColorAt(i, col.setRGB(1 * k, 0.16 * k, 0.08 * k));
+      live = true;
+    }
+    if (live && this.prints.instanceColor) this.prints.instanceColor.needsUpdate = true;
     let n = 0;
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i]!;
@@ -335,6 +390,10 @@ export class Fx {
     this.decalTex.dispose();
     this.boomTex.dispose();
     this.flashMat.dispose();
+    this.prints.geometry.dispose();
+    (this.prints.material as THREE.Material).dispose();
+    this.printTex.dispose();
+    this.prints.dispose();
     for (const l of this.lights) l.light.dispose();
     this.group.removeFromParent();
   }

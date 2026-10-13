@@ -1,8 +1,9 @@
 import { Room, ServerError, type Client } from '@colyseus/core';
 import { MatchSim, NO_INPUT, type Input, type MatchEvent } from '../../../client/src/football/sim/match';
 import { CLUB } from '../../../client/src/football/sim/data';
+import { CPU_LEVELS } from '../../../client/src/football/sim/difficulty';
 import { writeFrame } from '../../../client/src/football/sim/snapshot';
-import { FB_MAX_PER_TEAM, FB_VERSION, FbMsg, INPUT_BITS, type FbBegin, type FbConfig, type FbInput, type FbJoin, type FbLobby } from '../../../client/src/football/net/protocol';
+import { FB_MAX_PER_TEAM, FB_VERSION, FbMsg, INPUT_BITS, TRICK_SHIFT, type FbBegin, type FbConfig, type FbInput, type FbJoin, type FbLobby } from '../../../client/src/football/net/protocol';
 import { FastLane } from '../fastlane';
 import { claimRoomCode, releaseRoomCode } from '../matchmaking/RoomCodes';
 import { LAN_MODE } from '../lan';
@@ -16,7 +17,7 @@ interface Member {
 
 const clean = (raw: unknown) => String(raw ?? '').replace(/[^\p{L}\p{N} _.\-!?']/gu, '').trim().slice(0, 16) || 'Player';
 const HALVES = [60, 120, 180, 240, 300, 360, 600];
-const DIFFS = new Set(['amateur', 'pro', 'world', 'legendary']);
+const DIFFS = new Set<string>(CPU_LEVELS);
 
 /**
  * Matchday online: the server runs the authoritative match at 60 Hz. Each client steers
@@ -70,7 +71,7 @@ export class FootballRoom extends Room {
     this.lane.on(FbMsg.Input, (client, m: (FbInput & { r?: unknown }) | undefined) => {
       if (!this.sim || !m) return;
       const f = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
-      const toInput = (x: number, z: number, b: number): Input => ({ mx: f(x), mz: f(z), sprint: !!(b & INPUT_BITS.sprint), pass: !!(b & INPUT_BITS.pass), shoot: !!(b & INPUT_BITS.shoot), through: !!(b & INPUT_BITS.through), lob: !!(b & INPUT_BITS.lob), finesse: !!(b & INPUT_BITS.finesse), chip: !!(b & INPUT_BITS.chip), switch: !!(b & INPUT_BITS.switch), skill: !!(b & INPUT_BITS.skill) });
+      const toInput = (x: number, z: number, b: number): Input => ({ mx: f(x), mz: f(z), sprint: !!(b & INPUT_BITS.sprint), pass: !!(b & INPUT_BITS.pass), shoot: !!(b & INPUT_BITS.shoot), through: !!(b & INPUT_BITS.through), lob: !!(b & INPUT_BITS.lob), finesse: !!(b & INPUT_BITS.finesse), chip: !!(b & INPUT_BITS.chip), switch: !!(b & INPUT_BITS.switch), skill: !!(b & INPUT_BITS.skill), l2: !!(b & INPUT_BITS.l2), tkNext: !!(b & INPUT_BITS.tkNext), tkPrev: !!(b & INPUT_BITS.tkPrev), trick: Math.min(100, (b >> TRICK_SHIFT) & 127), dive: b & INPUT_BITS.diveL ? -1 : b & INPUT_BITS.diveR ? 1 : 0 });
       let q = this.queues.get(client.sessionId);
       if (!q) this.queues.set(client.sessionId, (q = []));
       if (Array.isArray(m.r)) {

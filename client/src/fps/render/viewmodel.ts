@@ -80,8 +80,8 @@ export class ViewModel {
 
   constructor(team: 0 | 1) {
     this.camera = new THREE.PerspectiveCamera(58, 1, 0.01, 10);
-    this.scene.add(new THREE.HemisphereLight('#e6eeff', '#4a4236', 1.5));
-    const key = new THREE.DirectionalLight('#fff2e0', 1.6);
+    this.scene.add(new THREE.HemisphereLight('#e6eeff', '#4a4236', 1.05));
+    const key = new THREE.DirectionalLight('#fff2e0', 1.7);
     key.position.set(0.4, 1, 0.6);
     this.scene.add(key, this.flashLight);
     this.scene.add(this.camera);

@@ -82,7 +82,7 @@ export function eyeHeight(m: MoveState): number {
  * Advance movement one tick. `speedMul` folds in the weapon / perk / ADS speed.
  * `canSprint` is false while ADS, reloading with a pistol, etc.
  */
-export function stepMove(level: Level, m: MoveState, inp: Input, dt: number, speedMul: number, canSprint: boolean, adsAmount: number): void {
+export function stepMove(level: Level, m: MoveState, inp: Input, dt: number, speedMul: number, canSprint: boolean, adsAmount: number, sprintMul = 1): void {
   m.yaw = inp.yaw;
   m.pitch = Math.max(-1.45, Math.min(1.45, inp.pitch));
   const crouchEdge = inp.crouch && !m.lastCrouch;
@@ -92,7 +92,7 @@ export function stepMove(level: Level, m: MoveState, inp: Input, dt: number, spe
   // Slide: crouch while sprinting.
   if (crouchEdge && m.sprinting && m.onGround && m.slide <= 0) {
     m.slide = P.slideTime;
-    const f = Math.max(P.slideSpeed, Math.sqrt(m.vx * m.vx + m.vz * m.vz) * 1.15);
+    const f = Math.max(P.slideSpeed * sprintMul, Math.sqrt(m.vx * m.vx + m.vz * m.vz) * 1.15);
     m.vx = Math.sin(m.yaw) * -f;
     m.vz = Math.cos(m.yaw) * -f;
     m.crouched = true;
@@ -116,7 +116,7 @@ export function stepMove(level: Level, m: MoveState, inp: Input, dt: number, spe
   // forward = (−sin yaw, −cos yaw); right = (cos yaw, −sin yaw)
   const wx = -sy * mz + cy * mx;
   const wz = -cy * mz - sy * mx;
-  let speed = m.sprinting ? P.sprint : m.crouched ? P.crouchSpeed : P.walk;
+  let speed = m.sprinting ? P.sprint * sprintMul : m.crouched ? P.crouchSpeed : P.walk;
   speed *= speedMul * (1 - adsAmount * (1 - P.adsMul));
   if (m.slide > 0) {
     m.slide -= dt;

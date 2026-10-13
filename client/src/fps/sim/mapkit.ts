@@ -32,7 +32,7 @@ export interface SpawnPoint {
 }
 
 export interface MapTheme {
-  sky: 'day' | 'dusk' | 'overcast' | 'night';
+  sky: 'day' | 'dusk' | 'overcast' | 'night' | 'snow';
   ground: Material;
   /** Ground decals: [x0, z0, x1, z1, material] (flat, visual only). */
   patches: Array<[number, number, number, number, Material]>;
@@ -42,7 +42,7 @@ export interface MapTheme {
 }
 
 /** What surrounds the playable area (render only). */
-export type Backdrop = 'suburb' | 'industrial' | 'desert' | 'city' | 'estate';
+export type Backdrop = 'suburb' | 'industrial' | 'desert' | 'city' | 'estate' | 'snow';
 
 export interface MapDef {
   id: string;
@@ -557,7 +557,11 @@ export function building(
     });
   }
   if (floors === 2) {
-    b.slab(x0, z0, x1, z1, y + h, slab, 'wood', [[st[0] - 0.05, st[1] - 0.05, st[2] + 0.05, st[3] + 0.05]]);
+    // The stairwell: open a hand's width beside the flight (headroom all the way up, so bots can
+    // path it too), tight at its ends (no gap to fall through at the top step).
+    const wx = alongX ? 0.05 : 0.35;
+    const wz = alongX ? 0.35 : 0.05;
+    b.slab(x0, z0, x1, z1, y + h, slab, 'wood', [[st[0] - wx, st[1] - wz, st[2] + wx, st[3] + wz]]);
     b.stairs(st[0], st[1], st[2], st[3], alongX ? 'x+' : 'z+', h + slab, 'wood', y);
     if (alongX) b.rail(st[0], st[3] + 0.05, st[2] - 1.2, st[3] + 0.2, up);
     else b.rail(st[2] + 0.05, st[1], st[2] + 0.2, st[3] - 1.2, up);

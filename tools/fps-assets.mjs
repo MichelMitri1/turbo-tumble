@@ -9,6 +9,9 @@
  *   q/modchars/Swat.gltf      — Ultimate Modular Characters: the SWAT operator (gun animations)
  *   q/shooter/{Environment,Guns}/glTF — Toon Shooter Game Kit (military props, grenade, knife)
  *
+ * Then run `node tools/fps-realism.mjs models`: it swaps several of these props for photoscanned
+ * ones (fitted to the same boxes), adds new dressing, and regenerates sim/propBounds.ts.
+ *
  * The menu's map shots (client/public/assets/fps/thumbs/<map>.jpg) are baked from the
  * running game instead (rendering a whole map in the menu froze it): open /zero-hour/,
  * run `await __zh.bakeMapThumbs()` in the console and save each data URL as <map>.jpg.

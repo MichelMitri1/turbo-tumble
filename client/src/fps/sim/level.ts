@@ -7,7 +7,8 @@
  */
 export type Material =
   | 'concrete' | 'brick' | 'metal' | 'wood' | 'dirt' | 'sand' | 'asphalt' | 'grass' | 'glass' | 'plaster' | 'tile' | 'invisible'
-  | 'marble' | 'carpet' | 'wallpaper' | 'darkwood' | 'shingle' | 'hedge' | 'facade' | 'paint' | 'fabric';
+  | 'marble' | 'carpet' | 'wallpaper' | 'darkwood' | 'shingle' | 'hedge' | 'facade' | 'paint' | 'fabric'
+  | 'snow' | 'gravel' | 'corrugated' | 'plywood';
 
 export interface Box {
   x0: number;

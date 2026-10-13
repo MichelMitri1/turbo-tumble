@@ -177,6 +177,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; col
 .zh-score__mid span { font-family: var(--head); font-size: 30px; line-height: 0.9; }
 .zh-score__mid small { font-size: 11px; letter-spacing: 0.2em; color: var(--muted); font-weight: 700; }
 .zh-flags { position: absolute; top: 104px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+.zh-flags .zh-hp { align-self: center; font-style: normal; font: 700 12px/1 inherit; letter-spacing: 0.14em; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); white-space: nowrap; }
 .zh-flags span { width: 34px; height: 34px; display: grid; place-items: center; font-family: var(--head); font-size: 26px; background: rgba(0,0,0,0.5); border: 2px solid #ddd; }
 .zh-flags span.ally { border-color: var(--ally); color: var(--ally); }
 .zh-flags span.enemy { border-color: var(--enemy); color: var(--enemy); }
@@ -380,6 +381,8 @@ img[data-g]:not([src]), img[data-i]:not([src]), img[data-m]:not([src]) { visibil
 
 /* ---------------------------------------------------------------- splitscreen */
 .zh-view { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+/* Lens vignette under the HUD. */
+.zh-view::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.34) 100%); pointer-events: none; }
 .zh-view .zh-hud { position: absolute; inset: 0; zoom: var(--hud-scale, 1); }
 .zh-split .zh-view { box-shadow: inset 0 0 0 1px rgba(0,0,0,0.85); }
 .zh-split[data-views='3']::after { content: 'ZERO HOUR'; position: absolute; right: 0; bottom: 0; width: 50%; height: 50%; display: flex; align-items: center; justify-content: center; font-family: var(--head); font-size: 64px; letter-spacing: 0.1em; color: rgba(255,255,255,0.12); background: #0b0d0c; pointer-events: none; }

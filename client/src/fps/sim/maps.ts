@@ -9,6 +9,10 @@ import { terminal } from './maps/terminal';
 import { refinery } from './maps/refinery';
 import { farmstead } from './maps/farmstead';
 import { nachtkino } from './maps/nachtkino';
+import { killhouse } from './maps/killhouse';
+import { barrio } from './maps/barrio';
+import { frostbite } from './maps/frostbite';
+import { crossroads } from './maps/crossroads';
 import type { ZMapMeta } from './zmap';
 import { Level } from './level';
 import { P } from './player';
@@ -47,7 +51,7 @@ function moreSpawns(m: MapDef): MapDef {
 }
 
 /** Multiplayer maps (each built from boxes + props, see mapkit.ts). */
-export const MAPS: MapDef[] = [atomic(), freight(), culdesac(), downtown(), wreckage(), terminal(), refinery(), farmstead(), manor(), outpost()].map(moreSpawns);
+export const MAPS: MapDef[] = [atomic(), killhouse(), freight(), culdesac(), barrio(), downtown(), crossroads(), wreckage(), frostbite(), terminal(), refinery(), farmstead(), manor(), outpost()].map(moreSpawns);
 /** Zombies maps (not in the multiplayer rotation): the MapDef plus its zombies layout. */
 const NK = nachtkino();
 export const ZMAPS: Array<{ map: MapDef; z: ZMapMeta }> = [NK];

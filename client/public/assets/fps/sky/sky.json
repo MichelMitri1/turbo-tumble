@@ -1,0 +1,32 @@
+{
+ "day": {
+  "id": "kloofendal_48d_partly_cloudy_puresky",
+  "sunAz": 3.7368,
+  "sunEl": 0.8376,
+  "horizon": "#bec1cc"
+ },
+ "dusk": {
+  "id": "belfast_sunset_puresky",
+  "sunAz": 3.7981,
+  "sunEl": 0.0368,
+  "horizon": "#958d89"
+ },
+ "overcast": {
+  "id": "kloofendal_overcast_puresky",
+  "sunAz": 3.657,
+  "sunEl": 0.405,
+  "horizon": "#9ea2a8"
+ },
+ "night": {
+  "id": "qwantani_night_puresky",
+  "sunAz": 4.9149,
+  "sunEl": 1.4696,
+  "horizon": "#535654"
+ },
+ "snow": {
+  "id": "snow_field_puresky",
+  "sunAz": 3.8963,
+  "sunEl": 0.2915,
+  "horizon": "#b1b1ae"
+ }
+}

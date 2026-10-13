@@ -96,7 +96,9 @@ export class BotBrain {
         if (d > 90) continue;
         // Field of view (wider up close; anyone shooting nearby gets noticed).
         const ang = Math.abs(wrap(Math.atan2(-dx, -dz) - b.yaw));
-        const loud = g.time - e.lastFireT < 0.5 && !e.suppressed && d < 40;
+        // Gunfire nearby, or footsteps running up close (Dead Silence: none).
+        const steps = d < 12 && e.m.onGround && !e.m.crouched && Math.hypot(e.m.vx, e.m.vz) > 4 && !e.loadout.perks.includes('deadsilence');
+        const loud = (g.time - e.lastFireT < 0.5 && !e.suppressed && d < 40) || steps;
         if (ang > K.fov / 2 + (d < 6 ? 1 : 0) && !loud && b.target !== e.id) continue;
         if (!g.sees(eye[0], eye[1], eye[2], e.m.x, e.m.y + eyeHeight(e.m) - 0.3, e.m.z)) continue;
         const score = d - (e.id === b.target ? 8 : 0);
@@ -289,6 +291,14 @@ export class BotBrain {
       b.goal = { x: pick.x + (Math.random() - 0.5) * 2, y: pick.y, z: pick.z + (Math.random() - 0.5) * 2 };
       b.goalWhy = 'flag';
       if (at(pick) < 2.5) return { x: s.m.x, y: s.m.y, z: s.m.z };
+      return b.goal;
+    }
+    if (g.mode === 'hp' && g.flags.length) {
+      // Everyone converges on the live zone (and stays in it).
+      const f = g.flags[g.hpZone()]!;
+      if (at(f) < 2.5) return { x: s.m.x, y: s.m.y, z: s.m.z };
+      b.goal = { x: f.x + (Math.random() - 0.5) * 3, y: f.y, z: f.z + (Math.random() - 0.5) * 3 };
+      b.goalWhy = 'flag';
       return b.goal;
     }
     if (g.mode === 'kc' && g.tags.length) {
