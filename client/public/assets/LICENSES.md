@@ -24,6 +24,20 @@ Gun sounds (`fps/sfx/`): The Free Firearm Sound Library by Ben Jaszczak, Brian N
 Kevin Heras and Matthew Nanney — CC0
 (https://opengameart.org/content/the-free-firearm-sound-library). Trimmed with `tools/fps-sfx.mjs`.
 
+Photoscanned surfaces, skies and props (`fps/tex/`, `fps/sky/`, and `fps/prop-explodingbarrel`, `prop-crate`,
+`prop-barrier-single`, `prop-cardboardboxes-*`, `prop-debris-tires`, `prop-gastank`, `prop-streetlight`,
+`prop-debris-brokencar`, `prop-barrel`, `prop-milcrate`, `prop-ammobox`, `prop-generator`, `prop-aircon`,
+`prop-jerrycan`, `prop-hydrant`, `prop-trashcan`, `prop-utilitybox`, `prop-concreteblock`, `prop-cementbags`,
+`prop-trashbag`, `prop-plasticcrate`, `prop-shelves`, `prop-tyre`, `prop-lpg`): [Poly Haven](https://polyhaven.com) — CC0.
+Textures: dirty_concrete, red_brick, rusty_metal_sheet, brown_planks_03, dirt, dense_sand, asphalt_02, sparse_grass,
+white_plaster_02, large_grey_tiles, marble_01, dirty_carpet, decrepit_wallpaper, wood_floor, grey_roof_tiles,
+forest_leaves_03, painted_plaster_wall, cotton_jersey, snow_01, gravel_floor, corrugated_iron, plywood, container_side,
+hessian_230, bark_brown_02. Skies (HDRIs, tone-mapped): kloofendal_48d_partly_cloudy_puresky, belfast_sunset_puresky,
+kloofendal_overcast_puresky, qwantani_night_puresky, snow_field_puresky. Models: Barrel_01, barrel_03, wooden_crate_02,
+old_military_crate, ammo_box, concrete_road_barrier(_02), cardboard_box_01, old_tyre, propane_tank, small_lpg_tank,
+street_lamp_01, covered_car, portable_generator, exterior_aircon_unit, metal_jerrycan, fire_hydrant, metal_trash_can,
+utility_box_02, cement_bag, trashbag, plastic_crate_03, steel_frame_shelves_01. Converted with `tools/fps-realism.mjs`.
+
 Zombies (`fps/zombie-*.glb`, `fps/hellhound.glb`, extra guns): Quaternius Ultimate Animated Character Pack
 (Zombie Male / Female), Ultimate Animated Animals (Wolf → hellhound), Ultimate Gun Pack, Toon Shooter Game Kit
 (launchers) — CC0. Sounds (`fps/zsfx/`), CC0 from Freesound, cut with `tools/zombies-sfx.py`: #125405 "Monster Groans,

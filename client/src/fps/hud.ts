@@ -1,5 +1,4 @@
-import type { Game, Medal, Soldier } from './sim/game';
-import { MODES } from './sim/game';
+import { HP_ROTATE, MODES, type Game, type Medal, type Soldier } from './sim/game';
 import { LETHALS, STREAKS, TACTICALS, WEAPON } from './sim/weapons';
 import { UNIT_NAMES, type UnitKind } from './sim/game';
 import { icon } from './icons';
@@ -240,6 +239,12 @@ export class Hud {
     if (g.mode === 'dom') {
       const html = g.flags.map((f) => `<span class="${f.owner === -1 ? 'neutral' : f.owner === me.team ? 'ally' : 'enemy'} ${f.capturing ? 'cap' : ''}" style="--p:${Math.abs(f.progress)}">${f.name}</span>`).join('');
       this.set('#h-flags', html, true);
+    } else if (g.mode === 'hp' && g.flags.length) {
+      // The live zone, who holds it, and when it moves.
+      const f = g.flags[g.hpZone()]!;
+      const left = HP_ROTATE - (Math.max(0, g.timeLimit - g.timeLeft) % HP_ROTATE);
+      const state = f.capturing ? 'CONTESTED' : f.owner === -1 ? 'NEUTRAL' : f.owner === me.team ? 'HOLDING' : 'ENEMY HOLDS';
+      this.set('#h-flags', `<span class="${f.owner === -1 ? 'neutral' : f.owner === me.team ? 'ally' : 'enemy'} ${f.capturing ? 'cap' : ''}" style="--p:1">${f.name}</span><em class="zh-hp">${state} · ${Math.ceil(left)}s</em>`, true);
     } else this.set('#h-flags', '', true);
     // Ammo / weapon.
     const w = me.weapons[me.cur];
@@ -433,7 +438,9 @@ export class Hud {
         x.fill();
       }
     };
-    for (const f of g.flags) mark(f.x, f.z, f.owner === -1 ? '#ddd' : f.owner === me.team ? '#4aa3ff' : '#ff4a3a', f.name);
+    g.flags.forEach((f, i) => {
+      if (g.mode !== 'hp' || i === g.hpZone()) mark(f.x, f.z, f.owner === -1 ? '#ddd' : f.owner === me.team ? '#4aa3ff' : '#ff4a3a', f.name);
+    });
     if (g.jammed(me)) return;
     if (g.uavFor(me)) for (const o of g.soldiers) if (o.alive && g.enemies(me, o) && !o.loadout.perks.includes('ghost')) mark(o.m.x, o.m.z, '#ff3a2a');
     for (const h of g.helis) mark(h.x, h.z, h.team === me.team && g.mode !== 'ffa' ? '#4aa3ff' : '#ff3a2a', '✚');
@@ -496,7 +503,8 @@ export class Hud {
         x.fill();
       }
     };
-    for (const f of g.flags) {
+    for (const [i, f] of g.flags.entries()) {
+      if (g.mode === 'hp' && i !== g.hpZone()) continue;
       x.fillStyle = f.owner === -1 ? '#ddd' : f.owner === me.team ? '#4aa3ff' : '#ff4a3a';
       x.font = 'bold 26px sans-serif';
       x.textAlign = 'center';

@@ -7,7 +7,7 @@ import type { ZSnap } from '../sim/horde';
 /** Zero Hour online protocol. */
 export const FP_ROOM = 'zerohour';
 export const FP_ZM_ROOM = 'zerohour_zm';
-export const FP_VERSION = 4;
+export const FP_VERSION = 5;
 /** Up to 9 a side. */
 export const FP_MAX = 18;
 /** Zombies: four survivors, like the original. */

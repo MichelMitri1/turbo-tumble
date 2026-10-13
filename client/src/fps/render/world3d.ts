@@ -2,16 +2,22 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Box, Material } from '../sim/level';
 import type { MapDef, PropPlacement } from '../sim/maps';
-import { TILE, texture } from './textures';
+import { TILE, surface, texture } from './textures';
 import { cloneModel } from './assets';
 import { backdrop } from './backdrop';
+import { skyDome, skyEnvironment, skyHorizon } from './skies';
 
-/** Per-sky lighting: strong sky fill (shade and interiors stay readable), a little ambient, and lamps at dusk / night. */
-const SKY: Record<MapDef['theme']['sky'], { top: string; mid: string; bottom: string; sun: string; sunI: number; hemi: number; bounce: string; amb: number; exposure: number; lamps: boolean }> = {
-  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff4e0', sunI: 2.3, hemi: 2.3, bounce: '#7a6e5c', amb: 0.15, exposure: 1.0, lamps: false },
-  dusk: { top: '#2a3b6a', mid: '#d88a58', bottom: '#f2c48a', sun: '#ffc890', sunI: 2.1, hemi: 1.9, bounce: '#9a7656', amb: 0.3, exposure: 1.05, lamps: true },
-  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#e8eef4', sunI: 1.2, hemi: 2.6, bounce: '#6a655e', amb: 0.15, exposure: 1.0, lamps: false },
-  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.6, hemi: 0.9, bounce: '#2a2a33', amb: 0.35, exposure: 1.2, lamps: true },
+/**
+ * Per-sky lighting: the photographed sky lights the scanned surfaces (image-based `env`), a hemisphere
+ * fill keeps shade and interiors readable, and lamps glow at dusk / night. `top/mid/bottom` are the
+ * fallback gradient if the sky photo isn't loaded.
+ */
+const SKY: Record<MapDef['theme']['sky'], { top: string; mid: string; bottom: string; sun: string; sunI: number; hemi: number; bounce: string; amb: number; exposure: number; env: number; lamps: boolean }> = {
+  day: { top: '#2f6fbf', mid: '#8fbde8', bottom: '#dfe8ee', sun: '#fff1dc', sunI: 2.6, hemi: 1.25, bounce: '#7a6e5c', amb: 0.08, exposure: 1.0, env: 0.55, lamps: false },
+  dusk: { top: '#2a3b6a', mid: '#d88a58', bottom: '#f2c48a', sun: '#ffbe84', sunI: 2.3, hemi: 1.1, bounce: '#9a7656', amb: 0.2, exposure: 1.05, env: 0.6, lamps: true },
+  overcast: { top: '#6c7684', mid: '#a3abb5', bottom: '#c3c8cd', sun: '#e8eef4', sunI: 1.25, hemi: 1.6, bounce: '#6a655e', amb: 0.1, exposure: 1.0, env: 0.75, lamps: false },
+  night: { top: '#05070f', mid: '#141c33', bottom: '#2a3350', sun: '#9fb4ff', sunI: 0.65, hemi: 0.75, bounce: '#2a2a33', amb: 0.3, exposure: 1.2, env: 0.9, lamps: true },
+  snow: { top: '#7a8696', mid: '#b4bcc6', bottom: '#d6dadf', sun: '#f2f4ff', sunI: 1.7, hemi: 1.35, bounce: '#9aa0a8', amb: 0.1, exposure: 0.95, env: 0.7, lamps: false },
 };
 
 /** Geometry for one box with UVs in world metres (so textures tile at a fixed scale). */
@@ -82,11 +88,29 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
         float s = max(0.0, dot(normalize(vDir), sunDir)); c += sunCol * (pow(s, 600.0) * 3.0 + pow(s, 12.0) * 0.25);
         gl_FragColor = vec4(c, 1.0); }`,
   });
-  const skyMesh = new THREE.Mesh(keep(new THREE.SphereGeometry(600, 32, 16)), keep(skyMat));
-  skyMesh.renderOrder = -1;
-  group.add(skyMesh);
-  scene.fog = new THREE.Fog(map.theme.fog[0], map.theme.fog[1], map.theme.fog[2]);
-  scene.background = new THREE.Color(sky.bottom);
+  // The photographed sky (turned to put its sun where the map's sunlight comes from), else the gradient.
+  const photo = skyDome(map.theme.sky, new THREE.Vector3(...map.theme.sun));
+  if (photo) {
+    keep(photo.geometry);
+    keep(photo.material as THREE.Material);
+    skyMat.dispose();
+    group.add(photo);
+  } else {
+    const skyMesh = new THREE.Mesh(keep(new THREE.SphereGeometry(600, 32, 16)), keep(skyMat));
+    skyMesh.renderOrder = -1;
+    group.add(skyMesh);
+  }
+  // Fog fades into the sky's own horizon colour.
+  const fogCol = photo ? skyHorizon(map.theme.sky).lerp(new THREE.Color(map.theme.fog[0]), 0.25) : new THREE.Color(map.theme.fog[0]);
+  scene.fog = new THREE.Fog(fogCol, map.theme.fog[1], map.theme.fog[2]);
+  scene.background = fogCol.clone();
+  // Image-based light from the same sky: reflections on metal and glass, soft fill everywhere.
+  const env = photo ? skyEnvironment(renderer, map.theme.sky) : null;
+  if (env) {
+    keep(env);
+    scene.environment = env;
+    scene.environmentIntensity = sky.env;
+  }
   // Lights.
   // Strong sky fill so shade and interiors stay readable (bounce light), plus a little ambient.
   group.add(new THREE.HemisphereLight(sky.mid, sky.bounce, sky.hemi), new THREE.AmbientLight(sky.sun, sky.amb));
@@ -104,12 +128,21 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   // horizon (wide enough to carry the backdrop scenery).
   const [hx, hz] = map.half;
   const tile = TILE[map.theme.ground];
+  /** A scanned surface's maps, cloned with their own repeat (ground planes, decals). */
+  const tiled = (mat: Material, rx: number, ry: number, ox = 0, oy = 0) => {
+    const scan = surface(mat);
+    const one = (src: THREE.Texture) => {
+      const t = keep(src.clone());
+      t.repeat.set(rx, ry);
+      t.offset.set(ox, oy);
+      t.needsUpdate = true;
+      return t;
+    };
+    return { map: one(texture(mat)), normalMap: scan ? one(scan.normal) : null, roughnessMap: scan ? one(scan.rough) : null, roughness: scan ? 1 : 0.95 };
+  };
   const ground = (w: number, d: number, y: number, color: string, offset: number) => {
-    const t = keep(texture(map.theme.ground).clone());
-    t.repeat.set(w / tile, d / tile);
-    t.offset.set(-w / 2 / tile, -d / 2 / tile);
-    t.needsUpdate = true;
-    const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, d)), keep(new THREE.MeshStandardMaterial({ map: t, color, roughness: 0.95, polygonOffset: offset !== 0, polygonOffsetFactor: offset, polygonOffsetUnits: offset })));
+    const maps = tiled(map.theme.ground, w / tile, d / tile, -w / 2 / tile, -d / 2 / tile);
+    const m = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, d)), keep(new THREE.MeshStandardMaterial({ ...maps, color, polygonOffset: offset !== 0, polygonOffsetFactor: offset, polygonOffsetUnits: offset })));
     m.rotation.x = -Math.PI / 2;
     m.position.y = y;
     m.receiveShadow = true;
@@ -118,10 +151,8 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   ground(1400, 1400, 0, '#8e867a', 0);
   ground(2 * hx + 1, 2 * hz + 1, 0.002, '#ffffff', -1);
   map.theme.patches.forEach(([x0, z0, x1, z1, mat], i) => {
-    const t = keep(texture(mat).clone());
-    t.repeat.set((x1 - x0) / TILE[mat], (z1 - z0) / TILE[mat]);
-    t.needsUpdate = true;
-    const p = new THREE.Mesh(keep(new THREE.PlaneGeometry(x1 - x0, z1 - z0)), keep(new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 - i, polygonOffsetUnits: -2 - i })));
+    const maps = tiled(mat, (x1 - x0) / TILE[mat], (z1 - z0) / TILE[mat]);
+    const p = new THREE.Mesh(keep(new THREE.PlaneGeometry(x1 - x0, z1 - z0)), keep(new THREE.MeshStandardMaterial({ ...maps, polygonOffset: true, polygonOffsetFactor: -2 - i, polygonOffsetUnits: -2 - i })));
     p.rotation.x = -Math.PI / 2;
     p.position.set((x0 + x1) / 2, 0.005 + i * 0.002, (z0 + z1) / 2);
     p.receiveShadow = true;
@@ -151,13 +182,26 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     geo.translate(c.x, c.axis === 'y' ? c.y + c.h / 2 : c.y, c.z);
     l.geos.push(geo);
   }
+  // Without a scan: a flat roughness. With one: its roughness map (scaled a little for polished surfaces).
   const ROUGH: Partial<Record<Material, number>> = { metal: 0.6, marble: 0.3, glass: 0.15, darkwood: 0.6, paint: 0.7 };
+  const SCAN_ROUGH: Partial<Record<Material, number>> = { marble: 0.55, darkwood: 0.85, tile: 0.8, metal: 0.9 };
+  const METAL: Partial<Record<Material, number>> = { metal: 0.35, corrugated: 0.4, glass: 0.2 };
   for (const { mat, tint, geos } of byMat.values()) {
     const geo = keep(mergeGeometries(geos));
     for (const g of geos) g.dispose();
+    const scan = surface(mat);
     const m = new THREE.Mesh(
       geo,
-      keep(new THREE.MeshStandardMaterial({ map: texture(mat), color: tint ? new THREE.Color(tint) : 0xffffff, roughness: ROUGH[mat] ?? 0.9, metalness: mat === 'metal' ? 0.08 : mat === 'glass' ? 0.2 : 0 })),
+      keep(
+        new THREE.MeshStandardMaterial({
+          map: texture(mat),
+          normalMap: scan?.normal ?? null,
+          roughnessMap: scan?.rough ?? null,
+          color: tint ? new THREE.Color(tint) : 0xffffff,
+          roughness: scan ? SCAN_ROUGH[mat] ?? 1 : ROUGH[mat] ?? 0.9,
+          metalness: METAL[mat] ?? 0,
+        }),
+      ),
     );
     m.castShadow = true;
     m.receiveShadow = true;
@@ -175,26 +219,54 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
     o.traverse((n) => (n.castShadow = false));
     group.add(o);
   }
-  // Rolling hills and mountains on the horizon.
-  const mound = keep(new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2));
-  const peak = keep(new THREE.ConeGeometry(1, 1, 7, 1));
-  peak.translate(0, 0.5, 0);
-  const landMat = new Map<string, THREE.MeshStandardMaterial>();
-  const land = (c: string) => landMat.get(c) ?? (landMat.set(c, keep(new THREE.MeshStandardMaterial({ color: c, roughness: 1, flatShading: true }))), landMat.get(c)!);
-  for (const [x, z, rad, h, c] of scenery.hills) {
-    const m = new THREE.Mesh(mound, land(c));
+  // Rolling hills and mountains on the horizon: lumpy, textured with a scanned surface, snow-capped
+  // (except in the desert), and far enough out for the fog to blend them into the sky.
+  const noise = (a: number, b: number, seed: number) => Math.sin(a * 1.7 + seed) * Math.cos(b * 2.3 + seed * 0.7) * 0.5 + Math.sin(a * 4.1 - b * 3.3 + seed * 1.3) * 0.25 + Math.sin(a * 9.2 + b * 7.7 + seed * 2.1) * 0.12;
+  const landSurface: Material = map.backdrop === 'desert' ? 'sand' : map.backdrop === 'snow' ? 'snow' : 'grass';
+  const hillMat = keep(new THREE.MeshStandardMaterial({ ...tiled(landSurface, 1, 1), color: 0xffffff, vertexColors: true }));
+  const rockMat = keep(new THREE.MeshStandardMaterial({ ...tiled(map.backdrop === 'desert' ? 'sand' : 'gravel', 1, 1), color: 0xffffff, vertexColors: true }));
+  /** Displace a unit dome / cone, colour it (snow above `snowLine`), UVs in metres once scaled by (rad, h). */
+  const land = (geo: THREE.BufferGeometry, rad: number, h: number, col: string, seed: number, amp: number, snowLine: number) => {
+    // Indexed, so the normals come out smooth (noise is from the position, so seams stay closed).
+    const g = geo;
+    const p = g.getAttribute('position') as THREE.BufferAttribute;
+    const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+    const colors = new Float32Array(p.count * 3);
+    const base = new THREE.Color(col);
+    const snow = new THREE.Color('#eef2f6');
+    const c = new THREE.Color();
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i);
+      const y = p.getY(i);
+      const z = p.getZ(i);
+      const a = x * 2.1 + z * 1.3;
+      const k = 1 + noise(a * 1.5, z * 3 + y * 4, seed) * amp * Math.min(1, (1 - y) * 3);
+      p.setXYZ(i, x * k, y * (1 + noise(x * 2.5, z * 2.5, seed + 3) * amp * 0.5), z * k);
+      uv.setXY(i, (x * rad) / 25, (z * rad) / 25 + (y * h) / 25);
+      c.copy(base).lerp(snow, Math.max(0, Math.min(1, (y - snowLine) * 6 + noise(x * 7, z * 7 + y * 9, seed) * 0.6)));
+      colors.set([c.r, c.g, c.b], i * 3);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    g.computeVertexNormals();
+    return keep(g);
+  };
+  scenery.hills.forEach(([x, z, rad, h, c], i) => {
+    const m = new THREE.Mesh(land(new THREE.SphereGeometry(1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2), rad, h, c, i * 3.1, 0.18, map.backdrop === 'snow' ? 0.2 : 9), hillMat);
     m.position.set(x, -0.05, z);
     m.scale.set(rad, h, rad * 0.8);
     m.receiveShadow = true;
     group.add(m);
-  }
-  for (const [x, z, rad, h, c] of scenery.peaks) {
-    const m = new THREE.Mesh(peak, land(c));
+  });
+  const capped = map.backdrop !== 'desert';
+  scenery.peaks.forEach(([x, z, rad, h, c], i) => {
+    const geo = new THREE.ConeGeometry(1, 1, 30, 12);
+    geo.translate(0, 0.5, 0);
+    const m = new THREE.Mesh(land(geo, rad, h, c, i * 1.7, 0.32, capped ? 0.55 + (i % 3) * 0.08 : 9), rockMat);
     m.position.set(x, -1, z);
     m.scale.set(rad, h, rad);
     m.rotation.y = x * 0.13;
     group.add(m);
-  }
+  });
   // Props.
   const barrels: THREE.Object3D[] = [];
   const edges = new Map<string, PropPlacement[]>();
@@ -270,6 +342,7 @@ export function buildMap(scene: THREE.Scene, renderer: THREE.WebGLRenderer, map:
   scene.add(group);
   const dispose = () => {
     group.removeFromParent();
+    if (env && scene.environment === env) scene.environment = null;
     for (const o of own) o.dispose();
     own.length = 0;
     sun.shadow.dispose();

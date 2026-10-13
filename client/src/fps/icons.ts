@@ -7,6 +7,16 @@ const P: Record<string, string> = {
   hardline: '<path d="M5 18l7-5 7 5M5 13l7-5 7 5M5 8l7-5 7 5"/>',
   steady: '<circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="1"/>',
   quickfix: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M12 10v5M9.5 12.5h5"/>',
+  flak: '<path d="M8 3L4 6v14h16V6l-4-3"/><path d="M8 3c1 2 2.5 3 4 3s3-1 4-3"/><path d="M8 11h8M8 15h8"/>',
+  coldblood: '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/><path d="M9 4l3 2 3-2M9 20l3-2 3 2"/>',
+  doubletime: '<path d="M4 6l6 6-6 6M12 6l6 6-6 6"/>',
+  fasthands: '<path d="M9 21v-7l-2-3V6a1.5 1.5 0 0 1 3 0v4M10 6V4a1.5 1.5 0 0 1 3 0v6M13 5a1.5 1.5 0 0 1 3 0v5M16 7a1.5 1.5 0 0 1 3 0v7c0 4-2 7-6 7"/><path d="M2 8h3M2 12h3"/>',
+  overkill: '<path d="M2 6h14l3-1h2v3h-6l-1 3h-3l-1 2H8l1-2H6L4 8H2z"/><path d="M2 15h14l3-1h2v3h-6l-1 3h-3"/>',
+  restock: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/><rect x="9" y="10" width="6" height="5" rx="1"/>',
+  deadsilence: '<path d="M9 4C7 4 6 6 6 9s1 5 3 5 2-2 2-5-1-5-2-5zM15 10c-2 0-2 2-2 4s1 4 2 4 2-1 2-4-1-4-2-4z"/><path d="M3 3l18 18"/>',
+  battlehard: '<path d="M4 15a8 8 0 0 1 16 0v2H4z"/><path d="M2 17h20M12 7v4"/>',
+  tracker: '<path d="M8 3C6 3 5 5 5 7.5S6 12 8 12s2.5-2 2.5-4.5S10 3 8 3zM7 14h3v2.5a1.5 1.5 0 0 1-3 0z"/><path d="M16 9c-2 0-3 2-3 4.5s1 4.5 3 4.5 2.5-2 2.5-4.5S18 9 16 9zM15 20h3"/>',
+  stalker: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   // Killstreaks.
   uav: '<path d="M3 12h18M12 9v6"/><path d="M7 12l-2 4M17 12l2 4"/><circle cx="12" cy="12" r="2"/><path d="M8 7a6 6 0 0 1 8 0M6 5a9 9 0 0 1 12 0"/>',
   airstrike: '<path d="M12 2l2 7 7 4v2l-7-2-1 5 3 2v2l-4-1-4 1v-2l3-2-1-5-7 2v-2l7-4z"/>',
@@ -17,6 +27,7 @@ const P: Record<string, string> = {
   sentry: '<rect x="7" y="7" width="9" height="6" rx="1"/><path d="M16 9h6M16 11h5M11 13v3M11 16l-5 5M11 16l5 5M11 16v5"/>',
   dogs: '<ellipse cx="12" cy="16" rx="4" ry="3.5"/><ellipse cx="6" cy="10" rx="1.8" ry="2.4"/><ellipse cx="18" cy="10" rx="1.8" ry="2.4"/><ellipse cx="9.5" cy="6" rx="1.6" ry="2.2"/><ellipse cx="14.5" cy="6" rx="1.6" ry="2.2"/>',
   gunner: '<path d="M3 5h18M12 5v2"/><path d="M6 10c0-2 2-3 5-3h3c3 0 4 2 4 4s-1 3-4 3h-6c-1 0-2-2-2-4z"/><circle cx="12" cy="19" r="3"/><path d="M12 15v2M12 21v2M8 19h2M14 19h2"/>',
+  nuke: '<circle cx="12" cy="12" r="2"/><path d="M12 10L9 4.8a8 8 0 0 1 6 0zM13.7 13l5.2 3a8 8 0 0 1-3 5.2zM10.3 13l-2.2 8.2a8 8 0 0 1-3-5.2z"/>',
   // Equipment.
   frag: '<circle cx="12" cy="14" r="6"/><path d="M10 8V6h4v2M14 6l3-2M12 11v6M9 14h6"/>',
   semtex: '<rect x="6" y="8" width="12" height="10" rx="2"/><path d="M9 8V6h6v2"/><circle cx="12" cy="13" r="2"/><path d="M4 20l2-2M20 20l-2-2"/>',
@@ -29,6 +40,7 @@ const P: Record<string, string> = {
   tdm: '<path d="M4 4l9 9M4 4h4M4 4v4M20 4l-9 9M20 4h-4M20 4v4M7 15l-3 3 2 2 3-3M17 15l3 3-2 2-3-3"/>',
   ffa: '<path d="M6 10a6 6 0 0 1 12 0c0 3-2 4-2 6H8c0-2-2-3-2-6z"/><path d="M9 19h6M10 11h.01M14 11h.01"/>',
   dom: '<path d="M6 21V3M6 4h11l-3 4 3 4H6"/>',
+  hp: '<path d="M12 3l9 5v8l-9 5-9-5V8z"/><path d="M12 8v8M8.5 10v4M15.5 10v4"/>',
   zombies: '<path d="M6 11a6 6 0 0 1 12 0v3l-1.5 1.5V19h-9v-3.5L6 14z"/><circle cx="9.5" cy="11.5" r="1.4"/><circle cx="14.5" cy="11.5" r="1.4"/><path d="M10 19v-2M12 19v-2M14 19v-2"/>',
   kc: '<rect x="7" y="4" width="10" height="15" rx="3"/><circle cx="12" cy="7.5" r="1"/><path d="M10 12h4M10 15h4"/>',
   // Weapon classes (kill feed): side profiles, muzzle to the right.

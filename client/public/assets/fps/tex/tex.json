@@ -1,0 +1,127 @@
+{
+ "concrete": {
+  "id": "dirty_concrete",
+  "size": 3,
+  "mean": 0.515
+ },
+ "brick": {
+  "id": "red_brick",
+  "size": 1.4,
+  "mean": 0.43
+ },
+ "metal": {
+  "id": "rusty_metal_sheet",
+  "size": 2,
+  "mean": 0.5
+ },
+ "wood": {
+  "id": "brown_planks_03",
+  "size": 1,
+  "mean": 0.395
+ },
+ "dirt": {
+  "id": "dirt",
+  "size": 2,
+  "mean": 0.331
+ },
+ "sand": {
+  "id": "dense_sand",
+  "size": 1.8,
+  "mean": 0.511
+ },
+ "asphalt": {
+  "id": "asphalt_02",
+  "size": 3,
+  "mean": 0.351
+ },
+ "grass": {
+  "id": "sparse_grass",
+  "size": 2,
+  "mean": 0.245
+ },
+ "plaster": {
+  "id": "white_plaster_02",
+  "size": 1,
+  "mean": 0.74
+ },
+ "tile": {
+  "id": "large_grey_tiles",
+  "size": 3,
+  "mean": 0.497
+ },
+ "marble": {
+  "id": "marble_01",
+  "size": 1.5,
+  "mean": 0.622
+ },
+ "carpet": {
+  "id": "dirty_carpet",
+  "size": 0.6,
+  "mean": 0.75
+ },
+ "wallpaper": {
+  "id": "decrepit_wallpaper",
+  "size": 2.5,
+  "mean": 0.84
+ },
+ "darkwood": {
+  "id": "wood_floor",
+  "size": 1.7,
+  "mean": 0.394
+ },
+ "shingle": {
+  "id": "grey_roof_tiles",
+  "size": 3,
+  "mean": 0.659
+ },
+ "hedge": {
+  "id": "forest_leaves_03",
+  "size": 2.3,
+  "mean": 0.218
+ },
+ "paint": {
+  "id": "painted_plaster_wall",
+  "size": 2,
+  "mean": 0.86
+ },
+ "fabric": {
+  "id": "cotton_jersey",
+  "size": 0.26,
+  "mean": 0.821
+ },
+ "snow": {
+  "id": "snow_01",
+  "size": 2,
+  "mean": 0.717
+ },
+ "plywood": {
+  "id": "plywood",
+  "size": 0.5,
+  "mean": 0.68
+ },
+ "gravel": {
+  "id": "gravel_floor",
+  "size": 2.25,
+  "mean": 0.539
+ },
+ "corrugated": {
+  "id": "corrugated_iron",
+  "size": 1.12,
+  "mean": 0.66
+ },
+ "container": {
+  "id": "container_side",
+  "size": 1.94,
+  "mean": 0.97
+ },
+ "hessian": {
+  "id": "hessian_230",
+  "size": 0.27,
+  "mean": 0.479
+ },
+ "bark": {
+  "id": "bark_brown_02",
+  "size": 1,
+  "mean": 0.338
+ }
+}

@@ -458,18 +458,25 @@ Modern military FPS multiplayer in the style of the big annual shooter (original
 maps and UI). 18 weapons across AR / SMG / LMG / shotgun / marksman / sniper / pistol with
 damage falloff, headshot multipliers, recoil patterns and ADS, each with its own real recorded
 gunshot (CC0, `client/public/assets/fps/sfx/`, near / far takes); attachments (optics,
-suppressor, grip, laser, extended mag); 6 perks; 5 editable create-a-class slots with a
+suppressor, grip, laser, extended mag); 16 perks in three tiers (Lightweight, Scavenger, Flak
+Jacket, Cold-Blooded, Double Time · Ghost, Hardline, Fast Hands, Overkill, Restock · Steady Aim,
+Quick Fix, Dead Silence, Battle Hardened, Tracker, Stalker); 6 editable create-a-class slots with a
 primary, a secondary, a lethal (frag, semtex, molotov, throwing knife) and a tactical
 (flashbang, stun, smoke); camo progression per gun (Woodland → Gold → Platinum → Diamond →
 Dark Matter, unlocked by kills).
-Pick 3 of 9 killstreaks per class: UAV, RC-XD (you drive it), Counter-UAV, Recon Drone (you
-fly it, marking enemies), Sentry Gun, Precision Airstrike, Attack Helicopter, Attack Dogs and
-Chopper Gunner (you man the minigun). Bots use them all (piloted ones on autopilot).
-Modes: Team Deathmatch, Free-for-All, Domination, Kill Confirmed on ten maps — Atomic Row,
-Freight, Cul-de-Sac, Downtown, Wreckage, Terminal, Refinery, Farmstead, Ravenmoor Manor,
-Outpost — each surrounded by scenery past the border (`render/backdrop.ts`); maps are built
-from boxes, cylinders and props in `sim/maps/*.ts` with the kit in `sim/mapkit.ts`
-(generic buildings, point-mirroring). Up to 9 a side.
+Pick 3 of 10 killstreaks per class: UAV, RC-XD (you drive it), Counter-UAV, Recon Drone (you
+fly it, marking enemies), Sentry Gun, Precision Airstrike, Attack Helicopter, Attack Dogs,
+Chopper Gunner (you man the minigun) and the Tactical Nuke (25 kills: ends the match). Bots use
+them all (piloted ones on autopilot).
+Modes: Team Deathmatch, Free-for-All, Domination, Hardpoint (a zone that moves every minute),
+Kill Confirmed on fourteen maps — Atomic Row, Killhouse, Freight, Cul-de-Sac, Barrio, Downtown,
+Crossroads, Wreckage, Frostbite, Terminal, Refinery, Farmstead, Ravenmoor Manor, Outpost — each
+surrounded by scenery past the border (`render/backdrop.ts`); maps are built from boxes,
+cylinders and props in `sim/maps/*.ts` with the kit in `sim/mapkit.ts` (generic buildings,
+point-mirroring). Up to 9 a side.
+Look: photoscanned surfaces (colour / normal / roughness) and photographed skies that light
+the scene (Poly Haven, CC0), realistic props (`render/props3d.ts` builds containers, T-walls,
+sandbags, trees… from the same scans), snow on snowy maps, a cinematic grade.
 Splitscreen: 1–4 local players (together or versus) — player 1 on keyboard/mouse or a pad,
 the others on gamepads.
 Shared sim in `client/src/fps/sim/` runs authoritative on the server at 60 Hz
@@ -478,6 +485,7 @@ and interpolated remote players; up to 18 players online or on LAN, bots fill th
 Keyboard/mouse (CoD binds) or PS4 pad with aim assist.
 - `npx tsx tools/fps-sim.ts [secs] [--size=9]` — headless bot matches on every map/mode (stuck checks, timings)
 - `node tools/fps-assets.mjs <dir>` — rebuilds `client/public/assets/fps/` from the CC0 Quaternius packs
+- `node tools/fps-realism.mjs [textures|skies|models]` — downloads and converts the Poly Haven scans, skies and props
 - `node tools/fps-sfx.mjs "<Prepared SFX Library>"` — trims the CC0 firearm recordings into the per-gun WAVs
 
 ## Tools

@@ -1,8 +1,50 @@
 import * as THREE from 'three';
 import type { Material } from '../sim/level';
 
-/** Procedural surface textures (canvas), tiled in world metres. */
+/**
+ * Surface textures, tiled in world metres: photoscanned colour / normal / roughness sets
+ * (Poly Haven, CC0 — tools/fps-realism.mjs) once loaded, procedural canvases until then
+ * (and for the few surfaces without a scan: glass, office facades).
+ */
 const cache = new Map<string, THREE.Texture>();
+
+/** A photoscanned surface: colour (sRGB), normal (OpenGL) and roughness maps. */
+export interface Surface {
+  map: THREE.Texture;
+  normal: THREE.Texture;
+  rough: THREE.Texture;
+}
+/** Box materials with a scan, plus the ones only generated props use. */
+export type SurfaceName = Material | 'container' | 'hessian' | 'bark';
+const SCANNED: SurfaceName[] = ['concrete', 'brick', 'metal', 'wood', 'dirt', 'sand', 'asphalt', 'grass', 'plaster', 'tile', 'marble', 'carpet', 'wallpaper', 'darkwood', 'shingle', 'hedge', 'paint', 'fabric', 'snow', 'gravel', 'corrugated', 'plywood', 'container', 'hessian', 'bark'];
+const surfaces = new Map<SurfaceName, Surface>();
+let surfacesLoading: Promise<void> | null = null;
+
+/** Fetch every scanned surface (once). Missing files just keep the procedural texture. */
+export function loadSurfaces(): Promise<void> {
+  return (surfacesLoading ??= (async () => {
+    const loader = new THREE.TextureLoader();
+    await Promise.all(
+      SCANNED.map(async (name) => {
+        try {
+          const [map, normal, rough] = await Promise.all(['', '_n', '_r'].map((sfx) => loader.loadAsync(`/assets/fps/tex/${name}${sfx}.webp`)));
+          for (const t of [map, normal, rough]) {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 8;
+          }
+          map.colorSpace = THREE.SRGBColorSpace;
+          surfaces.set(name, { map: map!, normal: normal!, rough: rough! });
+        } catch {
+          // Offline / missing: the canvas version stands in.
+        }
+      }),
+    );
+  })());
+}
+
+export function surface(name: SurfaceName): Surface | undefined {
+  return surfaces.get(name);
+}
 
 function canvas(n = 512): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
@@ -64,32 +106,38 @@ function blotches(g: CanvasRenderingContext2D, n: number, color: string, count: 
   }
 }
 
-/** Metres of world covered by one texture repeat. */
+/** Metres of world covered by one texture repeat (close to each scan's real size). */
 export const TILE: Record<Material, number> = {
   concrete: 3,
-  brick: 2,
-  metal: 2.5,
-  wood: 2,
-  dirt: 4,
-  sand: 6,
-  asphalt: 5,
-  grass: 4,
+  brick: 1.6,
+  metal: 2,
+  wood: 1.5,
+  dirt: 3,
+  sand: 3,
+  asphalt: 4,
+  grass: 3,
   glass: 2,
-  plaster: 3,
-  tile: 2,
+  plaster: 2,
+  tile: 2.4,
   invisible: 1,
-  marble: 2.4,
-  carpet: 2,
-  wallpaper: 2.4,
-  darkwood: 1.6,
-  shingle: 2,
-  hedge: 2,
+  marble: 1.5,
+  carpet: 1.2,
+  wallpaper: 2.5,
+  darkwood: 1.7,
+  shingle: 2.5,
+  hedge: 2.3,
   facade: 6,
-  paint: 3,
-  fabric: 1,
+  paint: 2.5,
+  fabric: 0.8,
+  snow: 3,
+  gravel: 2.5,
+  corrugated: 1.2,
+  plywood: 2.4,
 };
 
 export function texture(mat: Material): THREE.Texture {
+  const scan = surfaces.get(mat);
+  if (scan) return scan.map;
   const hit = cache.get(mat);
   if (hit) return hit;
   const n = 512;
@@ -347,6 +395,39 @@ export function texture(mat: Material): THREE.Texture {
         g.fillRect(0, i, n, 2);
       }
       noise(g, n, 20000, 0.05);
+      break;
+    }
+    case 'plywood': {
+      g.fillStyle = '#c8b088';
+      g.fillRect(0, 0, n, n);
+      blotches(g, n, 'rgba(150,120,80,0.2)', 30, 20, 90);
+      noise(g, n, 30000, 0.05);
+      break;
+    }
+    case 'snow': {
+      g.fillStyle = '#e6eaee';
+      g.fillRect(0, 0, n, n);
+      blotches(g, n, 'rgba(170,185,200,0.25)', 40, 20, 90);
+      noise(g, n, 30000, 0.04);
+      break;
+    }
+    case 'gravel': {
+      g.fillStyle = '#8a8478';
+      g.fillRect(0, 0, n, n);
+      noise(g, n, 90000, 0.25, 3);
+      break;
+    }
+    case 'corrugated': {
+      g.fillStyle = '#9aa0a6';
+      g.fillRect(0, 0, n, n);
+      for (let x = 0; x < n; x += 20) {
+        const grd = g.createLinearGradient(x, 0, x + 20, 0);
+        grd.addColorStop(0, 'rgba(255,255,255,0.2)');
+        grd.addColorStop(0.5, 'rgba(0,0,0,0.2)');
+        grd.addColorStop(1, 'rgba(255,255,255,0.2)');
+        g.fillStyle = grd;
+        g.fillRect(x, 0, 20, n);
+      }
       break;
     }
     default:

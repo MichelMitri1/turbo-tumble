@@ -6,15 +6,15 @@ import { CHARGE_TIME, type KickType, type MatchSim, type Phase, type PState, typ
  * server, interpolated) and goal replays (frames from a ring buffer).
  */
 
-export const PHASES: Phase[] = ['kickoff', 'play', 'stop', 'goal', 'halftime', 'fulltime'];
-export const STATES: PState[] = ['run', 'kick', 'tackle', 'slide', 'down', 'dive', 'hold', 'celebrate', 'off', 'rise'];
-export const KICKS: KickType[] = ['pass', 'through', 'lob', 'lobThrough', 'cross', 'shot', 'finesse', 'chip', 'clear', 'throw', 'gkThrow', 'header', 'penalty'];
+export const PHASES: Phase[] = ['kickoff', 'play', 'stop', 'goal', 'halftime', 'fulltime', 'var'];
+export const STATES: PState[] = ['run', 'kick', 'tackle', 'slide', 'down', 'dive', 'hold', 'celebrate', 'off', 'rise', 'jump', 'skill', 'place'];
+export const KICKS: KickType[] = ['pass', 'through', 'lob', 'lobThrough', 'cross', 'shot', 'finesse', 'chip', 'clear', 'throw', 'gkThrow', 'header', 'penalty', 'power', 'bicycle'];
 export const RESTARTS: Array<RestartKind | null> = [null, 'kickoff', 'throw', 'corner', 'goalkick', 'free', 'penalty'];
 const BTNS = ['pass', 'shoot', 'through', 'lob'] as const;
 
-export const HEAD = 16;
+export const HEAD = 19;
 export const PER = 10;
-export const PER_H = 6;
+export const PER_H = 7;
 export const MAX_HUMANS = 8;
 
 export interface FramePlayer {
@@ -32,6 +32,8 @@ export interface FramePlayer {
   diveY: number;
   sprint: boolean;
   yellow: number;
+  /** Skill move in progress (TRICKS index, 0 = none). */
+  trick: number;
 }
 
 export interface FrameHuman {
@@ -42,6 +44,10 @@ export interface FrameHuman {
   btn: (typeof BTNS)[number] | null;
   /** Set-piece target marker (null when not aiming one). */
   aim: { x: number; z: number } | null;
+  /** Holding L2 at our set piece: choosing the taker. */
+  picking: boolean;
+  /** Charging a power shot (R1 + L1 + ○). */
+  powerShot: boolean;
 }
 
 export interface Frame {
@@ -52,6 +58,11 @@ export interface Frame {
   score: [number, number];
   restart: RestartKind | null;
   restartTeam: 0 | 1;
+  /** Player taking the restart (−1 = none) and seconds since the phase began. */
+  taker: number;
+  phaseT: number;
+  /** Added minutes this half (0 until the board goes up). */
+  added: number;
   /** Team 0 attacks +x (1) or −x (−1). */
   dir0: 1 | -1;
   ball: { x: number; y: number; z: number; owner: number; vx: number; vy: number; vz: number };
@@ -79,6 +90,9 @@ export function writeFrame(m: MatchSim, out?: Float32Array): Float32Array {
   f[13] = b.vx;
   f[14] = b.vy;
   f[15] = b.vz;
+  f[16] = m.restart ? m.restart.taker : -1;
+  f[17] = m.phaseT;
+  f[18] = m.added;
   let o = HEAD;
   for (const p of m.players) {
     f[o] = p.x;
@@ -87,10 +101,10 @@ export function writeFrame(m: MatchSim, out?: Float32Array): Float32Array {
     f[o + 3] = Math.hypot(p.vx, p.vz);
     f[o + 4] = STATES.indexOf(p.state);
     f[o + 5] = p.t;
-    f[o + 6] = (p.leftFoot ? 1 : 0) | (p.sprint ? 2 : 0) | (Math.min(3, p.yellow) << 2);
+    f[o + 6] = (p.leftFoot ? 1 : 0) | (p.sprint ? 2 : 0) | (Math.min(3, p.yellow) << 2) | ((p.skill?.k ?? 0) << 4) | (p.dive ? 1 << 11 : 0);
     f[o + 7] = p.human;
     f[o + 8] = p.kick ? KICKS.indexOf(p.kick.type) : -1;
-    f[o + 9] = p.dive ? p.dive.dz * 10 + Math.round(p.dive.dy * 4) : 0;
+    f[o + 9] = p.dive ? Math.round((Math.max(-1, Math.min(1, p.dive.dz)) + 1) * 31) | (Math.round(p.dive.dy * 31) << 6) : 0;
     o += PER;
   }
   f[o++] = m.humans.length;
@@ -102,6 +116,7 @@ export function writeFrame(m: MatchSim, out?: Float32Array): Float32Array {
     f[o + 3] = h?.charge ? BTNS.indexOf(h.charge.btn) : -1;
     f[o + 4] = h?.aim ? h.aim.x : NaN;
     f[o + 5] = h?.aim ? h.aim.z : NaN;
+    f[o + 6] = (h?.picking ? 1 : 0) | (h?.charge?.power ? 2 : 0);
     o += PER_H;
   }
   return f;
@@ -113,7 +128,8 @@ export function readFrame(f: Float32Array, count = 22): Frame {
   for (let i = 0; i < count; i++) {
     const flags = f[o + 6]!;
     const dv = f[o + 9]!;
-    const dz = Math.round(dv / 10);
+    const preciseDive = (flags & (1 << 11)) !== 0;
+    const dz = preciseDive ? (dv & 63) / 31 - 1 : Math.round(dv / 10);
     players.push({
       x: f[o]!,
       z: f[o + 1]!,
@@ -124,17 +140,18 @@ export function readFrame(f: Float32Array, count = 22): Frame {
       leftFoot: (flags & 1) !== 0,
       sprint: (flags & 2) !== 0,
       yellow: (flags >> 2) & 3,
+      trick: (flags >> 4) & 127,
       human: f[o + 7]!,
       kick: f[o + 8]! >= 0 ? KICKS[f[o + 8]!]! : null,
       diveZ: dz,
-      diveY: (dv - dz * 10) / 4,
+      diveY: preciseDive ? ((dv >> 6) & 31) / 31 : (1.25 + ((dv - dz * 10) / 4) * 1.3) / 2.8,
     });
     o += PER;
   }
   const nh = f[o++]!;
   const humans: FrameHuman[] = [];
   for (let i = 0; i < nh; i++) {
-    humans.push({ p: f[o]!, team: f[o + 1]! as 0 | 1, power: f[o + 2]!, btn: f[o + 3]! >= 0 ? BTNS[f[o + 3]!]! : null, aim: Number.isNaN(f[o + 4]!) ? null : { x: f[o + 4]!, z: f[o + 5]! } });
+    humans.push({ p: f[o]!, team: f[o + 1]! as 0 | 1, power: f[o + 2]!, btn: f[o + 3]! >= 0 ? BTNS[f[o + 3]!]! : null, aim: Number.isNaN(f[o + 4]!) ? null : { x: f[o + 4]!, z: f[o + 5]! }, picking: (f[o + 6]! & 1) !== 0, powerShot: (f[o + 6]! & 2) !== 0 });
     o += PER_H;
   }
   return {
@@ -145,6 +162,9 @@ export function readFrame(f: Float32Array, count = 22): Frame {
     score: [f[4]!, f[5]!],
     restart: RESTARTS[f[6]!] ?? null,
     restartTeam: f[7]! as 0 | 1,
+    taker: f[16]!,
+    phaseT: f[17]!,
+    added: f[18]!,
     dir0: f[8]! as 1 | -1,
     ball: { x: f[9]!, y: f[10]!, z: f[11]!, owner: f[12]!, vx: f[13]!, vy: f[14]!, vz: f[15]! },
     players,
@@ -170,7 +190,8 @@ export function lerpFrame(a: Frame, b: Frame, k: number): Frame {
       let d = p.face - q.face;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
-      return { ...p, x: L(q.x, p.x), z: L(q.z, p.z), face: q.face + d * k, speed: L(q.speed, p.speed) };
+      return { ...p, x: L(q.x, p.x), z: L(q.z, p.z), face: q.face + d * k, speed: L(q.speed, p.speed),
+        t: q.state === p.state ? L(q.t, p.t) : p.t };
     }),
   };
 }

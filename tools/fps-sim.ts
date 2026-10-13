@@ -13,7 +13,7 @@ const secs = Number(args.find((a) => !a.startsWith('--')) ?? 120);
 const skill = (args.find((a) => a.startsWith('--skill='))?.split('=')[1] ?? 'regular') as BotSkill;
 const size = Number(args.find((a) => a.startsWith('--size='))?.split('=')[1] ?? 6);
 for (const map of MAPS) {
-  for (const mode of ['tdm', 'dom', 'ffa', 'kc'] as Mode[]) {
+  for (const mode of ['tdm', 'dom', 'hp', 'ffa', 'kc'] as Mode[]) {
     const setups: SoldierSetup[] = [];
     for (let i = 0; i < size * 2; i++) setups.push({ id: `b${i}`, name: `Bot${i}`, team: (i % 2) as 0 | 1, bot: true, loadout: DEFAULT_CLASSES[i % DEFAULT_CLASSES.length]! });
     const t0 = performance.now();

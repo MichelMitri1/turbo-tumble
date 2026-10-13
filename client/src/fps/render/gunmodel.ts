@@ -19,9 +19,52 @@ export interface GunBuild {
   sightY: number;
 }
 
+/**
+ * Real finishes on the (untextured) gun models: near-black polymer, parkerized steel that picks up
+ * reflections, and a little wear — roughness and shade varying across the surface (object-space noise).
+ * The materials are the shared cached ones, so this runs once per material.
+ */
+const finished = new WeakSet<THREE.Material>();
+const FINISH_GLSL = `varying vec3 vGfP;
+float gfHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float gfNoise(vec3 x){ vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(gfHash(i), gfHash(i + vec3(1,0,0)), f.x), mix(gfHash(i + vec3(0,1,0)), gfHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(gfHash(i + vec3(0,0,1)), gfHash(i + vec3(1,0,1)), f.x), mix(gfHash(i + vec3(0,1,1)), gfHash(i + vec3(1,1,1)), f.x), f.y), f.z); }`;
+export function gunFinish(model: THREE.Object3D): void {
+  model.traverse((n) => {
+    const m = n as THREE.Mesh;
+    if (!m.isMesh) return;
+    for (const src of Array.isArray(m.material) ? m.material : [m.material]) {
+      const mat = src as THREE.MeshStandardMaterial;
+      if (finished.has(mat) || /glass/i.test(mat.name)) continue;
+      finished.add(mat);
+      if (/metal/i.test(mat.name)) {
+        mat.color.multiplyScalar(0.8);
+        mat.metalness = 0.85;
+        mat.roughness = 0.4;
+      } else if (/wood/i.test(mat.name)) {
+        mat.roughness = 0.6;
+      } else {
+        mat.color.multiplyScalar(0.55);
+        mat.metalness = 0.2;
+        mat.roughness = 0.6;
+      }
+      mat.onBeforeCompile = (sh) => {
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGfP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvGfP = position;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', `#include <common>\n${FINISH_GLSL}`)
+          .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= 0.93 + 0.1 * gfNoise(vGfP * 5.0);')
+          .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = clamp(roughnessFactor * (0.7 + 0.6 * gfNoise(vGfP * 31.0)), 0.08, 1.0);');
+      };
+      mat.customProgramCacheKey = () => 'gunfinish';
+    }
+  });
+}
+
 export function assembleGun(def: WeaponDef, att: Attachments, camo: string): GunBuild {
   const gun = new THREE.Group();
   const model = cloneModel(def.model);
+  gunFinish(model);
   applyCamo(model, camo);
   const b = gunBounds(def.model);
   const len = b.max.x - b.min.x;

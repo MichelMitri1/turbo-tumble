@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import type { Room } from '@colyseus/sdk';
 import { FastLane } from '../client/src/net/fastlane';
+import { FP_VERSION } from '../client/src/fps/net/protocol';
 
 (globalThis as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = RTCPeerConnection;
 // The SDK lives in client/node_modules.
@@ -29,7 +30,7 @@ interface Game {
   start?: (room: Room, lane: FastLane) => void;
 }
 const GAMES: Game[] = [
-  { name: 'Zero Hour', room: 'zerohour', join: { version: 4, name: 'check', visibility: 'private' }, snap: 'fp:snap', ping: 'fp:ping', start: (r) => r.send('fp:start') },
+  { name: 'Zero Hour', room: 'zerohour', join: { version: FP_VERSION, name: 'check', visibility: 'private' }, snap: 'fp:snap', ping: 'fp:ping', start: (r) => r.send('fp:start') },
   { name: 'Boostball', room: 'boostball', join: { version: 3, name: 'check', body: 'octane', visibility: 'private' }, snap: 'rb:snap', ping: 'rb:ping', start: (r) => r.send('rb:start') },
   { name: 'Matchday', room: 'football', join: { version: 1, name: 'check', visibility: 'private' }, snap: 'fb:snap', ping: 'fb:ping', start: (r) => (r.send('fb:hello'), r.send('fb:start')) },
   { name: 'Starfall', room: 'starfall', join: { version: 2, name: 'check', color: 0, visibility: 'private' }, snap: 'sf:snap', start: (r) => (r.send('sf:config', { bots: 5 }), r.send('sf:start')) },

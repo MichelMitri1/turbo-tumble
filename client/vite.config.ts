@@ -24,7 +24,6 @@ export default defineConfig({
         'zero-hour': fileURLToPath(new URL('./zero-hour/index.html', import.meta.url)),
         jackaroo: fileURLToPath(new URL('./jackaroo/index.html', import.meta.url)),
         matchday: fileURLToPath(new URL('./matchday/index.html', import.meta.url)),
-        'cage-kings': fileURLToPath(new URL('./cage-kings/index.html', import.meta.url)),
         starfall: fileURLToPath(new URL('./starfall/index.html', import.meta.url)),
         'starfall-3d': fileURLToPath(new URL('./starfall-3d/index.html', import.meta.url)),
         velora: fileURLToPath(new URL('./velora/index.html', import.meta.url)),

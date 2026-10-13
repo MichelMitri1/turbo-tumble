@@ -121,15 +121,31 @@ export function applyAttachments(w: WeaponDef, a: Attachments): WeaponDef {
   return o;
 }
 
-export type Perk = 'lightweight' | 'scavenger' | 'ghost' | 'hardline' | 'steady' | 'quickfix';
+export type Perk =
+  | 'lightweight' | 'scavenger' | 'flak' | 'coldblood' | 'doubletime'
+  | 'ghost' | 'hardline' | 'fasthands' | 'overkill' | 'restock'
+  | 'steady' | 'quickfix' | 'deadsilence' | 'battlehard' | 'tracker' | 'stalker';
 export const PERKS: Record<Perk, { name: string; tier: 1 | 2 | 3; desc: string }> = {
   lightweight: { name: 'Lightweight', tier: 1, desc: 'Move 7% faster.' },
   scavenger: { name: 'Scavenger', tier: 1, desc: 'Resupply ammo from enemies you kill.' },
-  ghost: { name: 'Ghost', tier: 2, desc: 'Undetectable by enemy UAVs and gunships.' },
+  flak: { name: 'Flak Jacket', tier: 1, desc: 'Take half damage from explosives and fire.' },
+  coldblood: { name: 'Cold-Blooded', tier: 1, desc: 'Sentries, dogs and gunships ignore you. No red name over your head.' },
+  doubletime: { name: 'Double Time', tier: 1, desc: 'Sprint 10% faster and slide further.' },
+  ghost: { name: 'Ghost', tier: 2, desc: 'Invisible to enemy UAVs and recon-drone marks.' },
   hardline: { name: 'Hardline', tier: 2, desc: 'Killstreaks cost 1 less kill.' },
+  fasthands: { name: 'Fast Hands', tier: 2, desc: 'Reload 30% and swap weapons 40% faster.' },
+  overkill: { name: 'Overkill', tier: 2, desc: 'Carry a second primary weapon instead of a sidearm.' },
+  restock: { name: 'Restock', tier: 2, desc: 'Lethal and tactical equipment recharge every 25 s.' },
   steady: { name: 'Steady Aim', tier: 3, desc: '35% tighter hipfire.' },
-  quickfix: { name: 'Quick Fix', tier: 3, desc: 'Health starts regenerating sooner.' },
+  quickfix: { name: 'Quick Fix', tier: 3, desc: 'Health regenerates sooner, and at once after a kill.' },
+  deadsilence: { name: 'Dead Silence', tier: 3, desc: 'Your footsteps make no sound.' },
+  battlehard: { name: 'Battle Hardened', tier: 3, desc: 'Flashbangs and stuns wear off 65% faster.' },
+  tracker: { name: 'Tracker', tier: 3, desc: 'See the footprints enemies leave behind.' },
+  stalker: { name: 'Stalker', tier: 3, desc: 'Move much faster while aiming down sights.' },
 };
+
+/** Weapons and explosives Flak Jacket protects against. */
+export const EXPLOSIVE_WEAPONS = new Set(['grenade', 'semtex', 'barrel', 'airstrike', 'rcxd', 'molotov']);
 
 // ---------------------------------------------------------------- equipment
 
@@ -149,7 +165,7 @@ export const TACTICALS: Record<Tactical, { name: string; count: number; desc: st
 
 // ---------------------------------------------------------------- killstreaks
 
-export type Streak = 'uav' | 'rcxd' | 'cuav' | 'drone' | 'sentry' | 'airstrike' | 'heli' | 'dogs' | 'gunner';
+export type Streak = 'uav' | 'rcxd' | 'cuav' | 'drone' | 'sentry' | 'airstrike' | 'heli' | 'dogs' | 'gunner' | 'nuke';
 /** `pilot`: you control it (your soldier stands still meanwhile). */
 export const STREAKS: Record<Streak, { name: string; kills: number; desc: string; pilot?: boolean }> = {
   uav: { name: 'UAV', kills: 3, desc: 'Shows enemies on the minimap for 30 s.' },
@@ -161,6 +177,7 @@ export const STREAKS: Record<Streak, { name: string; kills: number; desc: string
   heli: { name: 'Attack Helicopter', kills: 7, desc: 'A gunship circles the map hunting enemies for 40 s.' },
   dogs: { name: 'Attack Dogs', kills: 8, desc: 'A pack of dogs hunts the enemy team for 45 s.' },
   gunner: { name: 'Chopper Gunner', kills: 10, desc: 'Man the minigun of a gunship circling the map.', pilot: true },
+  nuke: { name: 'Tactical Nuke', kills: 25, desc: 'Ten seconds after you call it in, the enemy is wiped out and the match is yours.' },
 };
 export const STREAK_LIST = (Object.keys(STREAKS) as Streak[]).sort((a, b) => STREAKS[a].kills - STREAKS[b].kills);
 export const DEFAULT_STREAKS: [Streak, Streak, Streak] = ['uav', 'airstrike', 'heli'];
@@ -188,7 +205,8 @@ export function fixLoadout(l: Partial<Loadout> | undefined, d: Loadout = DEFAULT
   return {
     name: String(x.name ?? d.name).slice(0, 20),
     primary: WEAPON[x.primary ?? '']?.slot === 'primary' ? x.primary! : d.primary,
-    secondary: WEAPON[x.secondary ?? '']?.slot === 'secondary' ? x.secondary! : d.secondary,
+    // Overkill: any other primary goes in the second slot.
+    secondary: WEAPON[x.secondary ?? '']?.slot === 'secondary' || (perks.includes('overkill') && WEAPON[x.secondary ?? '']?.slot === 'primary' && x.secondary !== x.primary) ? x.secondary! : d.secondary,
     primaryAtt: {
       optic: (['iron', 'reddot', 'holo', 'acog'] as const).includes(att.optic) ? att.optic : 'iron',
       muzzle: att.muzzle === 'suppressor' ? 'suppressor' : 'none',
@@ -204,8 +222,9 @@ export function fixLoadout(l: Partial<Loadout> | undefined, d: Loadout = DEFAULT
 
 export const DEFAULT_CLASSES: Loadout[] = [
   { name: 'Assault', primary: 'm13', primaryAtt: { optic: 'reddot', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'x9', perks: ['lightweight', 'hardline', 'quickfix'], lethal: 'frag', tactical: 'flash', streaks: ['uav', 'airstrike', 'heli'] },
-  { name: 'Run & Gun', primary: 'viper', primaryAtt: { optic: 'iron', muzzle: 'suppressor', under: 'laser', ammo: 'extended' }, secondary: 'x9', perks: ['lightweight', 'ghost', 'steady'], lethal: 'semtex', tactical: 'stun', streaks: ['rcxd', 'cuav', 'sentry'] },
-  { name: 'Sniper', primary: 'kar', primaryAtt: NO_ATTACHMENTS, secondary: 'deagle', perks: ['scavenger', 'ghost', 'quickfix'], lethal: 'tknife', tactical: 'smoke', streaks: ['drone', 'airstrike', 'gunner'] },
-  { name: 'Close Quarters', primary: 'r725', primaryAtt: { optic: 'iron', muzzle: 'none', under: 'laser', ammo: 'standard' }, secondary: 'magnum', perks: ['lightweight', 'hardline', 'steady'], lethal: 'semtex', tactical: 'flash', streaks: ['rcxd', 'sentry', 'dogs'] },
-  { name: 'Support', primary: 'holger', primaryAtt: { optic: 'holo', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'sawed', perks: ['scavenger', 'hardline', 'quickfix'], lethal: 'molotov', tactical: 'smoke', streaks: ['uav', 'heli', 'dogs'] },
+  { name: 'Run & Gun', primary: 'viper', primaryAtt: { optic: 'iron', muzzle: 'suppressor', under: 'laser', ammo: 'extended' }, secondary: 'x9', perks: ['doubletime', 'ghost', 'deadsilence'], lethal: 'semtex', tactical: 'stun', streaks: ['rcxd', 'cuav', 'sentry'] },
+  { name: 'Sniper', primary: 'kar', primaryAtt: NO_ATTACHMENTS, secondary: 'deagle', perks: ['coldblood', 'ghost', 'tracker'], lethal: 'tknife', tactical: 'smoke', streaks: ['drone', 'airstrike', 'gunner'] },
+  { name: 'Close Quarters', primary: 'r725', primaryAtt: { optic: 'iron', muzzle: 'none', under: 'laser', ammo: 'standard' }, secondary: 'magnum', perks: ['lightweight', 'fasthands', 'steady'], lethal: 'semtex', tactical: 'flash', streaks: ['rcxd', 'sentry', 'dogs'] },
+  { name: 'Support', primary: 'holger', primaryAtt: { optic: 'holo', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'sawed', perks: ['flak', 'restock', 'battlehard'], lethal: 'molotov', tactical: 'smoke', streaks: ['uav', 'heli', 'dogs'] },
+  { name: 'Overkill', primary: 'grau', primaryAtt: { optic: 'holo', muzzle: 'none', under: 'grip', ammo: 'standard' }, secondary: 'striker', perks: ['scavenger', 'overkill', 'stalker'], lethal: 'frag', tactical: 'flash', streaks: ['uav', 'sentry', 'heli'] },
 ];

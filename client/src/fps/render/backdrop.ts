@@ -235,12 +235,30 @@ export function backdrop(map: MapDef): BackdropData {
     }
   }
 
+  if (kind === 'snow') {
+    // A wire fence on the border, then frosted pine forest and drifts up to the mountains.
+    for (const e of edges) for (let t = -e.len + 1.8; t < e.len; t += 3.55) {
+      const [x, z] = at(e, t, 0.5);
+      prop('prop-metalfence', x, z, e.along === 'x' ? 0 : 1, 1, '#9aa0a8');
+    }
+    for (const e of edges) {
+      for (let i = 0; i < 30; i++) {
+        const [x, z] = at(e, r(-e.len - 45, e.len + 45), r(6, 70));
+        prop(R() < 0.8 ? 'prop-tree-2' : 'prop-tree-1', x, z, Math.floor(R() * 4), r(2, 3.4), '#b8d0c0');
+      }
+      for (let i = 0; i < 7; i++) {
+        const [x, z] = at(e, r(-e.len - 60, e.len + 60), r(30, 120));
+        out.hills.push([x, z, r(20, 50), r(6, 20), '#e4e9ee']);
+      }
+    }
+  }
+
   // Mountains on the horizon (everyone gets them; fog sells the distance).
-  const peakCol = kind === 'desert' ? '#a88a66' : kind === 'city' ? '#7a8692' : '#5e6e62';
+  const peakCol = kind === 'desert' ? '#a88a66' : kind === 'city' ? '#7a8692' : kind === 'snow' ? '#dce3ea' : '#5e6e62';
   for (let i = 0; i < 28; i++) {
     const a = (i / 28) * Math.PI * 2 + r(-0.08, 0.08);
-    const d = ext + r(170, 260);
-    out.peaks.push([Math.cos(a) * d, Math.sin(a) * d, r(55, 110), r(35, 120), peakCol]);
+    const d = ext + r(240, 330);
+    out.peaks.push([Math.cos(a) * d, Math.sin(a) * d, r(60, 120), r(30, 95), peakCol]);
   }
   return out;
 }

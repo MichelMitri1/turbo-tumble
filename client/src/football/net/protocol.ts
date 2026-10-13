@@ -1,8 +1,9 @@
 import type { MatchEvent } from '../sim/match';
+import type { CpuLevel } from '../sim/difficulty';
 
 /** Matchday online protocol (browser ↔ server). */
 export const FB_ROOM = 'football';
-export const FB_VERSION = 1;
+export const FB_VERSION = 4;
 /** Humans per side online (the rest of each XI is AI). */
 export const FB_MAX_PER_TEAM = 4;
 
@@ -26,7 +27,7 @@ export interface FbConfig {
   away: string;
   /** Real seconds per half. */
   half: number;
-  difficulty: 'amateur' | 'pro' | 'world' | 'legendary';
+  difficulty: CpuLevel;
 }
 
 export interface FbLobbyPlayer {
@@ -59,7 +60,9 @@ export interface FbInput {
   z: number;
   b: number;
 }
-export const INPUT_BITS = { sprint: 1, pass: 2, shoot: 4, through: 8, lob: 16, finesse: 32, chip: 64, switch: 128, skill: 256 } as const;
+export const INPUT_BITS = { sprint: 1, pass: 2, shoot: 4, through: 8, lob: 16, finesse: 32, chip: 64, switch: 128, skill: 256, l2: 512, tkNext: 1024, tkPrev: 2048, diveL: 4096, diveR: 8192 } as const;
+/** Skill move (1–100, seven bits) packed above the button bits. */
+export const TRICK_SHIFT = 14;
 
 export interface FbStats {
   stats: [unknown, unknown];
