@@ -103,6 +103,11 @@ export class LocalSession implements Session {
     return events;
   }
 
+  /** What a bot is doing right now (match logs). */
+  botPlan(id: number): string {
+    return this.bots.planOf(id);
+  }
+
   dispose(): void {}
 }
 

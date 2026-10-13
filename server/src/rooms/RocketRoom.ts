@@ -1,6 +1,10 @@
 import { Room, ServerError, type Client } from '@colyseus/core';
 import { World, type PlayerInfo, type WorldEvent } from '../../../client/src/rocket/sim/world';
-import { Bots, BOT_NAMES } from '../../../client/src/rocket/sim/bot';
+import { Bots, BOT_NAMES, toBotLevel } from '../../../client/src/rocket/sim/bot';
+import { loadNextoFromDisk } from '../nexto';
+
+// SSL bots play through the Nexto policy (falls back to the built-in brain if the weights are missing).
+if (!loadNextoFromDisk()) console.warn('[boostball] nexto.bin not found: SSL bots use the built-in brain');
 import { NO_CONTROLS, type Controls } from '../../../client/src/rocket/sim/car';
 import { CAR_IDS, TICK } from '../../../client/src/rocket/sim/constants';
 import { unpackControls, writeSnapshot } from '../../../client/src/rocket/sim/snapshot';
@@ -32,7 +36,7 @@ export class RocketRoom extends Room {
   override maxClients = RB_MAX_PER_TEAM * 2;
   private members = new Map<string, Member>();
   private hostId = '';
-  private config: RbConfig = { size: 2, botLevel: 'pro', length: 300, bots: true, arena: 'random' };
+  private config: RbConfig = { size: 2, botLevel: 'gold', length: 300, bots: true, arena: 'random' };
   private phase: RbLobby['phase'] = 'lobby';
   private world: World | null = null;
   private bots: Bots | null = null;
@@ -61,7 +65,7 @@ export class RocketRoom extends Room {
     this.onMessage(RbMsg.Config, (client, c: Partial<RbConfig> | undefined) => {
       if (client.sessionId !== this.hostId || this.phase !== 'lobby' || !c || typeof c !== 'object') return;
       if (c.size === 1 || c.size === 2 || c.size === 3) this.config.size = c.size;
-      if (c.botLevel === 'rookie' || c.botLevel === 'pro' || c.botLevel === 'allstar' || c.botLevel === 'ssl') this.config.botLevel = c.botLevel;
+      if (typeof c.botLevel === 'string') this.config.botLevel = toBotLevel(c.botLevel);
       if (typeof c.length === 'number' && [120, 180, 300, 600].includes(c.length)) this.config.length = c.length;
       if (typeof c.bots === 'boolean') this.config.bots = c.bots;
       if (c.arena === 'random' || isArenaId(c.arena)) this.config.arena = c.arena;

@@ -1251,3 +1251,9 @@ kbd {
   letter-spacing: 0.1em;
   color: var(--muted);
 }
+/* Bot ranks: eight (nine with NONE) — wrap into rows of four. */
+.rk-seg.rk-ranks button {
+  flex: 1 0 22%;
+  font-size: 12px;
+  padding: 8px 4px;
+}

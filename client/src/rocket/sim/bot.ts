@@ -4,8 +4,13 @@ import { ARENA, arenaDistance } from './arena';
 import { NO_CONTROLS, type Car, type Controls } from './car';
 import * as C from './constants';
 import { World } from './world';
+import { NextoDriver, nextoReady, type NextoProfile } from './nexto';
+import { DEFAULT_RULES } from './rules';
 
-export type BotLevel = 'rookie' | 'pro' | 'allstar' | 'ssl';
+/** Bot difficulty, by Rocket League rank. Every rank plays through Nexto (see RANKS); this brain does kickoffs. */
+export type BotLevel = 'bronze' | 'silver' | 'gold' | 'plat' | 'diamond' | 'champ' | 'gc' | 'ssl';
+/** This file's own (hand-written) brain levels — kickoffs, mutator games, and tools. */
+type BrainLevel = 'rookie' | 'pro' | 'allstar' | 'ssl';
 
 /**
  * Skill table — everything that separates the levels:
@@ -27,7 +32,7 @@ const LEVEL = {
   // intercepts, aimed aerials, jump / double-jump shots, dribbles and flicks, half-flips, speed-flip kickoffs.
   ssl: { reaction: 1 / 60, error: 0, whiff: 0, boost: 1, maxSpeed: 1, aerialZ: 1950, blockZ: 620, demo: true, fake: 0.12 },
 } as const;
-type Level = (typeof LEVEL)[BotLevel];
+type Level = (typeof LEVEL)[BrainLevel];
 
 type Role = 'attack' | 'support' | 'back';
 type Plan = 'ball' | 'boost' | 'shadow' | 'demo';
@@ -48,8 +53,9 @@ interface Mem {
   /** Aerial in progress: world time the ball is met, and the deadline to give up. */
   aerialAt: number;
   aerialEnd: number;
-  /** Kickoff delay (fake) still to wait. */
+  /** Kickoff delay (fake) still to wait; seconds since the kickoff started. */
   kickoffWait: number;
+  kickoffT: number;
   kickoffRolled: boolean;
   demoTarget: number;
   demoEnd: number;
@@ -69,6 +75,33 @@ interface Mem {
   /** Simulated value of the planned touch, and when the next aerial may be considered. */
   planScore: number;
   airCheck: number;
+  /** Aerial aim override (goal-mouth x), picked by simulation; null = the open-lane default. */
+  airAimX: number | null;
+  /** This aerial skips the fast-aerial double jump, keeping the flip to dodge into the ball. */
+  airNoDJ: boolean;
+  /** Aerial options being simulated a few per update. */
+  airPend: { opts: AirOpt[]; i: number; best: number; pick: AirOpt | null } | null;
+  /** SSL: intercepts before this world time were simulated as misses — look for a later one. */
+  skipBefore: number;
+  /** SSL save: the spot on the ball's path picked by simulation, when the ball gets there, its value, re-picked after. */
+  blockSpot: Vector3 | null;
+  blockAt: number;
+  blockScore: number;
+  blockUntil: number;
+  /** Plans being simulated a few candidates per update (see SIM_BUDGET). */
+  /** Stuck (throttle down, not moving) for this long; escape attempts so far; reversing out until (world time). */
+  stuckT: number;
+  unstickN: number;
+  reverseUntil: number;
+  planPend: { at: number; cands: Cand[]; i: number; best: Cand | null; score: number } | null;
+  blockPend: { spots: Array<{ pos: Vector3; at: number }>; i: number; best: { pos: Vector3; at: number } | null; score: number } | null;
+}
+
+/** An aerial to simulate: meeting time (world), aim override (goal-mouth x), skip the double jump. */
+interface AirOpt {
+  at: number;
+  ax: number | null;
+  noDJ: boolean;
 }
 
 /** A way to play a touch: shot direction, contact offset sideways (uu), dodge into it or not. */
@@ -76,6 +109,45 @@ interface Cand {
   dir: Vector3;
   off: number;
   dodge: boolean;
+  /** Full speed into it (a power shot) instead of arriving just on time. */
+  rush?: boolean;
+}
+
+/** How an opponent is assumed to play during a rollout: drive hard at where the ball is going, jump at it when it's up and close. */
+function defenderControls(c: Car, ball: Ball): Controls {
+  const out: Controls = { ...NO_CONTROLS };
+  if (c.demolished) return out;
+  if (!c.onGround) {
+    out.throttle = 1;
+    return out;
+  }
+  const lead = Math.min(0.5, c.pos.distanceTo(ball.pos) / 2500);
+  let tx = ball.pos.x + ball.vel.x * lead - c.pos.x;
+  let ty = ball.pos.y + ball.vel.y * lead - c.pos.y;
+  // Back in its own box with the ball further out: a keeper — gets on the ball's line in front of its net.
+  const ownY = c.team === 0 ? -ARENA.halfY : ARENA.halfY;
+  if (!OFF.has('keepsim') && Math.abs(c.pos.y - ownY) < 1800 && Math.abs(ball.pos.y - ownY) > Math.abs(c.pos.y - ownY) + 300) {
+    const gy = ownY * 0.93;
+    const vy = ball.vel.y;
+    // Where the ball's line reaches the keeper's depth (its x now if it isn't coming this way).
+    const k = vy * Math.sign(ownY) > 100 ? (gy - ball.pos.y) / vy : 0;
+    const gx = Math.max(-ARENA.goalHalfX, Math.min(ARENA.goalHalfX, ball.pos.x + ball.vel.x * Math.max(0, Math.min(2, k))));
+    tx = gx - c.pos.x;
+    ty = gy - c.pos.y;
+  }
+  const lx = tx * c.forward.x + ty * c.forward.y;
+  const ly = tx * c.left.x + ty * c.left.y;
+  const ang = Math.atan2(ly, lx);
+  const d = Math.hypot(tx, ty);
+  out.steer = Math.max(-1, Math.min(1, -ang * 3));
+  out.throttle = 1;
+  out.handbrake = Math.abs(ang) > 1.6 && c.speed > 500;
+  out.boost = Math.abs(ang) < 0.3 && d > 600 && c.boost > 0 && !c.supersonic;
+  const bd = Math.hypot(ball.pos.x - c.pos.x, ball.pos.y - c.pos.y);
+  // Settle on the keeper spot rather than overrun it; jump at a ball coming through high.
+  if (d < 250) out.throttle = c.forwardSpeed > 300 ? -1 : 0.2;
+  out.jump = ball.pos.z > 200 && ball.pos.z < 500 && bd < 350;
+  return out;
 }
 
 /** Copy a car's whole simulation state (numbers, flags, vectors) onto another car of the same hitbox. */
@@ -103,10 +175,21 @@ const ENV = (globalThis as { process?: { env?: Record<string, string | undefined
 /** Half-flip timing: how long the back flip turns before it's cancelled, then how long to roll over (s). */
 const HF_CANCEL = Number(ENV.SSL_HFC ?? 0.25);
 const HF_ROLL = Number(ENV.SSL_HFR ?? 0.35);
+/** Rollouts run on this long after our touch, with the opponents driving at the ball (s). */
+const OPP_POST = Number(ENV.SSL_POST ?? 0.8);
+/** Simulation steps the SSL planners may run per update (all bots together); past it they keep their last plan. */
+const SIM_BUDGET = Number(ENV.SSL_BUDGET ?? 400);
+/** SSL aerials: boost straight through the contact point for this long before it (s). */
+const AIR_STRIKE = Number(ENV.SSL_STRIKE ?? 0.4);
+/** Value of setting a teammate up in front of their net (cf. a shot on target ~5000). */
+const PASS_VALUE = Number(ENV.SSL_PASS ?? 2500);
+/** Support starts once our ball is this far into their half (uu). */
+const SUP_MIN = Number(ENV.SSL_SUPMIN ?? 1500);
 /** How long before a touch SSL starts simulating the ways to play it (s). */
 const PLAN_T = Number((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_PLAN ?? 1.1);
-// Off by default (they measured worse): demo hunting and the flip kickoff.
-const OFF = new Set(((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_OFF ?? 'hunt,possess,half').split(',').filter(Boolean));
+// Off by default (they measured worse in tools/rocket-versus.ts / rocket-drills.ts): demo hunting, the possession
+// term, half-flips, power-shot candidates, shadow defence, deliberate wall climbs, the always-reachable touches.
+const OFF = new Set(((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.SSL_OFF ?? 'hunt,possess,half,rush,shadowdef,wallride,natural').split(',').filter(Boolean));
 
 /**
  * Rocket League bots: roles with rotation (attacker → support → back), shots
@@ -122,19 +205,32 @@ export class Bots {
   /** Where the predicted ball ends up: the scoring team (-1 = none) and when. */
   private goalIn: { team: 0 | 1 | -1; t: number } = { team: -1, t: 0 };
   private readonly attacker: [number, number] = [-1, -1];
+  /** Every car's ball ETA this update (see assignRoles). */
+  private readonly etas = new Map<number, number>();
   private rng: number;
   private readonly tmp = V();
   private readonly tmp2 = V();
   /** Memory of the bot being driven this tick. */
   private cur: Mem | null = null;
   /** Rollout in progress: the touch being tested. */
-  private forced: { sample: BallSample; cand: Cand; opp: number } | { air: true } | null = null;
+  private forced: { sample: BallSample; cand: Cand; opp: number } | { air: true } | { spot: Vector3; at: number } | null = null;
   private readonly minis = new Map<number, World>();
+  private readonly minisOpp = new Map<string, World>();
   private readonly judgePath: BallSample[] = [];
+  /** Rollout steps simulated this update (see SIM_BUDGET). */
+  private simSteps = 0;
+  /** The rank being played (null = this brain only, at `brain`). */
+  readonly rank: BotLevel | null;
+  /** This brain's level (kickoffs, mutator games, or everything when there's no rank). */
+  readonly brain: BrainLevel;
+  /** Ranked bots: the Nexto policy (see nexto.ts) plays; this brain does kickoffs, and everything when Nexto can't. */
+  private readonly nexto: NextoDriver | null;
+  private readonly nextoCars = new Set<number>();
   /** Counters for tools (aerials started, flicks…); null in games. */
   stats: Record<string, number> | null = null;
   /** Debug: a bot's role / plan. */
   planOf(id: number): string {
+    if (this.nextoCars.has(id)) return 'nexto';
     const m = this.mem.get(id);
     return m ? `${m.role}/${m.plan}${m.aerialEnd > this.now ? '/air' : ''}${m.man ? `/${m.man.kind}` : ''}` : '-';
   }
@@ -144,14 +240,31 @@ export class Bots {
 
   constructor(
     private world: World,
-    readonly level: BotLevel = 'pro',
+    level: BotLevel | BrainLevel = 'gold',
   ) {
+    const rank = RANKS[level as BotLevel] ? (level as BotLevel) : null;
+    this.rank = rank;
+    this.brain = rank ? RANKS[rank].brain : (level as BrainLevel);
     this.rng = (world.rng ^ 0x9e3779b9) >>> 0 || 1;
+    this.nexto = rank && !OFF.has('nexto') ? new NextoDriver(world, RANKS[rank].nexto) : null;
+  }
+
+  /** Nexto was trained in standard Rocket League physics: only use it when no physics mutator is on. */
+  private nextoOk(): boolean {
+    if (!this.nexto || !nextoReady()) return false;
+    const r = this.world.rules;
+    const d = DEFAULT_RULES;
+    return r.gameSpeed === d.gameSpeed && r.gravity === d.gravity && r.ballSize === d.ballSize && r.ballWeight === d.ballWeight && r.ballBounce === d.ballBounce && r.ballMaxSpeed === d.ballMaxSpeed && r.ballDrag === d.ballDrag && r.hitPower === d.hitPower && r.boostStrength === d.boostStrength && r.jumpHeight === d.jumpHeight && r.airControl === d.airControl;
   }
 
   private rand(): number {
     this.rng = (Math.imul(this.rng, 1664525) + 1013904223) >>> 0;
     return this.rng / 4294967296;
+  }
+
+  /** The planners' share of this update is used up (keep the last plan, re-plan next update). */
+  private get overBudget(): boolean {
+    return !this.forced && this.simSteps > SIM_BUDGET;
   }
 
   private get now(): number {
@@ -161,12 +274,14 @@ export class Bots {
   /** Controls for every bot car this tick. */
   update(dt: number, out: Map<number, Controls>): void {
     const w = this.world;
-    const L = LEVEL[this.level];
+    const L = LEVEL[this.brain];
+    this.simSteps = 0;
     this.predictTimer -= dt;
     if (this.predictTimer <= 0) {
-      this.predictTimer = this.level === 'ssl' ? 1 / 30 : Math.max(0.05, L.reaction);
+      this.predictTimer = this.brain === 'ssl' ? 1 / 30 : Math.max(0.05, L.reaction);
       this.predictBall();
     }
+    this.etas.clear();
     this.assignRoles();
     for (const p of w.players) {
       if (!p.bot) continue;
@@ -174,10 +289,18 @@ export class Bots {
       if (!car) continue;
       let m = this.mem.get(p.id);
       if (!m) {
-        m = { think: 0, role: 'attack', plan: 'ball', err: 0, errAt: 0, aim: 0, dodgeIn: -1, dodgePitch: 0, dodgeYaw: 0, jumpHold: 0, aerialAt: 0, aerialEnd: 0, kickoffWait: 0, kickoffRolled: false, demoTarget: -1, demoEnd: 0, pad: -1, lastJump: false, man: null, boostHold: false, kickFlip: false, carrySince: -1, planC: null, planAt: 0, planUntil: 0, planScore: -Infinity, airCheck: 0 };
+        m = { think: 0, role: 'attack', plan: 'ball', err: 0, errAt: 0, aim: 0, dodgeIn: -1, dodgePitch: 0, dodgeYaw: 0, jumpHold: 0, aerialAt: 0, aerialEnd: 0, kickoffWait: 0, kickoffT: 0, kickoffRolled: false, demoTarget: -1, demoEnd: 0, pad: -1, lastJump: false, man: null, boostHold: false, kickFlip: false, carrySince: -1, planC: null, planAt: 0, planUntil: 0, planScore: -Infinity, airCheck: 0, airAimX: null, airNoDJ: false, airPend: null, skipBefore: 0, blockSpot: null, blockAt: 0, blockScore: 0, blockUntil: 0, planPend: null, blockPend: null, stuckT: 0, unstickN: 0, reverseUntil: 0 };
         this.mem.set(p.id, m);
       }
-      const c = car.demolished || w.phase === 'countdown' ? { ...NO_CONTROLS } : this.drive(car, m, L, dt);
+      // Nexto plays everything but the kickoff (and after the whistle, where it's this brain's drift).
+      const kickoff = w.ball.pos.x === 0 && w.ball.pos.y === 0;
+      const useNexto = this.nextoOk() && w.phase === 'play' && (!kickoff || (this.rank !== null && RANKS[this.rank].nextoKickoff === true));
+      if (useNexto) this.nextoCars.add(p.id);
+      else if (this.nextoCars.delete(p.id)) {
+        // Taking back over from Nexto (kickoff): nothing of ours is in progress.
+        Object.assign(m, { jumpHold: 0, dodgeIn: -1, man: null, boostHold: false, aerialEnd: 0, kickoffRolled: false, kickFlip: false, planC: null, planPend: null, blockPend: null, airPend: null, stuckT: 0, reverseUntil: 0 });
+      }
+      const c = car.demolished || w.phase === 'countdown' ? { ...NO_CONTROLS } : useNexto ? this.nexto!.controls(car) : this.drive(car, m, L, dt);
       m.lastJump = c.jump;
       out.set(p.id, c);
     }
@@ -185,7 +308,7 @@ export class Bots {
 
   private predictBall(): void {
     const b = this.world.ball;
-    predictBall(b, this.level === 'ssl' ? 4 : PREDICT_TIME, PREDICT_STEP, this.path);
+    predictBall(b, this.brain === 'ssl' ? 4 : PREDICT_TIME, PREDICT_STEP, this.path);
     this.pathTime = this.now;
     const team = predictedGoal(this.path, b.radius);
     let t = 0;
@@ -208,6 +331,7 @@ export class Bots {
       const mates = w.cars.filter((c) => c.team === team && !c.demolished);
       if (!mates.length) continue;
       const etas = mates.map((c) => this.ballEta(c));
+      mates.forEach((c, i) => this.etas.set(c.id, etas[i]!));
       let best = 0;
       for (let i = 1; i < mates.length; i++) if (etas[i]! < etas[best]!) best = i;
       const cur = mates.findIndex((c) => c.id === this.attacker[team]);
@@ -235,7 +359,7 @@ export class Bots {
   }
 
   private eta(car: Car, p: Vector3): number {
-    if (this.level === 'ssl' && !OFF.has('reach')) return this.reachTime(car, p, this.world.ball.radius + 40);
+    if (this.brain === 'ssl' && !OFF.has('reach')) return this.reachTime(car, p, this.world.ball.radius + 40);
     const d = Math.hypot(p.x - car.pos.x, p.y - car.pos.y);
     const v = Math.min(C.CAR_MAX_SPEED, Math.max(1000, car.speed + (car.boost > 15 ? 600 : 250)));
     return d / v + (1 - this.facing(car, p)) * 0.5 + (car.onGround ? 0 : 0.3);
@@ -247,6 +371,29 @@ export class Bots {
     const w = this.world;
     const out: Controls = { ...NO_CONTROLS };
     this.cur = m;
+    // Wedged somewhere (e.g. on two wheels against the net), flooring it and going nowhere: jump free, or back out.
+    if (!this.forced && !OFF.has('unstick') && w.phase === 'play') {
+      if (this.now < m.reverseUntil) {
+        out.throttle = -1;
+        out.steer = -car.controls.steer || 1;
+        return out;
+      }
+      const pushing = Math.abs(car.controls.throttle) > 0.9 && car.vel.length() < 120 && m.jumpHold <= 0 && m.dodgeIn < 0;
+      m.stuckT = pushing ? m.stuckT + dt : 0;
+      if (car.vel.length() > 600) m.unstickN = 0;
+      if (m.stuckT > 0.6) {
+        m.stuckT = 0;
+        this.count('unstick');
+        if (m.unstickN++ % 2 === 0 && (car.numContacts > 0 || car.worldContact)) {
+          m.jumpHold = 0.15;
+          out.jump = true;
+          return out;
+        }
+        m.reverseUntil = this.now + 0.6;
+        out.throttle = -1;
+        return out;
+      }
+    }
     if (m.man && this.maneuver(car, m, out, dt)) return out;
     // Dodge / double jump in progress (second press after the first).
     if (m.jumpHold > 0) {
@@ -292,7 +439,7 @@ export class Bots {
         out.jump = !m.lastJump;
         return out;
       }
-      if (this.level === 'ssl' && !OFF.has('airtouch') && this.airTouch(car, m, out)) return out;
+      if (this.brain === 'ssl' && !OFF.has('airtouch') && this.airTouch(car, m, out)) return out;
       this.recover(car, out);
       out.throttle = 1;
       return out;
@@ -343,9 +490,11 @@ export class Bots {
     const nearOwnGoal = Math.abs(ball.pos.y - ownY) < 1800;
     const eta = this.ballEta(car);
     // SSL: a ball heading our way with us upfield of it is urgent too (get back, no boost errands).
-    const beaten = this.level === 'ssl' && ball.vel.y * Math.sign(ownY) > 600 && Math.abs(car.pos.y - ownY) > Math.abs(ball.pos.y - ownY) - 300;
+    const beaten = this.brain === 'ssl' && ball.vel.y * Math.sign(ownY) > 600 && Math.abs(car.pos.y - ownY) > Math.abs(ball.pos.y - ownY) - 300;
     const urgent = threat || nearOwnGoal || beaten || (m.role === 'attack' && eta < 1.5);
     // Current errand first.
+    // SSL: the ball is ours to play now — drop a boost errand unless we're nearly out.
+    if (m.plan === 'boost' && this.brain === 'ssl' && m.role === 'attack' && car.boost > 30 && !OFF.has('dropboost')) m.plan = 'ball';
     if (m.plan === 'boost' && !urgent) {
       const pad = w.pads[m.pad];
       if (pad && pad.timer <= 0 && car.boost < 90) return;
@@ -353,7 +502,7 @@ export class Bots {
     if (m.plan === 'demo' && this.demoEnd(car, m) === false) return;
     m.plan = m.role === 'attack' ? 'ball' : 'shadow';
     // SSL never chases a ball an opponent will clearly reach first from behind: it gets goal-side and waits for the touch.
-    if (this.level === 'ssl' && !OFF.has('challenge') && m.role === 'attack' && !threat) {
+    if (this.brain === 'ssl' && !OFF.has('challenge') && m.role === 'attack' && !threat) {
       const ip = this.findIntercept(car, 260);
       if (ip) {
         const goalSide = Math.abs(car.pos.y - ownY) < Math.abs(ip.pos.y - ownY);
@@ -362,7 +511,7 @@ export class Bots {
       }
     }
     // SSL: our attacker is beaten (upfield of the ball) and it's in our half → the goal-side man steps up.
-    if (this.level === 'ssl' && !OFF.has('stepup') && m.role !== 'attack' && Math.sign(ball.pos.y) === Math.sign(ownY)) {
+    if (this.brain === 'ssl' && !OFF.has('stepup') && m.role !== 'attack' && Math.sign(ball.pos.y) === Math.sign(ownY)) {
       const att = w.car(this.attacker[car.team]);
       const goalSide = (c: Car) => Math.abs(c.pos.y - ownY) < Math.abs(ball.pos.y - ownY) - 100;
       if (att && att !== car && !goalSide(att) && goalSide(car) && ball.pos.distanceTo(car.pos) < 2600) {
@@ -372,15 +521,17 @@ export class Bots {
     }
     // Boost run: below 40 and the ball isn't urgent, via a pad near the way (the attacker only when the ball is far).
     const wantBoost =
-      this.level === 'ssl'
+      this.brain === 'ssl'
         ? m.role === 'attack'
           ? (car.boost < 35 && eta > 1.6) || (car.boost < 12 && eta > 1.1)
           : car.boost < 60
         : m.role === 'attack'
           ? (car.boost < 30 && eta > 2.2) || (car.boost < 10 && eta > 1.5)
           : car.boost < 40;
-    if (!urgent && wantBoost && w.rules.boostMode === 'default') {
-      const sslBackInOurHalf = this.level === 'ssl' && m.role === 'back' && Math.sign(ball.pos.y) === Math.sign(ownY) && !OFF.has('nobackboost');
+    // Supporting our attack: no boost errands (small pads on the way only) unless nearly empty.
+    const supporting = m.role !== 'attack' && car.boost >= 20 && !!this.supportPoint(car);
+    if (!urgent && wantBoost && !supporting && w.rules.boostMode === 'default') {
+      const sslBackInOurHalf = this.brain === 'ssl' && m.role === 'back' && Math.sign(ball.pos.y) === Math.sign(ownY) && !OFF.has('nobackboost');
       const pad = this.choosePad(car, m.role === 'attack' ? ball.pos : this.shadowPoint(car, m), m.role === 'attack' ? 900 : sslBackInOurHalf ? 450 : 1600);
       if (pad >= 0) {
         m.plan = 'boost';
@@ -389,7 +540,7 @@ export class Bots {
       }
     }
     // SSL: with the ball in their half, the off-ball man takes out their last defender.
-    if (this.level === 'ssl' && !OFF.has('hunt') && m.role !== 'attack' && !threat && w.rules.demolish !== 'disabled' && Math.sign(ball.pos.y) !== Math.sign(ownY)) {
+    if (this.brain === 'ssl' && !OFF.has('hunt') && m.role !== 'attack' && !threat && w.rules.demolish !== 'disabled' && Math.sign(ball.pos.y) !== Math.sign(ownY)) {
       const oppY = -ownY;
       let best: Car | null = null;
       for (const e of w.cars) if (e.team !== car.team && !e.demolished && (!best || Math.abs(e.pos.y - oppY) < Math.abs(best.pos.y - oppY))) best = e;
@@ -409,6 +560,8 @@ export class Bots {
         if (e.team === car.team || e.demolished) continue;
         if (Math.abs(e.pos.y - oppY) > 1800 || Math.abs(e.pos.x) > 1600 || e.pos.distanceTo(ball.pos) < 1500) continue;
         if (this.eta(car, e.pos) > 2 || this.facing(car, e.pos) < 0.5) continue;
+        // SSL only demos when it's right there (not a cross-field errand), never instead of supporting our attack.
+        if (this.brain === 'ssl' && !OFF.has('demorestraint') && (this.eta(car, e.pos) > 1.1 || this.facing(car, e.pos) < 0.85 || this.supportPoint(car))) continue;
         if (!best || car.pos.distanceTo(e.pos) < car.pos.distanceTo(best.pos)) best = e;
       }
       if (best) {
@@ -432,10 +585,22 @@ export class Bots {
     const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
     const mates = w.cars.filter((c) => c.team === car.team && !c.demolished);
     const d = car.pos.distanceTo(w.ball.pos);
-    const taker = mates.every((c) => c === car || c.pos.distanceTo(w.ball.pos) > d - 1 && (c.pos.distanceTo(w.ball.pos) > d + 1 || c.id > car.id));
+    let taker = mates.every((c) => c === car || c.pos.distanceTo(w.ball.pos) > d - 1 && (c.pos.distanceTo(w.ball.pos) > d + 1 || c.id > car.id));
     if (!m.kickoffRolled) {
       m.kickoffRolled = true;
+      m.kickoffT = 0;
       m.kickoffWait = this.rand() < L.fake ? 0.2 + this.rand() * 0.3 : 0;
+    }
+    m.kickoffT += dt;
+    // SSL: the teammate who should take it is a human who isn't going for it — go ourselves.
+    if (!taker && this.brain === 'ssl' && !OFF.has('kickcover') && m.kickoffT > 0.35) {
+      const ball = w.ball.pos;
+      const ahead = mates.filter((c) => c !== car && c.pos.distanceTo(ball) <= d + 1);
+      taker = ahead.every((c) => {
+        if (w.players.find((p) => p.id === c.id)?.bot) return false;
+        const to = V().copy(ball).sub(c.pos).setZ(0).normalize();
+        return c.vel.dot(to) < 450;
+      });
     }
     if (taker) {
       if (m.kickoffWait > 0) {
@@ -447,7 +612,7 @@ export class Bots {
       this.steerTo(car, target, out, L.maxSpeed);
       out.boost = car.boost > 0 && d > 700;
       // SSL speed flip: a front dodge cancelled straight away, boosting all the way — reaches the ball first.
-      if (this.level === 'ssl' && !OFF.has('kick') && !m.kickFlip && car.onGround && car.speed > 750 && d > 1900 && this.facing(car, target) > 0.97) {
+      if (this.brain === 'ssl' && !OFF.has('kick') && !m.kickFlip && car.onGround && car.speed > 750 && d > 1900 && this.facing(car, target) > 0.97) {
         m.kickFlip = true;
         this.count('speedFlip');
         m.jumpHold = 0.05;
@@ -458,7 +623,7 @@ export class Bots {
         out.jump = true;
         return out;
       }
-      if (d < (this.level === 'ssl' ? 560 : 650) && car.onGround && car.speed > 1200) this.startDodge(car, m, w.ball.pos, L);
+      if (d < (this.brain === 'ssl' ? 560 : 650) && car.onGround && car.speed > 1200) this.startDodge(car, m, w.ball.pos, L);
       return out;
     }
     // Not taking: back big pad, then rotate to mid.
@@ -475,7 +640,7 @@ export class Bots {
 
   /** Attack / save: drive to the intercept lined up with the shot, flip, jump or fly into it. */
   private playBall(car: Car, m: Mem, L: Level, out: Controls): void {
-    if (this.level === 'ssl' && !OFF.has('play')) {
+    if (this.brain === 'ssl' && !OFF.has('play')) {
       this.sslPlay(car, m, L, out);
       return;
     }
@@ -485,7 +650,7 @@ export class Bots {
     const oppY = -ownY;
     const threat = this.goalIn.team === 1 - car.team;
     // Aerial opportunity (pro: simple, all-star: higher / further).
-    if (L.aerialZ > 0 && car.onGround && car.boost > (this.level === 'allstar' ? 30 : 45)) {
+    if (L.aerialZ > 0 && car.onGround && car.boost > (this.brain === 'allstar' ? 30 : 45)) {
       const p = this.findAerial(car, L);
       if (p) {
         m.aerialAt = this.pathTime + p.t;
@@ -520,7 +685,7 @@ export class Bots {
       const align = toBall.dot(dir);
       const closing = Math.max(0, -hit.vel.dot(toBall));
       let off = ball.radius + 20 + car.halfExtents.x + Math.max(0, ip.z - 120) * 0.25 + Math.min(200, closing * 0.06);
-      off += Math.min(700, dist * 0.35) * (1 - Math.max(0, align)) * (this.level === 'rookie' ? 0.6 : 1);
+      off += Math.min(700, dist * 0.35) * (1 - Math.max(0, align)) * (this.brain === 'rookie' ? 0.6 : 1);
       target.copy(ip).addScaledVector(dir, -off);
       // Behind the shot line's far side: go round the ball rather than through it.
       if (align < 0.2) target.copy(this.avoidBall(car, target));
@@ -689,13 +854,13 @@ export class Bots {
   // ---------------------------------------------------------------- aerial
 
   /** An aerial-only ball (above the jump range) this car can meet with its boost. */
-  private findAerial(car: Car, L: Level, maxT = 9): BallSample | null {
+  private findAerial(car: Car, L: Level, maxT = 9, minT = 0): BallSample | null {
     const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
     const threat = this.goalIn.team === 1 - car.team;
-    const ssl = this.level === 'ssl';
+    const ssl = this.brain === 'ssl';
     for (const p of this.path) {
       const t = p.t + this.pathTime - this.now;
-      if (t < (ssl ? 0.4 : 0.5)) continue;
+      if (t < Math.max(minT, ssl ? 0.4 : 0.5)) continue;
       if (t > (ssl ? Math.min(3.2, maxT) : 2.2)) break;
       if (p.pos.z < (ssl ? 300 : L.blockZ + 60) || p.pos.z > L.aerialZ) continue;
       if (Math.abs(p.pos.y) > ARENA.halfY - 100) continue;
@@ -704,19 +869,20 @@ export class Bots {
       const aim = ssl ? this.aerialAim(car, p.pos, V()) : p.pos;
       const T = t - 0.3;
       const g = C.GRAVITY * this.world.rules.gravity;
-      const from = this.tmp.copy(car.pos).addScaledVector(car.vel, 0.3);
-      from.z += 120 * this.world.rules.jumpHeight;
-      const need = this.tmp2.copy(aim).sub(from).addScaledVector(car.vel, -T);
-      need.z -= 650 * this.world.rules.jumpHeight * T;
+      // The jump pushes off along the roof (up off the floor, out from a wall — SSL takes off from walls too).
+      const up = ssl && !OFF.has('wallair') ? car.up : V().set(0, 0, 1);
+      const from = this.tmp.copy(car.pos).addScaledVector(car.vel, 0.3).addScaledVector(up, 120 * this.world.rules.jumpHeight);
+      const need = this.tmp2.copy(aim).sub(from).addScaledVector(car.vel, -T).addScaledVector(up, -650 * this.world.rules.jumpHeight * T);
       need.multiplyScalar(2 / (T * T));
       need.z -= g;
       const acc = C.BOOST_ACCEL_AIR * this.world.rules.boostStrength;
-      if (need.length() > acc * (ssl ? 0.88 : this.level === 'allstar' ? 0.8 : 0.65)) continue;
+      if (need.length() > acc * (ssl ? 0.88 : this.brain === 'allstar' ? 0.8 : 0.65)) continue;
       // Enough boost for the flight (unlimited-boost games always have it).
       if (ssl && this.world.rules.boostMode === 'default' && (need.length() / acc) * T * C.BOOST_PER_SECOND + 4 > car.boost) continue;
-      if (this.facing(car, p.pos) < (ssl ? (t > 1.2 ? 0.2 : 0.65) : this.level === 'allstar' ? 0.75 : 0.85)) continue;
+      // Facing: on a wall the nose can be anywhere — the air control turns it on the way.
+      if ((car.up.z > 0.7 || !ssl) && this.facing(car, p.pos) < (ssl ? (t > 1.2 ? 0.2 : 0.65) : this.brain === 'allstar' ? 0.75 : 0.85)) continue;
       // Worth it: a save, or a ball in their half / coming down slowly; and it's ours to play.
-      const worth = threat || Math.sign(p.pos.y) !== Math.sign(ownY) || this.level === 'allstar' || ssl;
+      const worth = threat || Math.sign(p.pos.y) !== Math.sign(ownY) || this.brain === 'allstar' || ssl;
       if (!worth) continue;
       return p;
     }
@@ -727,11 +893,20 @@ export class Bots {
   private aerial(car: Car, m: Mem, L: Level, out: Controls): void {
     const ball = this.world.ball;
     const T = m.aerialAt - this.now;
-    const ssl = this.level === 'ssl';
+    const ssl = this.brain === 'ssl';
     const target = ssl ? this.aerialAim(car, this.sampleAt(m.aerialAt).pos, V()) : this.sampleAt(m.aerialAt).pos;
     const dist = car.pos.distanceTo(ball.pos);
     // Bail out: no boost, too late, or the meeting point needs more than the boost can give.
     if (car.boost < (ssl ? 3 : 10) || (T < -0.05 && dist > 300) || car.pos.distanceTo(target) > (ssl ? 4500 : 3000) || car.onGround || this.aerialAccel(car, target, T) > C.BOOST_ACCEL_AIR * (ssl ? 1.5 : 1.8)) {
+      // SSL: the ball moved (someone touched it) — fly at where it's going now if that's still reachable.
+      const re = ssl && !car.onGround && !car.hasFlipped && !OFF.has('retarget') ? this.airRetarget(car) : null;
+      if (re) {
+        this.count('airRetarget');
+        m.aerialAt = this.pathTime + re.t;
+        m.aerialEnd = m.aerialAt + 0.5;
+        this.aerial(car, m, L, out);
+        return;
+      }
       m.aerialEnd = 0;
       this.count('aerialBail');
       this.recover(car, out);
@@ -749,13 +924,60 @@ export class Bots {
     }
     const mag = this.aerialAccel(car, target, T);
     const dir = this.tmp.multiplyScalar(1 / Math.max(1e-6, mag));
+    // SSL power: the last moments before contact, nose on the contact point and boost through it.
+    const strike = ssl && !OFF.has('strike') && T < AIR_STRIKE && T > 0 && car.boost > 0;
+    if (strike) dir.copy(target).sub(car.pos).normalize();
     this.pointAt(car, dir, out, L);
-    out.boost = car.forward.dot(dir) > (ssl ? 0.7 : this.level === 'allstar' ? 0.75 : 0.85) && mag > 150 && car.boost > 0;
+    out.boost = car.forward.dot(dir) > (ssl ? 0.7 : this.brain === 'allstar' ? 0.75 : 0.85) && (mag > 150 || strike) && car.boost > 0;
     // Fast aerial: double jump (sticks neutral) right after the first jump.
-    if (car.hasJumped && !car.hasDoubleJumped && !car.hasFlipped && car.airTimeSinceJump < 0.25 && T > 0.4 && !m.lastJump) {
+    if (car.hasJumped && !car.hasDoubleJumped && !car.hasFlipped && car.airTimeSinceJump < 0.25 && T > 0.4 && !m.lastJump && !m.airNoDJ) {
       out.jump = true;
       out.pitch = out.yaw = out.roll = 0;
     }
+  }
+
+  /** Where to climb a side wall to fly at a ball floating high beside it (null = no such ball). */
+  private wallSpot(car: Car): Vector3 | null {
+    for (const p of this.path) {
+      const t = p.t + this.pathTime - this.now;
+      if (t < 0.9) continue;
+      if (t > 3) break;
+      if (p.pos.z < 550 || p.pos.z > 1500 || Math.abs(p.pos.x) < ARENA.halfX - 900 || Math.abs(p.pos.y) > ARENA.halfY - 900) continue;
+      // Reach the foot of the wall below it in time to climb.
+      const foot = V().set(Math.sign(p.pos.x) * (ARENA.halfX - 150), p.pos.y - Math.sign(p.pos.y - car.pos.y) * 300, 0);
+      if (this.reachTime(car, foot, 0) + 0.6 > t) continue;
+      return foot.setX(Math.sign(p.pos.x) * (ARENA.halfX + 300)).setZ(Math.min(p.pos.z - 300, 700));
+    }
+    return null;
+  }
+
+  /** Take off for an aerial meeting the ball at world time `at`. */
+  private startAerial(m: Mem, out: Controls, at: number, ax: number | null, noDJ: boolean): void {
+    this.count('aerial');
+    m.aerialAt = at;
+    m.aerialEnd = at + 0.5;
+    m.airAimX = ax;
+    m.airNoDJ = noDJ;
+    m.jumpHold = 0.2;
+    out.jump = true;
+    out.pitch = 0.6;
+  }
+
+  /** In the air with boost: the earliest predicted ball we can still fly to (and leave with a shot or clear). */
+  private airRetarget(car: Car): BallSample | null {
+    const acc = C.BOOST_ACCEL_AIR * this.world.rules.boostStrength;
+    const aim = V();
+    for (const p of this.path) {
+      const t = p.t + this.pathTime - this.now;
+      if (t < 0.15 || p.pos.z < 200) continue;
+      if (t > 2.2) break;
+      this.aerialAim(car, p.pos, aim);
+      const need = this.aerialAccel(car, aim, t);
+      if (need > acc * 0.85) continue;
+      if (this.world.rules.boostMode === 'default' && (need / acc) * t * C.BOOST_PER_SECOND + 3 > car.boost) continue;
+      return p;
+    }
+    return null;
   }
 
   /** Acceleration (left in `tmp`, magnitude returned) that brings the car to `target` in `T` s against gravity. */
@@ -773,7 +995,7 @@ export class Bots {
     if (car.forward.dot(dir) < 0 && err.lengthSq() > 1e-6) err.normalize();
     const right = V().copy(car.left).negate();
     const aw = car.angVel;
-    const k = this.level === 'ssl' ? 1.6 : this.level === 'allstar' ? 1.4 : 1;
+    const k = this.brain === 'ssl' ? 1.6 : this.brain === 'allstar' ? 1.4 : 1;
     const rate = (e: number) => Math.sign(e) * Math.min(5 * Math.abs(e), Math.sqrt(2 * 7 * Math.abs(e)));
     out.pitch = Math.max(-1, Math.min(1, (rate(err.dot(right)) - aw.dot(right)) * k));
     out.yaw = Math.max(-1, Math.min(1, -(rate(err.dot(car.up)) - aw.dot(car.up)) * k));
@@ -783,8 +1005,52 @@ export class Bots {
 
   // ----------------------------------------------------------------- shadow
 
+  /** Our side's hold on the ball: 2 = a teammate gets there clearly first, 1 = a teammate is contesting it, 0 = theirs / loose. */
+  private possession(car: Car): 0 | 1 | 2 {
+    let mateT = 9;
+    let opp = 9;
+    for (const c of this.world.cars) {
+      if (c.demolished) continue;
+      let t = this.etas.get(c.id) ?? this.ballEta(c);
+      // Dribbling (ball on its nose / roof, moving with it): it has the ball now, whatever the ETA says.
+      const ball = this.world.ball;
+      if (Math.hypot(ball.pos.x - c.pos.x, ball.pos.y - c.pos.y) < 320 && Math.hypot(ball.vel.x - c.vel.x, ball.vel.y - c.vel.y) < 700) t = 0;
+      if (c.team !== car.team) opp = Math.min(opp, t);
+      else if (c !== car) mateT = Math.min(mateT, t);
+    }
+    return mateT + 0.25 < opp ? 2 : mateT < opp + 0.35 ? 1 : 0;
+  }
+
+  /**
+   * SSL support: a teammate has (or is fighting for) the ball in their half → come up for the pass /
+   * rebound instead of waiting at our net: central, a pass-length behind the ball (further back while
+   * it's a 50-50), on the far side of it from the carrier's wing.
+   */
+  private supportPoint(car: Car): Vector3 | null {
+    if (this.brain !== 'ssl' || OFF.has('support')) return null;
+    const ball = this.world.ball;
+    const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
+    const dir = -Math.sign(ownY); // towards their goal
+    const pos = this.possession(car);
+    // Only once the ball is well into their half (deeper still while it's a 50-50): at midfield a lost
+    // touch is a breakaway, so the last man stays goal-side.
+    if (!pos || ball.pos.y * dir < (pos === 2 ? SUP_MIN : 2500)) return null;
+    // Their counter-attacker cherry-picking deep in our half with us out of boost: stay home.
+    if (car.boost < 15 && this.world.cars.some((e) => e.team !== car.team && !e.demolished && e.pos.y * dir < -2500)) return null;
+    // A pass-length behind the ball, never level with it.
+    const gap = pos === 2 ? (ball.pos.y * dir > 2500 ? 1400 : 2100) : 2300;
+    const y = Math.min(ball.pos.y * dir - gap, ARENA.halfY * (pos === 2 ? 0.62 : 0.4));
+    const x = Math.abs(ball.pos.x) > 1500 ? -Math.sign(ball.pos.x) * 350 : Math.max(-1500, Math.min(1500, -ball.pos.x * 0.6));
+    return V().set(x, y * dir, 0);
+  }
+
   /** Goal-side waiting spot: matches the ball's x, between it and our net, further back the faster it comes. */
   private shadowPoint(car: Car, m: Mem): Vector3 {
+    const sp = this.supportPoint(car);
+    if (sp) {
+      this.count('support');
+      return sp;
+    }
     const ball = this.world.ball;
     const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
     const toward = Math.sign(ownY);
@@ -792,7 +1058,9 @@ export class Bots {
     const back = m.role === 'support' ? 1300 : Math.max(1500, Math.min(3200, 1800 + closing * 0.6));
     let y = ball.pos.y + toward * back;
     if (Math.abs(y) > Math.abs(ownY) * 0.88) y = ownY * 0.88;
-    if (Math.sign(y) !== toward && Math.abs(y) > 800) y = -toward * 800; // never past the far side of midfield
+    // Never past the far side of midfield; SSL's last man stays this side of it, deeper still on low boost.
+    const limit = this.brain === 'ssl' && m.role === 'back' && !OFF.has('lastman') ? (car.boost < 30 ? -1200 : 0) : 800;
+    if (y * -toward > limit) y = -toward * limit;
     const inBox = Math.abs(y - ownY) < 1300;
     const x = inBox ? Math.max(-700, Math.min(700, ball.pos.x * 0.3)) : Math.max(-2200, Math.min(2200, ball.pos.x * (m.role === 'support' ? 0.4 : 0.6)));
     return V().set(x, y, 0);
@@ -800,18 +1068,22 @@ export class Bots {
 
   private shadow(car: Car, m: Mem, L: Level, out: Controls): void {
     const ball = this.world.ball;
-    const target = this.avoidBall(car, this.viaSmallPad(car, this.shadowPoint(car, m)));
-    const dist = car.pos.distanceTo(target);
+    const spot = this.shadowPoint(car, m);
+    const target = this.avoidBall(car, this.viaSmallPad(car, spot));
+    // Distance to the waiting spot itself (not to a boost pad on the way there).
+    const dist = car.pos.distanceTo(spot);
     const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
     // Ball coming at the net: the back player challenges / blocks instead of waiting.
     const threat = this.goalIn.team === 1 - car.team && this.goalIn.t < 2.5;
-    if (threat && (m.role === 'back' || ball.pos.distanceTo(car.pos) < 1500)) {
+    const ssl = this.brain === 'ssl';
+    // SSL: never two of us on the same ball — if a teammate is already getting there first, cover.
+    const covered = ssl && !OFF.has('nodouble') && this.mateFirst(car);
+    if (threat && !covered && (m.role === 'back' || ball.pos.distanceTo(car.pos) < 1500)) {
       this.playBall(car, m, L, out);
       return;
     }
-    const ssl = this.level === 'ssl';
     // SSL: a ball in our third coming at us is met head-on (cleared), never driven past with our back to it.
-    if (ssl && !OFF.has('meet') && Math.abs(ball.pos.y - ownY) < 3000 && ball.pos.distanceTo(car.pos) < 1400 && (m.role === 'back' || ball.vel.y * Math.sign(ownY) > 300)) {
+    if (ssl && !covered && !OFF.has('meet') && Math.abs(ball.pos.y - ownY) < 3000 && ball.pos.distanceTo(car.pos) < 1400 && (m.role === 'back' || ball.vel.y * Math.sign(ownY) > 300)) {
       this.playBall(car, m, L, out);
       return;
     }
@@ -824,6 +1096,8 @@ export class Bots {
       out.handbrake = false;
     }
     out.boost = this.boostOk(car, L) && car.onGround && dist > 2200 && this.facing(car, target) > 0.95 && !car.supersonic;
+    // SSL: get up into support in time for the pass.
+    if (ssl && !out.boost && car.onGround && dist > 1200 && car.boost > 20 && this.facing(car, target) > 0.92 && !car.supersonic && this.supportPoint(car)) out.boost = true;
     // SSL: beaten upfield → sprint back.
     if (ssl && !out.boost && car.onGround && dist > 1200 && this.facing(car, target) > 0.9 && !car.supersonic && car.boost > 0) {
       const upfield = Math.abs(car.pos.y - ownY) > Math.abs(ball.pos.y - ownY) - 200;
@@ -901,13 +1175,15 @@ export class Bots {
     if (direct < 600) return target;
     let best: Vector3 | null = null;
     let bestD = Infinity;
+    // SSL picks up more of the small pads the emptier its tank.
+    const allow = this.brain === 'ssl' && !OFF.has('pads') ? 120 + Math.max(0, 60 - car.boost) * 5 : 120;
     for (const p of this.world.pads) {
       if (p.timer > 0 || p.big) continue;
       const pos = this.tmp.set(p.x, p.y, 0);
       const d1 = car.pos.distanceTo(pos);
       if (d1 < 150 || d1 > direct) continue;
       const detour = d1 + pos.distanceTo(target) - direct;
-      if (detour > 120 || d1 > bestD) continue;
+      if (detour > allow || d1 > bestD) continue;
       bestD = d1;
       best = pos.clone();
     }
@@ -927,7 +1203,7 @@ export class Bots {
     const lead = Math.min(0.4, car.pos.distanceTo(t.pos) / 2300);
     const target = this.tmp.copy(t.pos).addScaledVector(t.vel, lead);
     this.steerTo(car, target, out, 1);
-    out.boost = car.boost > 0 && (this.level === 'ssl' || !car.supersonic) && this.facing(car, target) > 0.9;
+    out.boost = car.boost > 0 && (this.brain === 'ssl' || !car.supersonic) && this.facing(car, target) > 0.9;
     out.handbrake = false;
   }
 
@@ -958,16 +1234,16 @@ export class Bots {
   }
 
   /** Earliest predicted ball this car can be at in time — on the ground, or up to `maxZ` with a (double) jump. */
-  private sslIntercept(car: Car, maxZ: number): BallSample | null {
+  private sslIntercept(car: Car, maxZ: number, after = 0): BallSample | null {
     const R = this.world.ball.radius;
     for (const p of this.path) {
       if (Math.abs(p.pos.y) > ARENA.halfY + 50) break; // a goal will happen
       const t = p.t + this.pathTime - this.now;
-      if (t < 0) continue;
+      if (t < 0 || p.t + this.pathTime < after) continue;
       const wall = this.nearWall(p.pos);
       if (p.pos.z > (wall ? Math.max(maxZ, 900) : maxZ)) continue;
       if (!wall && p.pos.z > 190) {
-        const j = jumpFor(p.pos.z);
+        const j = jumpFor(p.pos.z, OFF.has('jt') ? 9 : SHOT_JUMP_T);
         if (!j || j.t > t + 0.02) continue;
       }
       if (this.reachTime(car, p.pos, R + 40) <= t + 0.03) return p;
@@ -999,6 +1275,10 @@ export class Bots {
     if (this.forced) {
       // Inside a rollout: play the candidate being tested (an aerial rollout does nothing once it lands).
       if ('air' in this.forced) return;
+      if ('spot' in this.forced) {
+        this.blockTo(car, m, out, this.forced.spot, this.forced.at);
+        return;
+      }
       this.sslTouch(car, m, L, out, this.forced.sample, this.forced.cand, false, this.forced.opp);
       return;
     }
@@ -1008,32 +1288,92 @@ export class Bots {
     const threat = this.goalIn.team === 1 - car.team;
     if (!OFF.has('carry') && this.carry(car, m, out)) return;
     m.carrySince = -1;
-    const hit = this.sslIntercept(car, L.blockZ);
+    // Shadow defence: an opponent is dribbling at us — stay goal-side and wait for the mistake
+    // (or the box) instead of diving in and getting beaten.
+    if (!OFF.has('shadowdef') && this.shadowDefend(car, out)) return;
+    if (m.skipBefore && this.now > m.skipBefore + 0.3) m.skipBefore = 0;
+    const hit = this.sslIntercept(car, L.blockZ, OFF.has('skip') ? 0 : m.skipBefore);
     const hitT = hit ? hit.t + this.pathTime - this.now : 9;
     // Aerial when it gets there clearly before anything on the ground can — and, simulated, it
     // actually reaches the ball and leaves it better than the ground option (or than leaving it).
-    if (car.onGround && car.boost > 12 && car.up.z > 0.7 && !OFF.has('aerial') && this.now >= m.airCheck) {
-      m.airCheck = this.now + 0.1;
-      let a = this.findAerial(car, L, hitT - 0.25);
-      if (a && !OFF.has('airsim')) {
-        const sc = this.rolloutAerial(car, m, L, a);
-        const ground = hit && hitT < PLAN_T && m.planC && Math.abs(m.planAt - (hit.t + this.pathTime)) < 0.15 ? m.planScore : this.judgeBall(ball, car.team);
-        if (sc < ground + 150) a = null;
+    if (car.onGround && car.boost > 12 && (car.up.z > 0.7 || (!OFF.has('wallair') && car.pos.z > 250)) && !OFF.has('aerial')) {
+      if (!m.airPend && this.now >= m.airCheck && !this.overBudget) {
+        m.airCheck = this.now + 0.12;
+        const a = this.findAerial(car, L, hitT - 0.25);
+        if (a && OFF.has('airsim')) {
+          this.startAerial(m, out, this.pathTime + a.t, null, false);
+          return;
+        }
+        if (a) {
+          // A few ways to take it: now or a beat later, at the open lane or the far post, with or without
+          // the fast-aerial double jump (without it the flip is kept for a harder hit) — simulated over the
+          // next few updates, best one wins.
+          const reachX = ARENA.goalHalfX - ball.radius - 120;
+          const opts: AirOpt[] = [{ at: this.pathTime + a.t, ax: null, noDJ: false }];
+          if (!OFF.has('airflip')) opts.push({ at: this.pathTime + a.t, ax: null, noDJ: true });
+          if (!OFF.has('aircands')) {
+            const later = this.findAerial(car, L, hitT - 0.25, a.t + 0.35);
+            if (later) opts.push({ at: this.pathTime + later.t, ax: null, noDJ: false });
+            if (Math.sign(a.pos.y) !== Math.sign(ownY)) {
+              const ax = a.pos.x > 0 ? -reachX : reachX;
+              opts.push({ at: this.pathTime + a.t, ax, noDJ: false });
+              if (!OFF.has('airflip')) opts.push({ at: this.pathTime + a.t, ax, noDJ: true });
+            }
+          }
+          m.airPend = { opts, i: 0, best: -Infinity, pick: null };
+        }
       }
-      if (a) {
-        this.count('aerial');
-        m.aerialAt = this.pathTime + a.t;
-        m.aerialEnd = m.aerialAt + 0.5;
-        m.jumpHold = 0.2;
-        out.jump = true;
-        out.pitch = 0.6;
+      const pend = m.airPend;
+      if (pend) {
+        let n = 0;
+        while (pend.i < pend.opts.length && (n === 0 || !this.overBudget)) {
+          const o = pend.opts[pend.i++]!;
+          n++;
+          if (o.at < this.now + 0.35) continue; // too late to take off for it now
+          const sc = this.rolloutAerial(car, m, L, o.at, o.ax, o.noDJ);
+          if (sc > pend.best) {
+            pend.best = sc;
+            pend.pick = o;
+          }
+        }
+        if (pend.i >= pend.opts.length) {
+          m.airPend = null;
+          const ground = hit && hitT < PLAN_T && m.planC && Math.abs(m.planAt - (hit.t + this.pathTime)) < 0.15 ? m.planScore : this.judgeBall(ball, car.team);
+          const pick = pend.pick;
+          if (pick && pend.best >= ground + 150 && pick.at > this.now + 0.3) {
+            if (pick.noDJ) this.count('airNoDJ');
+            this.startAerial(m, out, pick.at, pick.ax, pick.noDJ);
+            return;
+          }
+        }
+      }
+    } else m.airPend = null;
+    const opp = this.oppEta(car);
+    // SSL wall play: a high ball by a side wall and no ground touch soon — drive up the wall under it
+    // (the aerial check above takes off from there).
+    if (!threat && m.role === 'attack' && !OFF.has('wallride') && car.onGround && car.boost > 25 && (!hit || hitT > 1.3)) {
+      const spot = this.wallSpot(car);
+      if (spot) {
+        this.count('wallRide');
+        this.steerTo(car, spot, out, 1);
+        out.boost = car.up.z > 0.7 && this.facing(car, spot) > 0.9 && car.pos.distanceTo(spot) > 1500 && !car.supersonic;
         return;
       }
+    }
+    if (threat && !OFF.has('block') && car.onGround) {
+      // A shot is coming in: play the touch only when it simulates as a clean clear; otherwise get
+      // on the ball's path early and meet it head-on (jumping into a high one).
+      const cand = hit && hitT < PLAN_T && !OFF.has('plan') ? this.planTouch(car, m, L, hit, opp) : null;
+      if (cand && m.planScore > -8000) {
+        this.sslTouch(car, m, L, out, this.sampleAt(m.planAt), cand, false, opp);
+        return;
+      }
+      if (this.block(car, m, L, out)) return;
+      if (!OFF.has('keeper') && this.keeper(car, m, out)) return;
     }
     // Goalkeeping: a shot is going in and no touch gets there first → get on the line where it
     // crosses, facing out, and block it (jumping for a high one).
     if (threat && !OFF.has('keeper') && (!hit || hitT > this.goalIn.t - 0.05) && this.keeper(car, m, out)) return;
-    const opp = this.oppEta(car);
     // Catch it for a dribble: dropping, nobody near, away from our net.
     let sample = hit ?? this.landing();
     let catching = false;
@@ -1047,6 +1387,10 @@ export class Bots {
     // Close to the touch: simulate the ways to play it and take the best.
     const tLeft = sample.t + this.pathTime - this.now;
     const cand = !catching && hit && tLeft < PLAN_T && car.onGround && !OFF.has('plan') ? this.planTouch(car, m, L, hit, opp) : null;
+    // Every way of playing this intercept misses in simulation: aim for a later one instead.
+    if (cand && m.planScore < -15000 && !OFF.has('skip')) m.skipBefore = hit!.t + this.pathTime + 0.1;
+    // Play the intercept that was simulated (the earliest reachable one can shift between plans).
+    if (cand && !OFF.has('commit')) sample = this.sampleAt(m.planAt);
     this.sslTouch(car, m, L, out, sample, cand, catching, opp);
   }
 
@@ -1085,22 +1429,40 @@ export class Bots {
     const fwd = car.forwardSpeed;
     const facingT = this.facing(car, target);
     if (out.throttle > 0 && car.onGround) {
-      const early = this.reachTime(car, contact, 0) < tLeft - 0.15;
-      if (early && (ip.z > 190 || catching || opp > tLeft + 0.5)) {
+      const rt = this.reachTime(car, contact, 0);
+      const early = rt < tLeft - 0.15;
+      // SSL power: a ground ball we're early for is hit at full speed — hang back (coast / brake) until
+      // going flat out arrives just in time, rather than rolling in slowly to meet it.
+      const power = !!cand?.rush && !catching && ip.z < 190 && !intoOwn && facingT > 0.7;
+      if (power && early) {
+        out.throttle = fwd > 900 ? -1 : fwd > 350 ? 0 : 0.35;
+        out.boost = false;
+      } else if (power) {
+        out.throttle = 1;
+        out.boost = facingT > 0.92 && car.boost > 0 && !car.supersonic;
+      } else if (early && !cand?.rush && (ip.z > 190 || catching || opp > tLeft + 0.5)) {
         const want = dist / Math.max(0.05, tLeft);
         out.throttle = fwd > want + 250 ? -1 : fwd > want + 50 ? 0 : 1;
         out.boost = fwd < want - 300 && facingT > 0.95 && car.boost > 0 && !car.supersonic;
       } else {
-        // Boost when it matters (contested, defending, or plenty in the tank).
-        const matters = threat || opp < tLeft + 0.6 || car.boost > 50 || dist > 2500;
-        out.boost = matters && facingT > 0.92 && car.boost > 0 && !car.supersonic && !intoOwn;
+        // Boost when it matters (contested, defending, or plenty in the tank). SSL doesn't burn it
+        // topping up an already fast car for an uncontested ball.
+        const contested = !!cand?.rush || threat || opp < tLeft + 0.6;
+        const matters = contested || car.boost > 50 || dist > 2500;
+        const wasteful = this.brain === 'ssl' && !contested && !OFF.has('saveboost') && (fwd > 1750 || (car.boost < 50 && dist > 2500 && fwd > 1400));
+        out.boost = matters && !wasteful && facingT > 0.92 && car.boost > 0 && !car.supersonic && !intoOwn;
       }
     }
     if (catching) return;
+    // Simulated, none of the ways to take this touch reach the ball: don't jump or flip at it.
+    if (!this.forced && cand && cand === m.planC && m.planScore < -15000 && !OFF.has('gate')) {
+      this.count('jumpGated');
+      return;
+    }
     // Jump / double jump timed so the nose meets the ball.
     const flat = Math.hypot(ip.x - car.pos.x, ip.y - car.pos.y);
     if (car.onGround && ip.z > 190 && !this.nearWall(ip) && this.facing(car, ip) > 0.75) {
-      const j = jumpFor(ip.z);
+      const j = jumpFor(ip.z, OFF.has('jt') ? 9 : SHOT_JUMP_T);
       if (j && tLeft <= j.t + 1 / 60 && flat < reach + 140 + Math.max(0, fwd) * tLeft) {
         if (!this.forced) this.count(j.double ? 'doubleJumpShot' : 'jumpShot');
         m.jumpHold = 0.2;
@@ -1124,7 +1486,40 @@ export class Bots {
   /** Candidate touches (aims × contact offsets × dodge), each simulated with the real physics; the best is kept ~0.12 s. */
   private planTouch(car: Car, m: Mem, L: Level, hit: BallSample, opp: number): Cand | null {
     const at = hit.t + this.pathTime;
-    if (m.planC && this.now < m.planUntil && Math.abs(m.planAt - at) < 0.1) return m.planC;
+    const same = (x: number) => Math.abs(x - at) < 0.1;
+    if (m.planPend && !same(m.planPend.at)) m.planPend = null;
+    if (!m.planPend) {
+      if (m.planC && this.now < m.planUntil && same(m.planAt)) return m.planC;
+      m.planPend = { at, cands: this.touchCands(car, m, L, hit), i: 0, best: null, score: -Infinity };
+    }
+    // Simulate candidates until this update's budget is spent (at least one); the rest next update.
+    const pend = m.planPend;
+    let n = 0;
+    while (pend.i < pend.cands.length && (n === 0 || !this.overBudget)) {
+      const c = pend.cands[pend.i++]!;
+      n++;
+      const sc = this.rollout(car, m, L, hit, c, opp);
+      if (sc > pend.score) {
+        pend.score = sc;
+        pend.best = c;
+      }
+    }
+    const done = pend.i >= pend.cands.length;
+    // Keep a finished plan for this intercept while the next one is being worked out.
+    if (done || !m.planC || !same(m.planAt)) {
+      m.planC = pend.best;
+      m.planScore = pend.score;
+      m.planAt = at;
+    }
+    if (done) {
+      m.planUntil = this.now + 0.12;
+      m.planPend = null;
+    }
+    return m.planC;
+  }
+
+  /** The ways to play intercept `hit`: shot / clear directions × contact offsets × dodge or not. */
+  private touchCands(car: Car, m: Mem, L: Level, hit: BallSample): Cand[] {
     const ip = hit.pos;
     const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
     const oppY = -ownY;
@@ -1133,56 +1528,75 @@ export class Bots {
     for (const gx of [-reachX, 0, reachX]) dirs.push(V().set(gx - ip.x, oppY - ip.y, 0).normalize());
     // Clears: up the side walls.
     if (Math.sign(ip.y) === Math.sign(ownY)) for (const sx of [-1, 1]) dirs.push(V().set(sx * 4000 - ip.x, oppY * 0.3 - ip.y, 0).normalize());
+    // Always-reachable touches: straight through it the way we're coming, and into the middle in front of
+    // their net (a centre — from the corners and wings the shot lines above need a contact point in the wall).
+    if (this.brain === 'ssl' && !OFF.has('natural') && (this.nearWall(ip) || Math.abs(ip.x) > 2600)) {
+      dirs.push(V().copy(ip).sub(car.pos).setZ(0).normalize());
+      dirs.push(V().set(-ip.x * 0.3 - ip.x, oppY - Math.sign(oppY) * 1600 - ip.y, 0).normalize());
+    }
+    // SSL: passes — to a teammate waiting in front of their net (led a little towards the goal).
+    if (this.brain === 'ssl' && !OFF.has('pass'))
+      for (const c of this.world.cars) {
+        if (c === car || c.team !== car.team || c.demolished) continue;
+        if (Math.abs(c.pos.x) > 2200 || c.pos.y * Math.sign(oppY) < ARENA.halfY - 4200 || c.pos.y * Math.sign(oppY) > ARENA.halfY - 500) continue;
+        const d = V().set(c.pos.x - ip.x, c.pos.y + Math.sign(oppY) * 450 - ip.y, 0);
+        if (d.length() > 400) dirs.push(d.normalize());
+      }
     const toBall = V().copy(ip).sub(car.pos).setZ(0).normalize();
     const cands: Cand[] = [];
-    for (const dir of dirs) {
-      if (dir.dot(toBall) < -0.2) continue; // can't hit it that way from here
-      for (const off of [-40, 0, 40]) cands.push({ dir, off, dodge: ip.z < 190 });
-    }
+    dirs.forEach((dir, i) => {
+      if (dir.dot(toBall) < -0.2) return; // can't hit it that way from here
+      // Contact offsets only for the main aim (the others rarely win and cost a rollout each).
+      for (const off of i === 0 || OFF.has('fewcands') ? [-40, 0, 40] : [0]) cands.push({ dir, off, dodge: ip.z < 190 });
+      // Power shot: hang back, then flat out and flip through it (the simulation says whether it beats the placed one).
+      if (!OFF.has('rush') && ip.z < 190) cands.push({ dir, off: 0, dodge: true, rush: true });
+    });
     cands.push({ dir: dirs[0]!, off: 0, dodge: false });
-    let best: Cand | null = null;
-    let bestScore = -Infinity;
-    for (const c of cands) {
-      const sc = this.rollout(car, m, L, hit, c, opp);
-      if (sc > bestScore) {
-        bestScore = sc;
-        best = c;
-      }
-    }
-    m.planC = best;
-    m.planAt = at;
-    m.planUntil = this.now + 0.12;
-    m.planScore = bestScore;
-    return best;
+    return cands;
   }
 
-  /** Play `cand` forward with only this car and the ball (opponents ignored): how good is the ball after our touch? */
+  /** Play `cand` forward (opponents chasing the ball): how good is the ball after our touch? A miss is the worst. */
   private rollout(car: Car, m: Mem, L: Level, hit: BallSample, cand: Cand, opp: number): number {
-    const r = this.simulate(car, m, L, { sample: hit, cand, opp }, hit.t + this.pathTime + 0.35, () => undefined);
-    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+    const r = this.simulate(car, m, L, { sample: hit, cand, opp }, hit.t + this.pathTime + 0.35, () => undefined, OPP_POST);
     if (r.touchAt < 0) return -20000 + (cand.off === 0 ? 1 : 0);
-    return this.judgeBall(r.ball, car.team) - (r.touchAt - this.now) * 400;
+    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+    return this.judgeBall(r.ball, car.team, r.t - this.now, car.id) - (r.touchAt - this.now) * 400;
   }
 
   /** Simulate an aerial at predicted sample `a` (jump, fly, dodge into it): the ball's value after, or very low if it misses. */
-  private rolloutAerial(car: Car, m: Mem, L: Level, a: BallSample): number {
-    const at = this.pathTime + a.t;
-    const r = this.simulate(car, m, L, { air: true }, at + 0.4, (mm) => {
-      mm.aerialAt = at;
-      mm.aerialEnd = at + 0.5;
-      mm.jumpHold = 0.2;
-    });
-    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+  private rolloutAerial(car: Car, m: Mem, L: Level, at: number, aimX: number | null = null, noDJ = false): number {
+    const r = this.simulate(
+      car,
+      m,
+      L,
+      { air: true },
+      at + 0.4,
+      (mm) => {
+        mm.aerialAt = at;
+        mm.aerialEnd = at + 0.5;
+        mm.jumpHold = 0.2;
+        mm.airAimX = aimX;
+        mm.airNoDJ = noDJ;
+      },
+      OPP_POST,
+    );
     if (r.touchAt < 0) return -20000;
-    return this.judgeBall(r.ball, car.team) - (r.touchAt - this.now) * 400;
+    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000;
+    return this.judgeBall(r.ball, car.team, r.t - this.now, car.id) - (r.touchAt - this.now) * 400;
   }
 
-  /** Run this car alone with the ball in a one-car world until it touches the ball, a goal, or `end` (world time). */
-  private simulate(car: Car, m: Mem, L: Level, forced: NonNullable<Bots['forced']>, end: number, prep: (mm: Mem) => void): { touchAt: number; goal: number; ball: Ball } {
+  /**
+   * Run this car with the ball until it touches it, a goal, or `end` (world time). With `post`
+   * > 0 the opponents are in the simulation too (driving at the ball like defenders would) and it
+   * runs on `post` s after our touch, so a shot straight at a defender is judged as blocked.
+   */
+  private simulate(car: Car, m: Mem, L: Level, forced: NonNullable<Bots['forced']>, end: number, prep: (mm: Mem) => void, post = 0): { touchAt: number; goal: number; ball: Ball; t: number } {
     const real = this.world;
-    const mini = this.miniWorld(car);
+    const withOpp = post > 0 && !OFF.has('oppsim');
+    const mini = withOpp ? this.miniWorldOpp(car) : this.miniWorld(car);
     const mc = mini.cars[0]!;
     copyCar(mc, car);
+    if (withOpp) for (let i = 1; i < mini.cars.length; i++) copyCar(mini.cars[i]!, real.car(mini.cars[i]!.id)!);
     const b = mini.ball;
     b.pos.copy(real.ball.pos);
     b.vel.copy(real.ball.vel);
@@ -1192,7 +1606,7 @@ export class Bots {
     mini.clock = 300;
     mini.events.length = 0;
     (mini as unknown as { extraHitTick: Map<number, number> }).extraHitTick.clear();
-    const mm: Mem = { ...m, plan: 'ball', role: 'attack', think: 99, aerialEnd: 0, man: null, boostHold: false, carrySince: -1, planC: null };
+    const mm: Mem = { ...m, plan: 'ball', role: 'attack', think: 99, aerialEnd: 0, man: null, boostHold: false, carrySince: -1, planC: null, planPend: null, blockPend: null, airPend: null };
     prep(mm);
     const cur = this.cur;
     const rng = this.rng;
@@ -1201,14 +1615,17 @@ export class Bots {
     const inputs = new Map<number, Controls>();
     let touchAt = -1;
     let goal = -1;
+    const going = (t: number) => (touchAt < 0 ? t < end : withOpp && t < touchAt + post);
     try {
-      while (mini.tickCount * C.TICK < end && touchAt < 0 && goal < 0) {
-        const c = this.drive(mc, mm, L, C.TICK);
+      while (going(mini.tickCount * C.TICK) && goal < 0) {
+        const c = touchAt < 0 ? this.drive(mc, mm, L, C.TICK) : NO_CONTROLS;
         mm.lastJump = c.jump;
         inputs.set(mc.id, c);
+        if (withOpp) for (let i = 1; i < mini.cars.length; i++) inputs.set(mini.cars[i]!.id, defenderControls(mini.cars[i]!, mini.ball));
         mini.step(inputs);
+        this.simSteps++;
         for (const e of mini.events) {
-          if (e.k === 'touch') touchAt = mini.tickCount * C.TICK;
+          if (e.k === 'touch' && e.car === mc.id && touchAt < 0) touchAt = mini.tickCount * C.TICK;
           if (e.k === 'goal') goal = e.team;
         }
         mini.events.length = 0;
@@ -1219,11 +1636,15 @@ export class Bots {
       this.cur = cur;
       this.rng = rng;
     }
-    return { touchAt, goal, ball: b };
+    return { touchAt, goal, ball: b, t: mini.tickCount * C.TICK };
   }
 
   /** Value of a free ball for `team`: a goal for / against, a shot on target, how far up the field it goes. */
-  private judgeBall(ball: Ball, team: 0 | 1): number {
+  /**
+   * `elapsed` = how far ahead of now `ball` is (cars are where they are now, so they get that much
+   * longer to reach it); `shooter` = the car whose touch this is (not counted as a pass target).
+   */
+  private judgeBall(ball: Ball, team: 0 | 1, elapsed = 0, shooter = -1): number {
     const path = predictBall(ball, 3, 1 / 20, this.judgePath);
     const g = predictedGoal(path, ball.radius);
     const oppY = team === 0 ? ARENA.halfY : -ARENA.halfY;
@@ -1267,6 +1688,27 @@ export class Bots {
         break;
       }
     }
+    // SSL: a pass — the ball comes into the slot in front of their net where a teammate gets to it before
+    // any of them (a chance, worth nearly as much as a shot).
+    if (this.brain === 'ssl' && !OFF.has('pass')) {
+      for (const p of path) {
+        if (p.t > 2.5) break;
+        if (p.pos.z > 380 || Math.abs(p.pos.x) > 1700 || p.pos.y * toward < ARENA.halfY - 3200 || p.pos.y * toward > ARENA.halfY - 250) continue;
+        let us = 9;
+        let them = 9;
+        for (const c of this.world.cars) {
+          if (c.demolished || c.id === shooter) continue;
+          const t = this.reachTime(c, p.pos, ball.radius + 40) - elapsed;
+          if (c.team === team) us = Math.min(us, t);
+          else them = Math.min(them, t);
+        }
+        if (us < p.t + 0.15 && us < them - 0.15) {
+          v += PASS_VALUE;
+          this.count('passValue');
+        }
+        break;
+      }
+    }
     // Sitting in front of our own net is bad.
     for (const p of path)
       if (Math.sign(p.pos.y) === -toward && Math.abs(p.pos.y) > ARENA.halfY - 1500 && Math.abs(p.pos.x) < 1600) {
@@ -1285,6 +1727,194 @@ export class Bots {
       this.minis.set(car.id, w);
     }
     return w;
+  }
+
+  /** A world with this car and the opponents (same hitboxes), for rollouts that include defenders. */
+  private miniWorldOpp(car: Car): World {
+    const opps = this.world.cars.filter((c) => c.team !== car.team);
+    const key = `${car.id}:${opps.map((c) => c.id).join(',')}`;
+    let w = this.minisOpp.get(key);
+    if (!w) {
+      const info = (c: Car) => ({ id: c.id, name: '', team: c.team, bot: true, body: C.CAR_IDS.find((k) => C.carInfo(k).hitbox === c.body.id) ?? 'octane' });
+      w = new World([info(car), ...opps.map(info)], 300, 1, true, this.world.rules);
+      this.minisOpp.set(key, w);
+    }
+    return w;
+  }
+
+  /** A teammate will reach the ball clearly before us and isn't beaten (goal-side of it). */
+  private mateFirst(car: Car): boolean {
+    const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
+    const ball = this.world.ball;
+    const mine = this.ballEta(car);
+    for (const c of this.world.cars) {
+      if (c === car || c.team !== car.team || c.demolished) continue;
+      if (Math.abs(c.pos.y - ownY) > Math.abs(ball.pos.y - ownY) + 200) continue;
+      if (this.ballEta(c) < mine - 0.25) return true;
+    }
+    return false;
+  }
+
+  /** The opponent dribbling the ball (on the roof or pushing it along), if any. */
+  private carrier(car: Car): Car | null {
+    const ball = this.world.ball;
+    if (ball.pos.z > 330) return null;
+    for (const e of this.world.cars) {
+      if (e.team === car.team || e.demolished || !e.onGround) continue;
+      const d = Math.hypot(ball.pos.x - e.pos.x, ball.pos.y - e.pos.y);
+      if (d > 260) continue;
+      if (Math.hypot(ball.vel.x - e.vel.x, ball.vel.y - e.vel.y) < 650) return e;
+    }
+    return null;
+  }
+
+  /** Shadow an opponent's dribble (see sslPlay). False = challenge now. */
+  private shadowDefend(car: Car, out: Controls): boolean {
+    const cr = this.carrier(car);
+    if (!cr) return false;
+    const ball = this.world.ball;
+    const ownY = car.team === 0 ? -ARENA.halfY : ARENA.halfY;
+    const toGoal = V().set(-ball.pos.x, ownY - ball.pos.y, 0);
+    const goalDist = toGoal.length();
+    // Challenge: they're near our box, they flicked / popped it, or they've run into us.
+    if (goalDist < 2600 || ball.vel.z > 350 || car.pos.distanceTo(ball.pos) < 500) return false;
+    // Not goal-side yet: get back first (the normal retreat handles it).
+    if (Math.abs(car.pos.y - ownY) > Math.abs(ball.pos.y - ownY) - 150) return false;
+    this.count('shadowDef');
+    const gap = Math.max(800, Math.min(1500, 900 + cr.vel.length() * 0.3));
+    const spot = V().copy(ball.pos).setZ(0).addScaledVector(toGoal.normalize(), gap);
+    const d = Math.hypot(spot.x - car.pos.x, spot.y - car.pos.y);
+    if (d > 350) {
+      this.steerTo(car, spot, out, 1, true);
+      out.boost = d > 1200 && this.facing(car, spot) > 0.92 && car.boost > 20 && !car.supersonic && car.onGround;
+    } else {
+      // In position: face the ball and hold the gap (back off as they come).
+      this.steerTo(car, V().copy(ball.pos).setZ(0), out, 1, true);
+      const dist = Math.hypot(ball.pos.x - car.pos.x, ball.pos.y - car.pos.y);
+      const facing = this.facing(car, ball.pos) > 0;
+      const tooClose = dist < gap - 150;
+      out.throttle = tooClose ? (facing ? -1 : 1) : dist > gap + 200 ? (facing ? 1 : -1) : 0;
+      out.handbrake = false;
+    }
+    return true;
+  }
+
+  /**
+   * Save (see sslPlay): spots on the ball's way into our net, each simulated (drive there, stop on
+   * the line, jump into it if it comes through high, opponents following up); the best is kept
+   * ~0.1 s. False when there's nowhere on its path to stand.
+   */
+  private block(car: Car, m: Mem, L: Level, out: Controls): boolean {
+    if (m.blockSpot && m.blockAt < this.now) m.blockSpot = null;
+    if (!m.blockPend && (this.now >= m.blockUntil || !m.blockSpot)) {
+      const ok: BallSample[] = [];
+      for (const p of this.path) {
+        if (Math.abs(p.pos.y) > ARENA.halfY - 40) break; // in by then
+        const t = p.t + this.pathTime - this.now;
+        if (t >= 0.12 && p.pos.z <= 550 + (L.blockZ - 620) && !this.nearWall(p.pos)) ok.push(p);
+      }
+      if (!ok.length) {
+        m.blockSpot = null;
+        return false;
+      }
+      // Up to 6 spots spread along the way in (always the first and the last).
+      const spots: Array<{ pos: Vector3; at: number }> = [];
+      const k = Math.min(6, ok.length);
+      for (let i = 0; i < k; i++) {
+        const p = ok[Math.round((i * (ok.length - 1)) / Math.max(1, k - 1))]!;
+        if (!spots.some((q) => q.at === p.t + this.pathTime)) spots.push({ pos: V().copy(p.pos), at: p.t + this.pathTime });
+      }
+      m.blockPend = { spots, i: 0, best: null, score: -Infinity };
+    }
+    const pend = m.blockPend;
+    if (pend) {
+      let n = 0;
+      while (pend.i < pend.spots.length && (n === 0 || !this.overBudget)) {
+        const sp = pend.spots[pend.i++]!;
+        n++;
+        if (sp.at < this.now + 0.05) continue;
+        const sc = this.rolloutBlock(car, m, L, sp.pos, sp.at);
+        if (sc > pend.score) {
+          pend.score = sc;
+          pend.best = sp;
+        }
+      }
+      if (pend.i >= pend.spots.length || !m.blockSpot) {
+        m.blockSpot = pend.best?.pos ?? null;
+        m.blockAt = pend.best?.at ?? 0;
+        m.blockScore = pend.score;
+      }
+      if (pend.i >= pend.spots.length) {
+        m.blockPend = null;
+        m.blockUntil = this.now + 0.1;
+      }
+    }
+    // Every spot concedes (e.g. it's dropping in under the bar): leave it to the keeper / an aerial.
+    if (!m.blockSpot || m.blockScore <= -8800) return false;
+    this.count('block');
+    this.blockTo(car, m, out, m.blockSpot, m.blockAt);
+    return true;
+  }
+
+  /** Simulate a block at `pos` (the ball there at world time `at`): the ball's value after (a goal against is the worst). */
+  private rolloutBlock(car: Car, m: Mem, L: Level, pos: Vector3, at: number): number {
+    let end = this.pathTime + (this.path[this.path.length - 1]?.t ?? 3);
+    for (const q of this.path) if (Math.abs(q.pos.y) > ARENA.halfY) {
+      end = q.t + this.pathTime + 0.2;
+      break;
+    }
+    const r = this.simulate(car, m, L, { spot: V().copy(pos), at }, end, () => undefined, OPP_POST);
+    if (r.goal >= 0) return r.goal === car.team ? 9000 : -9000 + (r.touchAt >= 0 ? 100 : 0);
+    // Earlier contact (further from our net) breaks ties.
+    return this.judgeBall(r.ball, car.team, r.t - this.now, car.id) - (r.touchAt >= 0 ? (r.touchAt - this.now) * 200 : 3000);
+  }
+
+  /** Drive a block: to `spot` on the ball's line (ball there at world time `at`), stop on it, face the ball, jump into a high one. */
+  private blockTo(car: Car, m: Mem, out: Controls, spot3: Vector3, at: number): void {
+    const ball = this.world.ball;
+    const R = ball.radius;
+    const pickT = Math.max(0, at - this.now);
+    const ip = this.sampleAt(at).pos;
+    // Stand a little in front of where the ball will be, so it runs into our nose.
+    const sv = this.sampleAt(at).vel;
+    const vlen = Math.hypot(sv.x, sv.y);
+    const spot = V().copy(spot3).setZ(0);
+    if (vlen > 100) spot.x += (sv.x / vlen) * R * 0.5, spot.y += (sv.y / vlen) * R * 0.5;
+    const d = Math.hypot(spot.x - car.pos.x, spot.y - car.pos.y);
+    const v = car.forwardSpeed;
+    if (d > 140) {
+      this.steerTo(car, spot, out, 1, true);
+      const urgent = this.reachTime(car, spot, 60) + 0.45 > pickT;
+      out.boost = urgent && this.facing(car, spot) > 0.9 && car.boost > 0 && !car.supersonic && car.onGround;
+      // Brake to stop on the spot rather than drive through the line.
+      const ahead = (spot.x - car.pos.x) * car.forward.x + (spot.y - car.pos.y) * car.forward.y;
+      if (Math.abs(v) > 300 && Math.sign(ahead) === Math.sign(v) && Math.abs(ahead) < (v * v) / (2 * C.BRAKE_ACCEL) + 100 && d < Math.abs(ahead) + 150) {
+        out.throttle = -Math.sign(v);
+        out.boost = false;
+      }
+    } else {
+      // On the line: square up to the ball and hold.
+      this.steerTo(car, V().copy(ball.pos).setZ(0), out, 0.3, true);
+      if (Math.abs(v) > 250) out.throttle = -Math.sign(v);
+      out.boost = false;
+      out.handbrake = false;
+    }
+    // High ball coming through: (double) jump to meet it as it arrives — only if we'll still be under
+    // it then (the car can't steer once off the ground).
+    const fx = car.pos.x + car.vel.x * pickT - ip.x;
+    const fy = car.pos.y + car.vel.y * pickT - ip.y;
+    if (car.onGround && ip.z > 170 && Math.hypot(fx, fy) < R + 70) {
+      const j = jumpFor(ip.z);
+      if (j && pickT <= j.t + 1 / 60) {
+        if (!this.forced) this.count('blockJump');
+        m.jumpHold = 0.2;
+        if (j.double) {
+          m.dodgeIn = 0.01;
+          m.dodgePitch = m.dodgeYaw = 0;
+        }
+        out.jump = true;
+      }
+    }
   }
 
   /** Block a shot on the goal line (see sslPlay). False when we can't get there in time either. */
@@ -1441,7 +2071,10 @@ export class Bots {
     const dir = V();
     if (Math.sign(p.y) === Math.sign(ownY) && Math.abs(p.y) > 1500 && this.goalIn.team === 1 - car.team)
       dir.set(p.x === 0 ? 1 : Math.sign(p.x), -Math.sign(ownY) * 1.5, 0.3).normalize(); // clear up-field and wide
-    else dir.set(this.aimX(car, this.cur ?? ({ aim: 0 } as Mem), p) - p.x, oppY - p.y, Math.max(-p.z + 250, -400) * 0.6).normalize();
+    else {
+      const ax = this.cur?.airAimX ?? this.aimX(car, this.cur ?? ({ aim: 0 } as Mem), p);
+      dir.set(ax - p.x, oppY - p.y, Math.max(-p.z + 250, -400) * 0.6).normalize();
+    }
     return out.copy(p).addScaledVector(dir, -(this.world.ball.radius + 45));
   }
 
@@ -1479,7 +2112,7 @@ export class Bots {
     }
     // SSL: a long way back the other way → half-flip instead of a slow U-turn.
     const m = this.cur;
-    if (this.level === 'ssl' && !OFF.has('half') && m && !m.man && car.onGround && car.up.z > 0.9 && Math.abs(angle) > 2.6 && d > 1400 && car.forwardSpeed < 350 && car.forwardSpeed > -900) {
+    if (this.brain === 'ssl' && !OFF.has('half') && m && !m.man && car.onGround && car.up.z > 0.9 && Math.abs(angle) > 2.6 && d > 1400 && car.forwardSpeed < 350 && car.forwardSpeed > -900) {
       this.count('halfFlip');
       m.man = { kind: 'half', t: 0, side: angle > 0 ? 1 : -1 };
     }
@@ -1514,6 +2147,11 @@ export class Bots {
     out.roll = Math.max(-1, Math.min(1, err.dot(car.forward) * 4 - aw.dot(car.forward) * 0.6));
     out.pitch = Math.max(-1, Math.min(1, err.dot(right) * 4 - aw.dot(right) * 0.6));
     const vel = V().copy(car.vel).setZ(0);
+    // Land with the wheels along the velocity (keeps the speed); SSL leans that towards the ball so it lands ready to play.
+    if (this.brain === 'ssl' && !OFF.has('landball')) {
+      const tb = V().copy(this.world.ball.pos).sub(car.pos).setZ(0);
+      if (tb.lengthSq() > 1) vel.addScaledVector(tb.normalize(), 700);
+    }
     if (vel.lengthSq() > 1e4) {
       const a = Math.atan2(vel.normalize().dot(car.left), vel.dot(car.forward));
       out.yaw = Math.max(-1, Math.min(1, -a * 2));
@@ -1587,14 +2225,16 @@ const JUMP1 = jumpRise(false);
 const JUMP2 = jumpRise(true);
 
 /** Jump needed to meet a ball at height `ballZ` with the top of the nose: time from the press, and whether it takes a double jump. */
-function jumpFor(ballZ: number): { t: number; double: boolean } | null {
+function jumpFor(ballZ: number, maxT = 9): { t: number; double: boolean } | null {
   const dz = ballZ - 60 - C.CAR_REST_Z;
   for (const [table, double] of [[JUMP1, false], [JUMP2, true]] as const) {
     const k = table.findIndex((z) => z >= dz);
-    if (k >= 0) return { t: k * C.TICK, double };
+    if (k >= 0 && k * C.TICK <= maxT) return { t: k * C.TICK, double };
   }
   return null;
 }
+/** Longest (double) jump SSL shoots with on the move: after that it floats, can't steer, and misses. */
+const SHOT_JUMP_T = Number(ENV.SSL_JT ?? 0.75);
 
 /** Highest speed at which the car still turns with `curvature` (inverse of the curvature table). */
 function maxTurnSpeed(curvature: number): number {
@@ -1610,5 +2250,37 @@ function maxTurnSpeed(curvature: number): number {
   return C.CAR_MAX_SPEED;
 }
 
-export const BOT_LEVELS: BotLevel[] = ['rookie', 'pro', 'allstar', 'ssl'];
+/**
+ * The ranks. Nexto itself plays at about low Grand Champion in real Rocket League: GC here is it at full
+ * strength, SSL averages each decision with the mirrored view (steadier — beats GC clearly), and the lower
+ * ranks add reaction time, sloppier action choices, misread balls, fewer decisions and no / unreliable
+ * aerials, tuned so each rank beats the one below (tools/rocket-versus.ts --la / --lb).
+ */
+const RANKS: Record<BotLevel, { name: string; brain: BrainLevel; nexto: NextoProfile; nextoKickoff?: boolean }> = {
+  bronze: { name: 'BRONZE', brain: 'rookie', nexto: { beta: 0.6, skip: 16, delay: 32, misread: 240, air: 0 } },
+  silver: { name: 'SILVER', brain: 'rookie', nexto: { beta: 0.68, skip: 16, delay: 26, misread: 170, air: 0.1 } },
+  gold: { name: 'GOLD', brain: 'pro', nexto: { beta: 0.74, skip: 12, delay: 21, misread: 130, air: 0.32 } },
+  plat: { name: 'PLAT', brain: 'pro', nexto: { beta: 0.82, skip: 12, delay: 16, misread: 80, air: 0.6 } },
+  diamond: { name: 'DIAMOND', brain: 'allstar', nexto: { beta: 0.88, skip: 10, delay: 12, misread: 50, air: 0.85 } },
+  champ: { name: 'CHAMP', brain: 'allstar', nexto: { beta: 0.93, skip: 8, delay: 8, misread: 30, air: 1 } },
+  gc: { name: 'GRAND CHAMP', brain: 'ssl', nexto: { beta: 1, skip: 8, delay: 0, misread: 0, air: 1 } },
+  // SSL: Nexto at full strength, deciding on the real view and its mirror image averaged (beat plain Nexto 19-5).
+  ssl: { name: 'SSL', brain: 'ssl', nexto: { beta: 1, skip: 8, delay: 0, misread: 0, air: 1, mirror: true } },
+};
+// Tuning (tools only): NX_GC=beta,skip,delay,misread,air[,mirror] overrides a rank's profile; NX_KICK_GC=1 lets Nexto take its kickoffs.
+for (const r of Object.keys(RANKS) as BotLevel[]) if (ENV[`NX_KICK_${r.toUpperCase()}`]) RANKS[r].nextoKickoff = ENV[`NX_KICK_${r.toUpperCase()}`] === '1';
+for (const r of Object.keys(RANKS) as BotLevel[]) {
+  const o = ENV[`NX_${r.toUpperCase()}`];
+  if (o) {
+    const [beta, skip, delay, misread, air, mirror] = o.split(',').map(Number);
+    RANKS[r].nexto = { beta: beta!, skip: skip!, delay: delay!, misread: misread!, air: air!, mirror: mirror === 1 };
+  }
+}
+export const BOT_LEVELS = Object.keys(RANKS) as BotLevel[];
+export const rankName = (l: BotLevel): string => RANKS[l]?.name ?? String(l).toUpperCase();
+/** A saved / received level (incl. the old rookie / pro / all-star names) as a rank. */
+export function toBotLevel(v: unknown): BotLevel {
+  if (typeof v === 'string' && v in RANKS) return v as BotLevel;
+  return v === 'rookie' ? 'bronze' : v === 'allstar' ? 'diamond' : 'gold';
+}
 export const BOT_NAMES = ['Merlin', 'Sundown', 'Rainmaker', 'Bandit', 'Hound', 'Sticks', 'Fury', 'Jester', 'Tusk', 'Viper', 'Casper', 'Gerwin', 'Junker', 'Squall', 'Raja', 'Saltie'];

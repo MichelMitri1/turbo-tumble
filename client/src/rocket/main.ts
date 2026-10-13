@@ -12,14 +12,22 @@ import { TEAM_COLORS } from './render/colors';
 import { BODIES, CARS, CAR_IDS, carInfo, type CarId } from './sim/constants';
 import { DEFAULT_RULES, REPLAY_EXTRA, sanitizeRules, type Rules } from './sim/rules';
 import { GoalReplay } from './replay';
+import { MatchLog } from './matchlog';
 import { DEFAULT_EXPLOSION, type ExplosionFx } from './render/fx';
 import { toThree } from './render/arenaMesh';
-import type { BotLevel } from './sim/bot';
+import { BOT_LEVELS, rankName, toBotLevel, type BotLevel } from './sim/bot';
 import type { WorldEvent } from './sim/world';
 import type { RbBegin, RbLobby } from './net/protocol';
 import { ARENAS, ARENA_IDS, isArenaId, pickArena, type ArenaId } from './arenas';
 import { THEMES } from './render/themes';
 import { bindFullscreenButton, installFullscreenKey } from '../ui/fullscreen';
+import { setNextoWeights } from './sim/nexto';
+
+// SSL bots in local games play through the Nexto policy once its weights are in (the built-in brain until then).
+void fetch('/assets/nexto/nexto.bin')
+  .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+  .then((b) => setNextoWeights(new Float32Array(b)))
+  .catch((e) => console.warn('nexto weights not loaded:', e));
 
 // ============================================================================ settings
 
@@ -49,13 +57,14 @@ interface Settings {
 }
 const KEY = 'boostball:settings';
 const settings: Settings = (() => {
-  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: touchDevice() ? 'low' : 'high', volume: 0.7, mode: 2, level: 'pro', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined), arena: 'dome', music: true, motion: true };
+  const d: Settings = { name: 'Player', body: 'octane', cam: { ...DEFAULT_CAM }, ballCam: true, quality: touchDevice() ? 'low' : 'high', volume: 0.7, mode: 2, level: 'gold', team: 0, length: 300, rules: { ...DEFAULT_RULES }, fx: { ...DEFAULT_EXPLOSION }, input: sanitizePrefs(undefined), arena: 'dome', music: true, motion: true };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
     return {
       ...d,
       ...s,
       body: s.body && s.body in CARS ? s.body : 'octane',
+      level: toBotLevel(s.level),
       cam: { ...d.cam, ...(s.cam ?? {}) },
       rules: sanitizeRules(s.rules),
       fx: { ...d.fx, ...(s.fx ?? {}) },
@@ -84,6 +93,9 @@ const ARENA_SHORT: Record<ArenaId, string> = { dome: 'DOME', mannfield: 'MANNFIE
 const ARENA_SEG = [...ARENA_IDS.map((id) => `<button data-v="${id}" title="${ARENAS[id].name}">${ARENA_SHORT[id]}</button>`), '<button data-v="random">🎲 RANDOM</button>'].join('');
 
 const app = document.getElementById('game')!;
+/** One button per bot rank (every rank plays through Nexto, the RLGym bot by Rolv-Arild and the Necto team, CC BY-NC-SA 4.0). */
+const RANK_BUTTONS = BOT_LEVELS.map((l) => `<button data-v="${l}" title="${rankName(l)} bots (Nexto AI by Rolv-Arild & the Necto team, CC BY-NC-SA 4.0)">${l === 'gc' ? 'GC' : rankName(l)}</button>`).join('');
+
 app.innerHTML = `
 <div id="view"></div>
 <div class="rk-screen" id="menu">
@@ -108,7 +120,7 @@ app.innerHTML = `
   <div class="rk-panel">
     <h2>EXHIBITION</h2>
     <div class="rk-field"><span>MODE</span><div class="rk-seg" id="s-mode"><button data-v="1">1v1 DUEL</button><button data-v="2">2v2 DOUBLES</button><button data-v="3">3v3 STANDARD</button></div></div>
-    <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="s-level"><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button><button data-v="ssl">SSL</button></div></div>
+    <div class="rk-field"><span>BOTS</span><div class="rk-seg rk-ranks" id="s-level">${RANK_BUTTONS}</div></div>
     <div class="rk-field"><span>TEAM</span><div class="rk-seg" id="s-team"><button data-v="0" class="blue">BLUE</button><button data-v="1" class="orange">ORANGE</button></div></div>
     <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="s-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
     <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="s-arena">${ARENA_SEG}</div><small class="rk-arena-desc" id="s-arena-desc"></small></div>
@@ -193,7 +205,7 @@ app.innerHTML = `
       <div class="rk-team t1"><h3>ORANGE</h3><div id="o-t1"></div><button class="rk-btn small" id="o-join1">JOIN ORANGE</button></div></div>
       <div id="o-host">
         <div class="rk-field"><span>SIZE</span><div class="rk-seg" id="o-size"><button data-v="1">1v1</button><button data-v="2">2v2</button><button data-v="3">3v3</button></div></div>
-        <div class="rk-field"><span>BOTS</span><div class="rk-seg" id="o-bots"><button data-v="off">NONE</button><button data-v="rookie">ROOKIE</button><button data-v="pro">PRO</button><button data-v="allstar">ALL-STAR</button><button data-v="ssl">SSL</button></div></div>
+        <div class="rk-field"><span>BOTS</span><div class="rk-seg rk-ranks" id="o-bots"><button data-v="off">NONE</button>${RANK_BUTTONS}</div></div>
         <div class="rk-field"><span>LENGTH</span><div class="rk-seg" id="o-length"><button data-v="120">2 MIN</button><button data-v="180">3 MIN</button><button data-v="300">5 MIN</button><button data-v="600">10 MIN</button></div></div>
         <div class="rk-field"><span>ARENA</span><div class="rk-seg rk-arenas" id="o-arena">${ARENA_SEG}</div></div>
       </div>
@@ -213,6 +225,7 @@ app.innerHTML = `
       <button class="rk-btn" id="p-restart">RESTART MATCH</button>
       <button class="rk-btn" id="p-settings">SETTINGS</button>
       <button class="rk-btn" id="p-controls">CONTROLS</button>
+      <button class="rk-btn" id="p-log" title="Download this match so it can be studied">SAVE MATCH LOG</button>
       <button class="rk-btn ghost" id="p-leave">LEAVE MATCH</button>
     </div>
     <div class="rk-quick"><label class="rk-check"><input type="checkbox" id="p-ballcam" /> Ball cam</label><label class="rk-check"><input type="checkbox" id="p-invert" /> Invert camera swivel</label></div>
@@ -223,7 +236,7 @@ app.innerHTML = `
   <div class="rk-panel wide">
     <div class="rk-result" id="e-result"></div>
     <div class="rk-board end" id="e-board"></div>
-    <div class="rk-row end"><button class="rk-btn ghost" id="e-menu">MAIN MENU</button><button class="rk-btn primary" id="e-again">PLAY AGAIN</button></div>
+    <div class="rk-row end"><button class="rk-btn ghost" id="e-log" title="Download this match so it can be studied">SAVE MATCH LOG</button><button class="rk-btn ghost" id="e-menu">MAIN MENU</button><button class="rk-btn primary" id="e-again">PLAY AGAIN</button></div>
   </div>
 </div>
 <div class="rk-autoroll hidden" id="autoroll"></div>
@@ -669,11 +682,13 @@ $('#p-settings').addEventListener('click', () => openSettings());
 $('#p-controls').addEventListener('click', () => openControls());
 $('#p-leave').addEventListener('click', () => leaveMatch());
 $('#e-menu').addEventListener('click', () => leaveMatch());
+for (const id of ['#e-log', '#p-log']) $(id).addEventListener('click', () => matchLog?.download());
 $('#e-again').addEventListener('click', () => (session?.online ? backToLobby() : void startLocal(lastFree)));
 
 // ============================================================================ game
 
 let session: Session | null = null;
+let matchLog: MatchLog | null = null;
 let attract: LocalSession | null = null;
 let lastFree = false;
 let endTimer = -1;
@@ -688,6 +703,17 @@ function setSession(s: Session): void {
   replayedGoal = -1;
   session?.dispose();
   session = s;
+  // Record every real match (not the menu background) so it can be saved and studied.
+  matchLog =
+    s === attract
+      ? null
+      : new MatchLog(
+          s.world,
+          { online: s.online, myId: s.myId, level: s.online ? (lobby?.config.botLevel ?? '') : settings.level, arena: renderer.currentArena ?? '' },
+          s instanceof LocalSession ? (id) => s.botPlan(id) : null,
+        );
+  $('#e-log').classList.toggle('hidden', !matchLog);
+  $('#p-log').classList.toggle('hidden', !matchLog);
   renderer.setWorld(s.world);
   renderer.cam.ballCam = settings.ballCam;
   renderer.cam.reset();
@@ -696,7 +722,7 @@ function setSession(s: Session): void {
 }
 
 function startAttract(): void {
-  attract = new LocalSession({ name: '', body: 'octane', team: 0, size: 2, level: 'allstar', length: 99999, spectate: true });
+  attract = new LocalSession({ name: '', body: 'octane', team: 0, size: 2, level: 'diamond', length: 99999, spectate: true });
   setSession(attract);
 }
 
@@ -1049,7 +1075,7 @@ function renderLobby(): void {
   for (const t of [0, 1] as const) {
     $(`#o-t${t}`).innerHTML = l.players
       .filter((p) => p.team === t)
-      .map((p) => `<div class="rk-lp ${p.id === net!.sessionId ? 'me' : ''}"><b>${p.bot ? '🤖 Bot' : esc(p.name)}</b><small>${p.bot ? l.config.botLevel.toUpperCase() : `${carInfo(p.body).name}${p.id === l.hostId ? ' · HOST' : ''}${p.connected ? '' : ' · reconnecting'}`}</small></div>`)
+      .map((p) => `<div class="rk-lp ${p.id === net!.sessionId ? 'me' : ''}"><b>${p.bot ? '🤖 Bot' : esc(p.name)}</b><small>${p.bot ? rankName(l.config.botLevel) : `${carInfo(p.body).name}${p.id === l.hostId ? ' · HOST' : ''}${p.connected ? '' : ' · reconnecting'}`}</small></div>`)
       .join('');
   }
   $('#o-host').classList.toggle('hidden', !host || l.phase !== 'lobby');
@@ -1183,6 +1209,7 @@ function loop(now: number): void {
   } else if (screen === 'pause' && ui.pause) resume();
   const events = s.update(dt, playing ? controls : { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false });
   for (const e of events) onEvent(e);
+  if (s === session) matchLog?.sample(events);
   maybeStartReplay(s);
   if (replay) return replayFrame(s, dt, controls.jump);
   // Free play: no clock / no end.

@@ -120,4 +120,12 @@ export const GAMES: GameEntry[] = [
     tags: ['Open world', 'Cars · Guns · Cops', 'Third-person', 'Controller'],
     art: { image: '/assets/hub/velora.webp', emoji: '🌆', from: '#143e49', to: '#d9a45c' },
   },
+  {
+    id: 'padel',
+    title: 'Padel',
+    tagline: 'Regulation glass court, real rules and real racket shapes. Swing with your mouse: the stroke is the shot. Smash it por tres.',
+    href: '/padel/',
+    tags: ['Sports', 'vs Bots', 'Online · LAN', '2 v 2'],
+    art: { image: '/assets/hub/padel.webp', emoji: '🎾', from: '#1e5fd6', to: '#0b2a4a' },
+  },
 ];

@@ -49,6 +49,9 @@ export class ChaseCamera {
   private swY = 0;
   private readonly camUp = new THREE.Vector3(0, 1, 0);
   private ballBlend = 1;
+  /** Ball cam pulls back (×distance) to fit a ball that's high overhead together with the car. */
+  private backK = 1;
+  private wantBack = 1;
   private shakeT = 0;
   private shakeAmp = 0;
   private initialized = false;
@@ -210,6 +213,19 @@ export class ChaseCamera {
     const right0 = new THREE.Vector3().crossVectors(ref, this.camUp).normalize();
     const fwd0 = new THREE.Vector3().crossVectors(this.camUp, right0).normalize();
     let yaw = Math.atan2(flat.dot(right0), flat.dot(fwd0));
+    // Ball cam with the ball (nearly) straight overhead: its heading means nothing any more — keep ours,
+    // easing in as it moves off to one side.
+    if (wantBall && ballThree && !this.rearView && this.initialized) {
+      const d = v3.copy(ballThree).sub(carPos);
+      const horiz = d.addScaledVector(this.camUp, -d.dot(this.camUp)).length();
+      const t = Math.min(1, horiz / (st.distance * S * 0.5));
+      const follow = t * t * (3 - 2 * t);
+      const held = this.yaw - this.swX * Math.PI;
+      let dd = yaw - held;
+      while (dd > Math.PI) dd -= Math.PI * 2;
+      while (dd < -Math.PI) dd += Math.PI * 2;
+      yaw = held + dd * follow;
+    }
     // Swivel (right stick): up to ~180° around, eased at the swivel speed.
     const swRate = Math.min(1, dt * st.swivel * 4);
     this.swX += ((st.invertX ? -this.swivelX : this.swivelX) - this.swX) * swRate;
@@ -219,9 +235,39 @@ export class ChaseCamera {
     let elev = 0;
     if (wantBall && ballThree && !this.rearView) {
       const d = ballThree.clone().sub(carPos);
-      const horiz = Math.max(1, d.clone().addScaledVector(this.camUp, -d.dot(this.camUp)).length());
-      elev = Math.max(-0.25, Math.min(0.6, Math.atan2(d.dot(this.camUp) - 0.6, horiz + st.distance * S * 0.6))) * this.ballBlend;
+      const up = d.dot(this.camUp);
+      const horiz = Math.max(1, d.clone().addScaledVector(this.camUp, -up).length());
+      elev = Math.max(-0.25, Math.min(0.6, Math.atan2(up - 0.6, horiz + st.distance * S * 0.6)));
+      // A ball steeply above: tilt up until it's inside the top of the view, and pull back (up to twice the
+      // distance) as far as it takes to keep the car in the bottom of it too — the ball wins if both can't fit.
+      const half = ((this.camera.fov * Math.PI) / 180) * 0.5;
+      const aim = (st.angle * Math.PI) / 180;
+      const top = half * 0.7 + aim;
+      const bottom = half * 0.9 - aim;
+      const base = elev;
+      let backK = 1;
+      for (let k = 1; k <= 2.001; k += 0.25) {
+        backK = k;
+        const back = st.distance * S * k;
+        let e = base;
+        for (let i = 0; i < 4; i++) {
+          const camY = Math.max(0.25, carPos.y - Math.sin(e) * back + st.height * S);
+          const seen = Math.atan2(ballThree.y - camY, horiz + Math.cos(e) * back);
+          if (seen <= e + top) break;
+          e = Math.min(1.35, seen - top);
+        }
+        elev = e;
+        // Only a ball that needed the extra tilt pulls the camera back; normal ball cam keeps its distance.
+        if (e <= base + 1e-6) break;
+        const camY = Math.max(0.25, carPos.y - Math.sin(e) * back + st.height * S);
+        const carSeen = Math.atan2(carPos.y - camY, Math.cos(e) * back);
+        if (carSeen >= e - bottom) break;
+      }
+      this.wantBack = 1 + (backK - 1) * this.ballBlend;
+      elev *= this.ballBlend;
     }
+    if (!(wantBall && ballThree && !this.rearView)) this.wantBack = 1;
+    this.backK += (this.wantBack - this.backK) * Math.min(1, dt * 4);
     const pitch = elev + this.swY * 0.6;
     if (!this.initialized) {
       this.yaw = yaw;
@@ -248,7 +294,7 @@ export class ChaseCamera {
     const viewDir = flatDir.clone().applyAxisAngle(side, this.pitch);
     // Rigidly attached behind the car at a fixed distance: boosting, bumps and turns never
     // push the car off-centre or away from the camera.
-    const camPos = carPos.clone().addScaledVector(viewDir, -st.distance * S).addScaledVector(this.camUp, st.height * S);
+    const camPos = carPos.clone().addScaledVector(viewDir, -st.distance * S * this.backK).addScaledVector(this.camUp, st.height * S);
     // The camera may pass behind the walls / ceiling (like the real game); only the floor stops it.
     camPos.y = Math.max(0.25, camPos.y);
     const look = viewDir.clone().applyAxisAngle(side, (st.angle * Math.PI) / 180);

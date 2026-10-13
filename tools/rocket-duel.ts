@@ -7,6 +7,8 @@ import { World, type PlayerInfo } from '../client/src/rocket/sim/world';
 import { Bots, type BotLevel } from '../client/src/rocket/sim/bot';
 import type { Controls } from '../client/src/rocket/sim/car';
 import { CAR_IDS } from '../client/src/rocket/sim/constants';
+import { loadNextoFromDisk } from '../server/src/nexto';
+loadNextoFromDisk();
 
 const args = process.argv.slice(2);
 const flag = (k: string, d: string) => args.find((a) => a.startsWith(`--${k}=`))?.split('=')[1] ?? d;
@@ -35,7 +37,7 @@ let ticks = 0;
 for (let m = 0; m < matches; m++) {
   const players: PlayerInfo[] = [];
   for (let i = 0; i < size * 2; i++) players.push({ id: i + 1, name: `Bot${i}`, team: (i % 2) as 0 | 1, bot: true, body: CAR_IDS[(m + i) % 3]! });
-  const w = new World(players, length, 500 + m, false);
+  const w = new World(players, length, Number(flag('seed', '500')) + m, false);
   const bots = levels.map((l) => new Bots(w, l));
   bots.forEach((b, i) => (b.stats = moves[i]!));
   const outs = [new Map<number, Controls>(), new Map<number, Controls>()];
